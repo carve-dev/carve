@@ -1,0 +1,5 @@
+[project]
+name = "missing-required-project"
+
+[paths]
+config_dir = "carve"

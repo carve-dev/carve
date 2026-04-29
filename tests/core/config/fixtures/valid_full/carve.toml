@@ -1,0 +1,7 @@
+[project]
+name = "fixture-project"
+version = "1.2.3"
+default_target = "dev"
+
+[paths]
+config_dir = "carve"

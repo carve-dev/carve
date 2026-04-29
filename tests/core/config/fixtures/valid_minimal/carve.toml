@@ -1,0 +1,7 @@
+[project]
+name = "minimal-project"
+version = "0.0.1"
+default_target = "dev"
+
+[paths]
+config_dir = "carve"

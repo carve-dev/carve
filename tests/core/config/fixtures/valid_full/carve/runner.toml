@@ -1,0 +1,4 @@
+type = "local_venv"
+venv_cache_dir = ".carve/venvs"
+default_timeout_seconds = 600
+max_concurrent_runs = 2

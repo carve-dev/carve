@@ -1,0 +1,8 @@
+[snowflake.dev]
+account = "${SNOWFLAKE_ACCOUNT}"
+user = "${SNOWFLAKE_USER}"
+password = "${SNOWFLAKE_PASSWORD}"
+role = "TRANSFORMER"
+warehouse = "WH_DEV"
+database = "ANALYTICS_DEV"
+schema = "PUBLIC"

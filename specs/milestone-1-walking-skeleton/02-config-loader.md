@@ -28,23 +28,28 @@ Load `carve.toml` and the files in `carve/`, validate them against typed schemas
 
 ## Schema
 
+> **Updated during implementation (2026-04-29):** Two small refinements landed during build. (1) `SnowflakeConnection.schema` is declared as `schema_: str | None = Field(default=None, alias="schema")` — the trailing underscore avoids shadowing `pydantic.BaseModel.schema()` while still accepting/emitting `schema` in TOML. (2) `Config.config_hash` is declared with a default of `""` rather than as required, because the loader assigns it after `model_validate`; sub-section fields with schema defaults (`paths`, `connections`, `runner`, `server`) use `Field(default_factory=...)` so missing sub-files validate cleanly. All `BaseModel`s also set `model_config = ConfigDict(extra="forbid")` so unknown keys produce a clear validation error.
+
 For M1, the minimum config schema:
 
 ```python
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class ProjectConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
     version: str = "0.0.1"
     default_target: str = "dev"
 
 class PathsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     config_dir: str = "carve"
     agents_dir: str = "carve/agents"
     skills_dir: str = "carve/skills"
     pipelines_dir: str = "carve/pipelines"
 
 class SnowflakeConnection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     account: str
     user: str
     password: str | None = None
@@ -53,34 +58,39 @@ class SnowflakeConnection(BaseModel):
     role: str
     warehouse: str
     database: str
-    schema: str | None = None
+    schema_: str | None = Field(default=None, alias="schema")
 
 class ConnectionsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     snowflake: dict[str, SnowflakeConnection] = Field(default_factory=dict)
 
 class ModelsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     anthropic_api_key: str
 
 class RunnerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: str = "local_venv"
     venv_cache_dir: str = ".carve/venvs"
     default_timeout_seconds: int = 1800
     max_concurrent_runs: int = 4
 
 class ServerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     host: str = "127.0.0.1"
     port: int = 8787
     state_store: str = "sqlite:///.carve/state.db"
     auth_mode: str = "single_user"
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     project: ProjectConfig
-    paths: PathsConfig
-    connections: ConnectionsConfig
+    paths: PathsConfig = Field(default_factory=PathsConfig)
+    connections: ConnectionsConfig = Field(default_factory=ConnectionsConfig)
     models: ModelsConfig
-    runner: RunnerConfig
-    server: ServerConfig
-    config_hash: str  # computed
+    runner: RunnerConfig = Field(default_factory=RunnerConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
+    config_hash: str = ""  # populated post-validation by the loader
 ```
 
 For M1 the schema is minimal. M2 adds dbt-related fields, observability, guardrails. M3 adds MCP, skills, etc.
