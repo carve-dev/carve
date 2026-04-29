@@ -16,21 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      # Placeholder — the project does not yet have installable code.
-      # Will be filled in during M1 (see specs/milestone-1-walking-skeleton/01-cli-foundation.md).
-      - name: Skip until M1-01 lands
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Create venv and install
         run: |
-          echo "CI placeholder — no code to lint or test yet."
-          echo "M1-01 (CLI foundation) will fill this in with:"
-          echo "  uv sync"
-          echo "  uv run ruff check"
-          echo "  uv run mypy src/"
-          echo "  uv run pytest"
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: uv run ruff check src/ tests/
+
+      - name: Ruff format check
+        run: uv run ruff format --check src/ tests/
+
+      - name: Mypy
+        run: uv run mypy src/
+
+      - name: Pytest
+        run: uv run pytest -q

@@ -97,6 +97,8 @@ If `uv` is unavailable, fall back to `poetry`. Don't use bare `pip` for dev.
 
 ### `pyproject.toml`
 
+> **Updated during implementation (2026-04-29):** the shipped `pyproject.toml` adds a `[tool.ruff.lint.per-file-ignores]` block that disables `B008` for `src/carve/cli/commands/*.py`. Typer's idiomatic command-signature pattern is `arg: T = typer.Argument(...)`, which flake8-bugbear's B008 ("do not perform function calls in argument defaults") flags by design. The ignore is scoped to CLI command modules where typer drives the signature, so the rule still applies everywhere else. The shipped file also picks up routine packaging extras (`readme`, `license`, `authors`, `keywords`, `classifiers`, `[project.urls]`, `[tool.hatch.build.targets.wheel]`, `[tool.pytest.ini_options]`) that the sample below omitted for brevity.
+
 ```toml
 [project]
 name = "carve"
@@ -131,6 +133,12 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer's idiomatic pattern is `arg: T = typer.Argument(...)` in the command
+# signature. Flake8-bugbear B008 flags it; we intentionally accept the pattern
+# in CLI command modules where typer drives the signature.
+"src/carve/cli/commands/*.py" = ["B008"]
 
 [tool.mypy]
 strict = true
