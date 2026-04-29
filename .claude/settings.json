@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__reddit__get_post_details",
+      "mcp__reddit__browse_subreddit",
+      "mcp__reddit__search_reddit"
+    ]
+  }
+}

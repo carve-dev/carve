@@ -10,6 +10,17 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from carve.core.config import ServerConfig
+from carve.core.config.schema import (
+    Config,
+    ModelsConfig,
+    ProjectConfig,
+)
+from carve.core.state.database import (
+    create_engine_from_config,
+    initialize_database,
+)
+
 console = Console()
 
 CARVE_TOML_CONTENT = """\
@@ -85,5 +96,26 @@ def command(
     _write_if_missing(root / ".env.example", ENV_EXAMPLE_CONTENT)
     _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
 
+    _initialize_state_store(root)
+
     console.print("[green]✓[/green] Project initialized.")
     raise typer.Exit(code=0)
+
+
+def _initialize_state_store(project_root: Path) -> None:
+    """Create `.carve/state.db` with the M1 schema.
+
+    `carve init` runs before `models.toml` exists, so we can't call
+    `load_config()` here. Instead we synthesise a minimal Config that
+    only the state-store helpers will read — they touch
+    `config.server.state_store` and nothing else.
+    """
+    config = Config(
+        project=ProjectConfig(name="bootstrap"),
+        models=ModelsConfig(anthropic_api_key="bootstrap"),
+        server=ServerConfig(),
+    )
+    engine = create_engine_from_config(config, project_dir=project_root)
+    initialize_database(engine)
+    engine.dispose()
+    console.print(f"[green]+[/green] {project_root / '.carve' / 'state.db'}")

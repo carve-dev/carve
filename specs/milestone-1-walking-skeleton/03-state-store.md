@@ -141,24 +141,32 @@ class Repository:
     def save_plan(self, plan: Plan): ...
     def get_plan(self, plan_id: str) -> Plan | None: ...
     def list_plans(self, limit: int = 50) -> list[Plan]: ...
-    def expire_old_plans(self): ...
+    def list_expired_plans(self, now: datetime | None = None) -> list[Plan]: ...
+    def expire_old_plans(self, now: datetime | None = None) -> int: ...
 ```
+
+> **Updated during implementation (2026-04-29):** `expire_old_plans` was split into two methods. `list_expired_plans` returns the un-applied plans whose `expires_at` is in the past; `expire_old_plans` returns just the count for use in CLI hints. Neither deletes data in M1 — the on-disk JSON remains the source of truth, and a soft-delete column may be added in M2. Both accept an injectable `now` for tests.
 
 The repository is the only component that talks to the database. Higher layers (CLI commands, agents, runners) use the repository.
 
 ### File: `src/carve/core/state/database.py`
 
+> **Updated during implementation (2026-04-29):** `create_engine_from_config` gained a keyword-only `project_dir: Path | None = None` argument so relative `sqlite:///` URLs resolve against the project root rather than the CLI's cwd. `initialize_database` also `mkdir`s the SQLite parent directory before calling `create_all`.
+
 Engine and session management:
 
 ```python
-def create_engine_from_config(config: Config) -> Engine:
-    return create_engine(config.server.state_store, echo=False)
+def create_engine_from_config(config: Config, *, project_dir: Path | None = None) -> Engine:
+    # Resolves relative sqlite:/// URLs against `project_dir` (defaulting
+    # to cwd) and installs WAL + synchronous=NORMAL pragmas for SQLite.
+    ...
 
-def create_session_factory(engine: Engine):
+def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
-def initialize_database(engine: Engine):
-    """Create tables if they don't exist. Called on `carve init`."""
+def initialize_database(engine: Engine) -> None:
+    """Create tables if they don't exist. Called on `carve init`.
+    Also creates the SQLite file's parent directory if needed."""
     Base.metadata.create_all(engine)
 ```
 
@@ -180,20 +188,28 @@ For Postgres later, none of this matters — it handles concurrency natively.
 
 ## Hooking into the CLI
 
+> **Updated during implementation (2026-04-29):** `carve init` runs *before* `carve/models.toml` exists, so calling `load_config()` here would fail validation. The init command instead synthesises a minimal `Config` (with placeholder `project` / `models` sections and a default `ServerConfig`) just to feed `create_engine_from_config`, which only reads `config.server.state_store`. Once a later command runs against an initialized project, `load_config()` is the normal entry point.
+
 `carve init` initializes the database:
 
 ```python
-from carve.core.config import load_config
+from carve.core.config import ServerConfig
+from carve.core.config.schema import Config, ModelsConfig, ProjectConfig
 from carve.core.state.database import create_engine_from_config, initialize_database
 
 def init_command(...):
     # ... create files ...
-    config = load_config()
-    engine = create_engine_from_config(config)
+    config = Config(
+        project=ProjectConfig(name="bootstrap"),
+        models=ModelsConfig(anthropic_api_key="bootstrap"),
+        server=ServerConfig(),
+    )
+    engine = create_engine_from_config(config, project_dir=root)
     initialize_database(engine)
+    engine.dispose()
 ```
 
-The state directory `.carve/` should be created if it doesn't exist. SQLite will auto-create the file at the configured path.
+The state directory `.carve/` should be created if it doesn't exist (`initialize_database` handles this for SQLite). SQLite will auto-create the file at the configured path.
 
 ## Tests
 
