@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "anthropic>=0.34",
     "typer>=0.12",
     "pydantic>=2.6",
     "rich>=13.7",

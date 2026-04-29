@@ -74,6 +74,7 @@ class ModelsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     anthropic_api_key: str
+    default_model: str = "claude-sonnet-4-5-20250929"
 
 
 class RunnerConfig(BaseModel):

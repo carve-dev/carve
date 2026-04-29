@@ -161,6 +161,8 @@ Same path traversal guard. M1 has no diff-presentation; the file just gets writt
 
 **`run_snowflake_query`** — run a SELECT against Snowflake to inspect data
 
+> **Updated during implementation (2026-04-29):** The tool factory takes a `SnowflakeQueryRunner` Protocol (in `m1_tools.py`) rather than depending directly on the M1-06 connector — this keeps M1-04 testable in isolation and lets M1-06 plug in by satisfying the Protocol. The SQL allowlist also gained `DESC` and `WITH` (CTE), and the validator was tightened to reject block comments (`/*`) and multi-statement payloads.
+
 ```python
 {
     "name": "run_snowflake_query",
@@ -176,7 +178,13 @@ Same path traversal guard. M1 has no diff-presentation; the file just gets writt
 }
 ```
 
-The executor validates that the SQL starts with SELECT, SHOW, or DESCRIBE (case-insensitive). Anything else raises an error returned to the agent.
+The executor validates the SQL via `_is_safe_select`, which:
+
+- rejects any input containing `/*` (block comments are not supported by the guard — Snowflake allows nested block comments which a simple regex cannot strip safely);
+- rejects multi-statement payloads — an unquoted `;` followed by any non-whitespace content is treated as a second statement;
+- strips line comments (`--`) and then requires the first remaining token (case-insensitive) to be one of SELECT, SHOW, DESCRIBE, DESC, or WITH.
+
+Anything else raises an error returned to the agent.
 
 ### System prompt for the M1 code agent
 
@@ -256,7 +264,9 @@ A few specific failure modes:
 
 **Path traversal attempts** — return a clear error to the agent: "Path X is outside the project directory and cannot be accessed."
 
-**Forbidden SQL** — return a clear error: "Only SELECT, SHOW, and DESCRIBE statements are allowed via this tool."
+> **Updated during implementation (2026-04-29):** Forbidden-SQL error wording reflects the broader allowlist (SELECT, SHOW, DESCRIBE, DESC, WITH).
+
+**Forbidden SQL** — return a clear error indicating only read-only statements (SELECT, SHOW, DESCRIBE, DESC, WITH) are allowed via this tool.
 
 ## Tests
 
