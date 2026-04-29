@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint and test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      # Placeholder — the project does not yet have installable code.
+      # Will be filled in during M1 (see specs/milestone-1-walking-skeleton/01-cli-foundation.md).
+      - name: Skip until M1-01 lands
+        run: |
+          echo "CI placeholder — no code to lint or test yet."
+          echo "M1-01 (CLI foundation) will fill this in with:"
+          echo "  uv sync"
+          echo "  uv run ruff check"
+          echo "  uv run mypy src/"
+          echo "  uv run pytest"

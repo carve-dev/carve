@@ -1,0 +1,29 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+# This workflow is a placeholder. It becomes active in milestone 3 (M3-12),
+# which adds an mkdocs-material site under `docs/` and configures GitHub Pages
+# deployment. Until then, this workflow runs but does nothing — it exists so
+# the build infrastructure is in place when M3-12 lands.
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy docs (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip until M3-12 lands
+        run: |
+          echo "Docs deployment placeholder — no docs to build yet."
+          echo "M3-12 (documentation site) will fill this in with:"
+          echo "  mkdocs build"
+          echo "  deploy to gh-pages or via the mkdocs-deploy-action"
