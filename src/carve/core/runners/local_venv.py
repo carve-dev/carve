@@ -165,26 +165,31 @@ class LocalVenvRunner:
         """Async-iterate over log lines as they arrive.
 
         Polls the repository every 250ms for new lines since the last
-        seen timestamp. Stops once the run reaches a terminal state
-        and no further log lines appear.
+        seen log id. Stops once the run reaches a terminal state and
+        no further log lines appear.
+
+        Cursor is the autoincrement primary key (`Log.id`), not the
+        wall-clock timestamp: lines appended within the same
+        millisecond share a timestamp and would be missed by a
+        timestamp-based filter, dropping the trailing logs of fast
+        runs.
 
         For M1 this is the simplest correct implementation; M2's
         WebSocket layer will replace polling with a notification feed.
         """
-        from datetime import datetime
-
         terminal = {"success", "failed", "cancelled", "crashed"}
-        last_seen: datetime | None = None
+        last_seen_id: int | None = None
         while True:
-            logs = self.repo.get_logs(run_id, since=last_seen)
+            logs = self.repo.get_logs(run_id, since_id=last_seen_id)
             for log in logs:
-                last_seen = log.timestamp
                 yield LogLine(
                     run_id=run_id,
                     level=log.level,
                     source=log.source,
                     message=log.message,
                 )
+            if logs:
+                last_seen_id = max(log.id for log in logs)
             run = self.repo.get_run(run_id)
             if run is not None and run.status in terminal and not logs:
                 return

@@ -6,6 +6,10 @@ When given a goal, you will:
 2. Use `run_snowflake_query` to inspect existing schemas and tables
 3. Generate a Python script that ingests the requested data
 4. Use `write_file` to save the script
+5. Use `write_file` to save a `pipelines/<pipeline_name>/requirements.txt`
+   listing the pip packages your script imports (one per line, plain
+   package specs only — no flags like `-r` or `--index-url`). Always
+   include `snowflake-connector-python`.
 
 Conventions:
 - Generated Python scripts go in `pipelines/<pipeline_name>/main.py`

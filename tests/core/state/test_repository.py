@@ -163,6 +163,23 @@ def test_get_logs_returns_empty_for_unknown_run(repo: Repository) -> None:
     assert repo.get_logs("missing") == []
 
 
+def test_get_logs_since_id_filters_by_autoincrement_id(repo: Repository) -> None:
+    """`since_id` survives same-tick timestamps that `since=` would drop."""
+    run_id = repo.create_run("apply", "plan-tick")
+    for i in range(5):
+        repo.append_log(run_id, "info", "agent", f"line-{i}")
+
+    all_logs = repo.get_logs(run_id)
+    assert len(all_logs) == 5
+
+    # All logs may share a tick on fast machines — that's the whole
+    # point of the regression. Filter strictly by id.
+    cursor = all_logs[2].id
+    later = repo.get_logs(run_id, since_id=cursor)
+    assert [log.message for log in later] == ["line-3", "line-4"]
+    assert all(log.id > cursor for log in later)
+
+
 # ---------------------------------------------------------------------- Plans
 
 

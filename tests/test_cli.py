@@ -64,18 +64,38 @@ def test_version_matches_pyproject(runner: CliRunner) -> None:
 @pytest.mark.parametrize(
     ("command", "args"),
     [
-        ("plan", ["a goal"]),
-        ("apply", ["plan-id-123"]),
         ("run", ["my_pipeline"]),
-        ("runs", []),
-        ("logs", ["run-id-123"]),
         ("serve", []),
         ("version", []),
     ],
 )
 def test_command_stub_exits_zero(runner: CliRunner, command: str, args: list[str]) -> None:
+    """Stubs that haven't grown a real implementation yet still exit 0."""
     result = runner.invoke(app, [command, *args])
     assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("plan", ["a goal"]),
+        ("apply", ["plan-id-123"]),
+        ("runs", []),
+        ("logs", ["run-id-123"]),
+    ],
+)
+def test_real_command_exits_2_without_carve_toml(
+    runner: CliRunner, tmp_path: Path, command: str, args: list[str]
+) -> None:
+    """Plan/apply/runs/logs fail with exit code 2 when run outside a project.
+
+    Each command loads the merged `Config` and exits 2 on `ConfigError`,
+    so invoking them in an empty tmpdir is the simplest way to exercise
+    the CLI surface without standing up an Anthropic mock or a state store.
+    """
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(app, [command, *args])
+    assert result.exit_code == 2, result.output
 
 
 def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None:
@@ -85,10 +105,32 @@ def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None
     assert (tmp_path / "carve.toml").is_file()
     assert (tmp_path / "carve" / "connections.toml").is_file()
     assert (tmp_path / "carve" / "runner.toml").is_file()
+    assert (tmp_path / "carve" / "models.toml").is_file()
     assert (tmp_path / "carve" / "agents").is_dir()
     assert (tmp_path / "pipelines").is_dir()
     assert (tmp_path / ".env.example").is_file()
     assert (tmp_path / ".gitignore").is_file()
+
+
+def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) -> None:
+    """`carve init` must drop a placeholder `models.toml` so the user has a clear
+    edit target. The file body itself is commented out — the user must uncomment
+    and supply real values before `carve plan` will work."""
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    content = (tmp_path / "carve" / "models.toml").read_text()
+    # Body is a comment block (commented out); active config lines don't appear.
+    assert "anthropic_api_key" in content
+    assert "default_model" in content
+    # The keys must be commented; if they aren't, the loader would parse
+    # the placeholder as a real, broken config.
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # No active config lines expected.
+        raise AssertionError(f"unexpected active line in models.toml placeholder: {line!r}")
 
 
 def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:

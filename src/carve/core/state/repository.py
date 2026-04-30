@@ -131,15 +131,26 @@ class Repository:
         self,
         run_id: str,
         since: datetime | None = None,
+        since_id: int | None = None,
     ) -> list[Log]:
         """Return logs for a run in insertion order.
 
-        `since` is exclusive: callers tailing logs pass the timestamp
-        of the last line they've seen and get strictly newer ones back.
+        Callers tailing logs should prefer `since_id` (the autoincrement
+        primary key) over `since` (a wall-clock timestamp). Two log lines
+        appended within the same `datetime.now()` tick share a timestamp
+        on most platforms; filtering by `Log.id > since_id` makes the
+        tail loop deterministic regardless of clock resolution.
+
+        `since` is retained for backward compatibility — pass the
+        timestamp of the last line you've seen and you'll get strictly
+        newer ones back. If both `since_id` and `since` are supplied,
+        both filters apply (intersection).
         """
         stmt = select(Log).where(Log.run_id == run_id).order_by(Log.id.asc())
         if since is not None:
             stmt = stmt.where(Log.timestamp > since)
+        if since_id is not None:
+            stmt = stmt.where(Log.id > since_id)
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
 
@@ -183,6 +194,22 @@ class Repository:
         )
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
+
+    def mark_plan_applied(self, plan_id: str, run_id: str) -> None:
+        """Stamp `applied_at` and `apply_run_id` on a plan row.
+
+        Called by the applier the moment it creates the run row, so the
+        plan/run join is consistent regardless of how the run finishes.
+        Raises `KeyError` if the plan doesn't exist — callers should
+        only invoke this after a successful `get_plan`.
+        """
+        with self._session_factory() as session:
+            plan = session.get(Plan, plan_id)
+            if plan is None:
+                raise KeyError(f"plan {plan_id!r} not found")
+            plan.applied_at = datetime.now(UTC).replace(tzinfo=None)
+            plan.apply_run_id = run_id
+            session.commit()
 
     def expire_old_plans(self, now: datetime | None = None) -> int:
         """Convenience: count of currently-expired, un-applied plans.

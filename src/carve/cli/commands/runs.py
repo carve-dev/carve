@@ -1,12 +1,45 @@
-"""`carve runs` — stub. Real implementation lands in a later milestone."""
+"""`carve runs` — list recent runs from the state store."""
+
+from __future__ import annotations
+
+from pathlib import Path
 
 import typer
 from rich.console import Console
 
+from carve.cli.orchestrator import render_runs_table
+from carve.core.config import ConfigError, load_config
+from carve.core.state import Repository
+from carve.core.state.database import (
+    create_engine_from_config,
+    create_session_factory,
+    initialize_database,
+)
+
 console = Console()
 
 
-def command() -> None:
+def command(
+    limit: int = typer.Option(20, help="Maximum number of runs to show."),
+) -> None:
     """List recent runs."""
-    console.print("[yellow]TODO[/yellow]: runs command not yet implemented")
+    project_dir = Path.cwd()
+
+    try:
+        config = load_config(project_dir)
+    except ConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+    repository = Repository(session_factory)
+
+    try:
+        renderable = render_runs_table(repository, limit=limit)
+        console.print(renderable)
+    finally:
+        engine.dispose()
+
     raise typer.Exit(code=0)

@@ -41,6 +41,12 @@ RUNNER_TOML_CONTENT = """\
 # Runner configuration lives here. See `M1-02` for the schema.
 """
 
+MODELS_TOML_CONTENT = """\
+# Anthropic / model configuration. See M1-02 for the schema.
+# anthropic_api_key = "${ANTHROPIC_API_KEY}"
+# default_model = "claude-sonnet-4-5"
+"""
+
 ENV_EXAMPLE_CONTENT = """\
 # Copy this to `.env` and fill in real values. `.env` is gitignored.
 # ANTHROPIC_API_KEY=
@@ -91,6 +97,7 @@ def command(
     _write_if_missing(root / "carve.toml", CARVE_TOML_CONTENT)
     _write_if_missing(root / "carve" / "connections.toml", CONNECTIONS_TOML_CONTENT)
     _write_if_missing(root / "carve" / "runner.toml", RUNNER_TOML_CONTENT)
+    _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
     _ensure_dir(root / "pipelines")
     _write_if_missing(root / ".env.example", ENV_EXAMPLE_CONTENT)
