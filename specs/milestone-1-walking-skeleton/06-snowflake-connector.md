@@ -28,16 +28,39 @@ Provide a thin, well-tested wrapper around `snowflake-connector-python` that the
 
 ## Implementation
 
+> **Updated during implementation (2026-04-29):** `SnowflakeError` lives in its own `exceptions.py` (matching the file list below) rather than inside `snowflake.py`, and gained structured `hint` / `error_code` fields. `SnowflakeConnection` also exposes a `run_query(sql, *, limit) -> list[dict]` method to satisfy M1-04's `SnowflakeQueryRunner` Protocol; it delegates to `query()`. The `schema` config field is read as `schema_` to avoid the Pydantic shadow.
+
+### File: `src/carve/core/connectors/exceptions.py`
+
+```python
+class SnowflakeError(Exception):
+    """Wrapped Snowflake error with optional hint context."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        self.message = message
+        self.hint = hint
+        self.error_code = error_code
+        super().__init__(self._render())
+
+    def _render(self) -> str:
+        if self.hint:
+            return f"{self.message}\n  Hint: {self.hint}"
+        return self.message
+```
+
 ### File: `src/carve/core/connectors/snowflake.py`
 
 ```python
 import snowflake.connector
 from snowflake.connector import DictCursor
 from carve.core.config.schema import SnowflakeConnection as ConnConfig
-
-class SnowflakeError(Exception):
-    """Wrapped Snowflake errors with helpful context."""
-    pass
+from carve.core.connectors.exceptions import SnowflakeError
 
 class SnowflakeConnection:
     def __init__(self, config: ConnConfig):
@@ -54,9 +77,10 @@ class SnowflakeConnection:
             "role": self.config.role,
             "warehouse": self.config.warehouse,
             "database": self.config.database,
-            "schema": self.config.schema or "PUBLIC",
+            "schema": self.config.schema_ or "PUBLIC",
         }
 
+        # Auth precedence: externalbrowser → key-pair → password → error.
         if self.config.authenticator == "externalbrowser":
             kwargs["authenticator"] = "externalbrowser"
         elif self.config.private_key_path:
@@ -65,14 +89,17 @@ class SnowflakeConnection:
             kwargs["password"] = self.config.password
         else:
             raise SnowflakeError(
-                "No authentication method configured. "
-                "Provide password, private_key_path, or set authenticator='externalbrowser'."
+                "No authentication method configured.",
+                hint="Provide password, private_key_path, or set authenticator='externalbrowser'.",
             )
 
         try:
             self._connection = snowflake.connector.connect(**kwargs)
         except snowflake.connector.errors.DatabaseError as e:
-            raise SnowflakeError(f"Failed to connect to Snowflake: {e}") from e
+            message, hint, code = _format_error("", e)
+            raise SnowflakeError(
+                f"Failed to connect to Snowflake: {e}", hint=hint, error_code=code
+            ) from e
 
         return self._connection
 
@@ -85,12 +112,15 @@ class SnowflakeConnection:
         conn = self.connect()
         cursor = conn.cursor(DictCursor)
         try:
-            if limit is not None and not self._has_limit(sql):
-                sql = f"{sql.rstrip(';')} LIMIT {limit}"
-            cursor.execute(sql, params or {})
+            final_sql = sql
+            if limit is not None and not _has_limit(final_sql):
+                # rstrip whitespace before stripping the trailing semicolon.
+                final_sql = f"{final_sql.rstrip().rstrip(';')} LIMIT {int(limit)}"
+            cursor.execute(final_sql, params or {})
             return [dict(row) for row in cursor.fetchall()]
         except snowflake.connector.errors.ProgrammingError as e:
-            raise SnowflakeError(self._format_error(sql, e)) from e
+            message, hint, code = _format_error(sql, e)
+            raise SnowflakeError(message, hint=hint, error_code=code) from e
         finally:
             cursor.close()
 
@@ -102,15 +132,26 @@ class SnowflakeConnection:
             cursor.execute(sql, params or {})
             return cursor.rowcount or 0
         except snowflake.connector.errors.ProgrammingError as e:
-            raise SnowflakeError(self._format_error(sql, e)) from e
+            message, hint, code = _format_error(sql, e)
+            raise SnowflakeError(message, hint=hint, error_code=code) from e
         finally:
             cursor.close()
+
+    def run_query(self, sql: str, *, limit: int) -> list[dict]:
+        """Protocol-compliant entry point for M1-04's `SnowflakeQueryRunner`.
+
+        Delegates to `query()`; kept distinct so the keyword-only `limit`
+        matches the Protocol declared in `carve.core.agents.m1_tools`.
+        """
+        return self.query(sql, limit=limit)
 
     def close(self):
         if self._connection is not None:
             self._connection.close()
             self._connection = None
 ```
+
+`_has_limit(sql)` checks the last ~8 whitespace-delimited tokens (after stripping trailing whitespace and `;`) for the literal `LIMIT`, so we don't double-append when the caller already supplied one.
 
 ### Connection pool
 
@@ -140,6 +181,8 @@ The pool is process-local. SaaS will replace it with a per-tenant pool.
 
 ### Read-only mode for agent queries
 
+> **Updated during implementation (2026-04-29):** `is_read_only()` is module-level (not a method) and is the loose, generic classifier. The agent's `run_snowflake_query` tool in M1-04 keeps its own stricter `_is_safe_select` guard that additionally rejects block comments and multi-statement payloads. The two coexist by design.
+
 The `run_snowflake_query` tool from M1-04 needs to enforce read-only:
 
 ```python
@@ -164,23 +207,25 @@ For tighter enforcement, parse the SQL with `sqlglot` and inspect the AST. M2 ma
 
 ### Error formatting
 
+> **Updated during implementation (2026-04-29):** `_format_error` is a module-level helper that returns a `(message, hint, error_code)` tuple. Callers attach the hint and code to a freshly constructed `SnowflakeError` rather than reading them back out of a pre-rendered string. The driver's `errno` is normalized to a 6-digit zero-padded string when looking up hints, and a non-positive/missing `errno` becomes `None`.
+
 When Snowflake returns an error, the message often references SQL line/column. Format errors helpfully:
 
 ```python
-def _format_error(self, sql: str, exc) -> str:
-    error_code = getattr(exc, "errno", None)
-    error_message = str(exc)
+_ERROR_HINTS: dict[str, str] = {
+    "002003": "Object does not exist or access denied. Check that the table/view name is correct and your role has SELECT privileges.",
+    "002140": "Schema does not exist or access denied. Check role permissions.",
+    "001003": "SQL syntax error. The query failed to parse.",
+}
 
-    hints = {
-        "002003": "Object does not exist or access denied. Check that the table/view name is correct and your role has SELECT privileges.",
-        "002140": "Schema does not exist or access denied. Check role permissions.",
-        "001003": "SQL syntax error. The query failed to parse.",
-    }
-
-    hint = hints.get(error_code, "")
-    if hint:
-        return f"{error_message}\n  Hint: {hint}"
-    return error_message
+def _format_error(sql: str, exc) -> tuple[str, str | None, str | None]:
+    raw = getattr(exc, "errno", None)
+    if raw is None or (isinstance(raw, int) and raw <= 0):
+        error_code = None
+    else:
+        error_code = raw if isinstance(raw, str) else f"{raw:06d}"
+    hint = _ERROR_HINTS.get(error_code) if error_code else None
+    return str(exc), hint, error_code
 ```
 
 Maintain this hint table; add common ones over time.
