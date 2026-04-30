@@ -1,113 +1,68 @@
-# M1.1-07 — Failed runs permit retry
+# M1.1-07 — Drop the `carve apply` replay guard
 
 **Milestone:** 1.1 — M1 follow-ups
-**Estimated effort:** 0.25 day
-**Dependencies:** M1-03 (state store), M1 integration (orchestrator/applier)
+**Estimated effort:** 0.1 day (tiny — one branch + one helper call gets removed)
+**Dependencies:** M1 integration (orchestrator/applier)
+**Supersedes by:** M1.1-06 if that lands first.
 
 ## Purpose
 
-Today's `carve apply` (and its renamed successor `carve run`, post-M1.1-06) marks a plan as "applied" the moment a run is dispatched, regardless of whether the run succeeds. The replay guard then blocks a second `apply`/`run` of that plan. The intent of the guard was to prevent silent re-execution of an already-successful plan ("destroy audit history" in the original review note). It overshoots: a 4-second failure that never wrote any data still locks the plan.
+The replay guard added during the M1 integration blocks any second `carve apply` of a plan, regardless of whether the prior run succeeded or failed. Surfaced during the first M1 smoke test: a 4-second Snowflake-permissions failure left the plan locked, forcing the user to either pay for a fresh `carve plan` or hand-edit SQLite.
 
-Surfaced during the first real M1 smoke test: the user's pipeline failed at `CREATE TABLE` (Snowflake permissions issue), and now the only way to retry the same plan is to either edit SQLite by hand or pay for a fresh `carve plan`. Neither is acceptable.
+The guard's premise — "an applied plan shouldn't be silently re-executed" — assumed plans were the operational unit. **They aren't.** Pipelines are. Re-running a pipeline is the normal operation, and the guard was solving a non-problem. Drop it.
 
-Make the guard distinguish success from failure: a plan with at least one **successful** run is considered applied; a plan whose only runs all failed remains retriable.
+If M1.1-06 (pipeline-centric lifecycle) lands first, this spec is **superseded**: that spec already removes the guard from the renamed `carve run` command and reserves `carve apply` for M2 prod-PR deploys, where idempotency genuinely matters.
+
+If M1.1-06 hasn't landed yet, this spec is the minimum viable fix — drop the guard from `carve apply` so smoke-testing isn't blocked by transient failures.
 
 ## Scope
 
-### In scope
+### In scope (only if M1.1-06 hasn't landed)
 
-- A repository helper `plan_has_successful_run(plan_id) -> bool` that joins `plans` to `runs` (via `apply_run_id` / future `run_run_id`, or via a more general `runs.target_id == plan_id`) and checks whether any run reached terminal status `success`.
-- Update the apply/run guard in the orchestrator to use that helper instead of the bare `applied_at is not None` check.
-- Decide on the semantics of `applied_at` / `apply_run_id` (and post-M1.1-06's `built_at` / `built_run_id`):
-  - **Option A:** keep marking on every attempt; the guard switches to "any prior success" via the new helper. `applied_at` becomes "first attempted at," which is misleading. Reject this option.
-  - **Option B (recommended):** mark `applied_at` and `apply_run_id` only on **successful** terminal status. Failed runs leave both null. The guard then degenerates to today's logic — `applied_at is not None` means "succeeded at least once." Simplest, no new joins, and the column names stop lying.
-  - Pick Option B. It's a behavior change to the existing `mark_plan_applied` helper: move the call from the apply-dispatch path to the post-completion success branch.
-- A clear error message when the guard does fire, naming the prior successful run id and timestamp so the user knows what they're hitting.
-- Tests: failed-then-retry succeeds; succeeded-then-retry blocks; multiple-fails-then-success works; subsequent retry after success blocks.
+- Remove the `applied_at is not None` check from `apply_plan` in `src/carve/cli/orchestrator/applier.py`.
+- Remove the `mark_plan_applied(...)` call. The column stays in the schema for now; nothing reads it after this change. (M1.1-06 will repurpose it as a `last_run_id` denorm.)
+- Update the test `test_apply_rejects_already_applied_plan` to invert: applying twice should succeed twice.
+- Update the documentation comment in `apply_plan` to explain that re-runs are expected.
 
 ### Out of scope
 
-- A `--force` flag to override the guard. The user can fall back to `carve plan` (cheap) if they really want to re-run a successful plan; we don't need a CLI escape hatch yet.
-- Pruning the run history. All run rows persist for audit, including failed ones.
-- Concurrent-retry guards (two `carve apply` invocations of the same plan racing). Single-user CLI; not a real risk in M1.
-- Marking on `cancelled` status as success-equivalent. Cancellations are explicit user actions; treat them as not-applied (retriable). Document the choice.
+- Anything M1.1-06 covers. If both specs are in play, defer to M1.1-06.
+- Cleaning up the unused `applied_at`/`apply_run_id` columns. M1.1-06's migration handles that.
+- Adding a different guard for `carve apply` semantics. M2 introduces the prod-PR flow; that's where the guard belongs (e.g., "block apply if the pipeline hasn't successfully run in dev since the last build").
 
 ## Implementation
 
-### `src/carve/core/state/repository.py`
+`src/carve/cli/orchestrator/applier.py`:
 
-Update `mark_plan_applied(plan_id, run_id)` to be a no-op when called for a non-success terminal state. Or, more cleanly, rename the trigger:
+- Delete the `if plan_row.applied_at is not None: ...` branch and its error message.
+- Delete the post-success `repo.mark_plan_applied(...)` call.
 
-```python
-def record_run_completion(self, plan_id: str, run_id: str, status: str) -> None:
-    """Record that a run terminated. Sets applied_at only on success."""
-    if status != "success":
-        return
-    with self._session_factory() as session:
-        plan = session.get(Plan, plan_id)
-        if plan is None:
-            raise KeyError(f"Plan {plan_id!r} not found")
-        plan.applied_at = _utcnow()
-        plan.apply_run_id = run_id
-        session.commit()
-```
+`src/carve/core/state/repository.py`:
 
-Or keep the method named `mark_plan_applied` and add a `if status != "success": return` guard at the top — same behavior, less churn elsewhere.
-
-The old call site in `applier.py` that fires before `runner.execute` goes away. The new call site is in the post-`runner.wait` path, after we know whether the run succeeded.
-
-### `src/carve/cli/orchestrator/applier.py`
-
-Move the `mark_plan_applied(...)` call from "before dispatch" to "after success" — specifically inside the `if final_status == "success":` branch (or wherever the success status is computed; today it's after the live-tail loop returns and `repo.get_run(run_id)` is read).
-
-Update the replay-attack guard's error message:
-
-```
-Plan {plan_id} was already applied successfully at {applied_at} (run_id={apply_run_id}).
-Re-running successful plans is not supported in M1.1; generate a new plan with
-`carve plan`.
-```
-
-(Post-M1.1-06: replace the wording with `carve build` / `carve run` semantics. The guard moves to `runner.py` and the message references "ran" instead of "applied.")
-
-### Tests
+- `mark_plan_applied` becomes dead code after the call site is removed. Leave the helper in place for one cycle; M1.1-06 deletes it when it renames the orchestrator file.
 
 `tests/cli/orchestrator/test_applier.py`:
 
-- `test_apply_succeeded_run_blocks_retry` — apply twice on a script that exits 0; second call exits 1 with the new error message naming the first run id.
-- `test_apply_failed_run_permits_retry` — apply twice on a script that exits 7; first marks the run failed and leaves the plan unapplied; second call dispatches a fresh run.
-- `test_apply_failed_then_succeeded_then_retry_blocks` — apply on a flaky script (use a counter file in `tmp_path`) that fails the first time and succeeds the second; third apply blocks.
-- `test_apply_cancelled_run_permits_retry` — runner is forced to cancel mid-run (timeout); cancelled status leaves the plan unapplied; subsequent apply works.
-
-`tests/core/state/test_repository.py`:
-
-- `test_mark_plan_applied_is_no_op_for_failed_status` — call `mark_plan_applied(..., status="failed")`, assert plan.applied_at is None.
-- `test_mark_plan_applied_records_success` — call with status="success", assert applied_at set.
+- Replace `test_apply_rejects_already_applied_plan` with `test_apply_succeeds_when_run_twice`. Assert: two consecutive `apply_plan(...)` calls both produce success runs and the run history contains two rows for the plan.
 
 ## Acceptance criteria
 
-- A plan whose only runs are `failed` or `cancelled` can be re-applied without manual SQLite surgery.
-- A plan with at least one `success` run blocks subsequent applies, with an error message that names the successful run.
-- The guard's error message tells the user how to proceed (replan).
-- `ruff` + `mypy --strict` + full `pytest` stay green; new tests cover all four state combinations.
-- Short `## [Unreleased]` note in `CHANGELOG.md`.
+- `carve apply <plan_id>` succeeds on a previously-applied plan.
+- The `applied_at` column may or may not be set after the call — its semantics are undefined until M1.1-06 either reuses it or drops it.
+- `ruff` + `mypy --strict` + full `pytest` stay green.
 
 ## Files this spec produces
 
 Modified:
 
-- `src/carve/core/state/repository.py` (`mark_plan_applied` only fires on success)
-- `src/carve/cli/orchestrator/applier.py` (move the call to the success branch; update error message)
+- `src/carve/cli/orchestrator/applier.py` (drop guard, drop mark call)
 - `tests/cli/orchestrator/test_applier.py`
-- `tests/core/state/test_repository.py`
-- `CHANGELOG.md`
-
-Post-M1.1-06: same edits in `runner.py` (renamed file) with the new wording.
+- `CHANGELOG.md` (one-line note)
 
 No new files.
 
 ## What this enables
 
-- Smoke-testing M1 stops requiring manual database edits when you hit a Snowflake-permissions issue on the first try.
-- The `applied_at` column finally means what its name says: "this plan ran successfully at this time."
-- The guard semantics — "block on prior success" — are the right shape for M1.1-06's post-rename `run` command and for M2's prod-PR `apply`.
+- Smoke-testing M1 stops requiring manual SQLite surgery when a pipeline fails.
+- The `applied_at` column is freed up for M1.1-06's repurpose (or removal).
+- The replay-guard concept moves to where it belongs — M2's prod-promotion `carve apply`.
