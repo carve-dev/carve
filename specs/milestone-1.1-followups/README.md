@@ -15,6 +15,7 @@ A new user can:
 - `carve init` writes commented-out, ready-to-edit templates for `connections.toml`, `models.toml`, `runner.toml`, and an expanded `.env.example`.
 - The CLI auto-loads `.env` from the project root at startup, so the natural setup flow (`init` → edit `.env` → `plan`) just works.
 - `carve plan` prints live progress as the agent calls tools, instead of a frozen terminal followed by a summary.
+- The M1 code agent gets a tightened system prompt: connection-context preamble (so the agent stops inventing destination databases), and rules against generating `## How to Run` sections that bypass `carve apply`.
 - A second auth mode (`claude_code_oauth`) on `ModelsConfig` that uses the Claude Agent SDK instead of the `anthropic` SDK, drawing on the user's Claude Code Max plan credits.
 
 ## What is explicitly deferred
@@ -31,9 +32,10 @@ In recommended build order:
 1. [`01-init-config-templates.md`](./01-init-config-templates.md) — replace the one-line comment placeholders with working templates (small, low-risk).
 2. [`03-dotenv-autoload.md`](./03-dotenv-autoload.md) — auto-load `.env` at CLI startup (small; pairs naturally with `01` so the templated `.env.example` becomes a working default).
 3. [`04-plan-progress-output.md`](./04-plan-progress-output.md) — live progress output during `carve plan` (small; addresses the "is it broken?" perception).
-4. [`02-claude-code-oauth.md`](./02-claude-code-oauth.md) — add the OAuth auth path (larger, needs SDK investigation).
+4. [`05-m1-agent-prompt-tightening.md`](./05-m1-agent-prompt-tightening.md) — connection-context preamble + ban "How to Run" sections in plan summaries.
+5. [`02-claude-code-oauth.md`](./02-claude-code-oauth.md) — add the OAuth auth path (larger, needs SDK investigation).
 
-`01`, `03`, and `04` should ship first because they unblock or unbreak every new user and are mutually independent. `02` requires reading the `claude-agent-sdk` Python package and may produce schema/CLI changes worth landing once `01`'s templates are in place to advertise the new auth_mode.
+`01`, `03`, `04`, and `05` should ship first because they unblock or unbreak every new user and are mutually independent. `02` requires reading the `claude-agent-sdk` Python package and may produce schema/CLI changes worth landing once `01`'s templates are in place to advertise the new auth_mode.
 
 ## Definition of done
 
