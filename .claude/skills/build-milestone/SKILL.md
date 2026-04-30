@@ -15,13 +15,14 @@ A milestone ID: `M1`, `M2`, or `M3`.
 
 ### 1. Resolve the milestone
 
-Map the argument to a directory:
+The argument matches `M(\d+(?:\.\d+)?)` (so both major milestones like `M1`/`M2`/`M3` and dotted follow-up milestones like `M1.1` work). Map the argument to a directory by globbing `specs/milestone-{token}-*/` where `{token}` is the part after the leading `M`:
 
 - `M1` → `specs/milestone-1-walking-skeleton/`
+- `M1.1` → `specs/milestone-1.1-followups/`
 - `M2` → `specs/milestone-2-real-product/`
 - `M3` → `specs/milestone-3-polish/`
 
-If the argument doesn't match, abort with a clear error.
+If exactly one directory matches, use it. If zero or multiple match, abort with a clear error naming the candidates.
 
 ### 2. Read the milestone README
 

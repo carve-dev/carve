@@ -19,9 +19,9 @@ The primary entry point for building a Carve spec. This skill orchestrates the f
 Map the argument to a file path:
 
 - If the argument is a path that exists, use it directly.
-- If the argument is an ID matching `M(\d+)-(\d+)`:
-  - Find the milestone directory by leading number: `M1` → `specs/milestone-1-walking-skeleton/`, `M2` → `specs/milestone-2-real-product/`, `M3` → `specs/milestone-3-polish/`.
-  - Find the spec file by leading number: `M1-04` → `specs/milestone-1-walking-skeleton/04-*.md`.
+- If the argument is an ID matching `M(\d+(?:\.\d+)?)-(\d+)` (so both `M1-04` and `M1.1-02` resolve):
+  - Find the milestone directory by the leading milestone token. Glob `specs/milestone-{token}-*/` — that's the canonical pattern (`milestone-1-walking-skeleton/`, `milestone-1.1-followups/`, `milestone-2-real-product/`, `milestone-3-polish/`, etc.). If exactly one directory matches, use it; if zero or multiple, abort with a clear error.
+  - Find the spec file by the trailing number, glob `<milestone-dir>/{NN}-*.md` (e.g. `M1-04` → `specs/milestone-1-walking-skeleton/04-*.md`, `M1.1-02` → `specs/milestone-1.1-followups/02-*.md`).
 - If neither resolves, abort with a clear error.
 
 Read the resolved file. Extract:
