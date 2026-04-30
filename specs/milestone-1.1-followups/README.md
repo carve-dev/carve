@@ -13,6 +13,7 @@ A new user can:
 ## What ships
 
 - `carve init` writes commented-out, ready-to-edit templates for `connections.toml`, `models.toml`, `runner.toml`, and an expanded `.env.example`.
+- The CLI auto-loads `.env` from the project root at startup, so the natural setup flow (`init` → edit `.env` → `plan`) just works.
 - A second auth mode (`claude_code_oauth`) on `ModelsConfig` that uses the Claude Agent SDK instead of the `anthropic` SDK, drawing on the user's Claude Code Max plan credits.
 
 ## What is explicitly deferred
@@ -27,9 +28,10 @@ A new user can:
 In recommended build order:
 
 1. [`01-init-config-templates.md`](./01-init-config-templates.md) — replace the one-line comment placeholders with working templates (small, low-risk).
-2. [`02-claude-code-oauth.md`](./02-claude-code-oauth.md) — add the OAuth auth path (larger, needs SDK investigation).
+2. [`03-dotenv-autoload.md`](./03-dotenv-autoload.md) — auto-load `.env` at CLI startup (small; pairs naturally with `01` so the templated `.env.example` becomes a working default).
+3. [`02-claude-code-oauth.md`](./02-claude-code-oauth.md) — add the OAuth auth path (larger, needs SDK investigation).
 
-`01` should ship first because it has no upstream dependency and unblocks every new user. `02` requires reading the `claude-agent-sdk` Python package and may produce schema/CLI changes worth landing once `01`'s templates are in place to advertise the new auth_mode.
+`01` and `03` should ship first because they unblock every new user and are independent of `02`. Build `01` before `03` if you want, or in parallel — they don't depend on each other in code, only in narrative. `02` requires reading the `claude-agent-sdk` Python package and may produce schema/CLI changes worth landing once `01`'s templates are in place to advertise the new auth_mode.
 
 ## Definition of done
 
