@@ -61,10 +61,12 @@ The exact wording can be tuned during implementation; the shape and coverage bel
 
 ### `carve/models.toml`
 
-```toml
-# Anthropic / model configuration.
+The whole file *is* the `[models]` section — do **not** add a `[models]` or `[anthropic]` header. Fields go at the top level.
 
-# [anthropic]
+```toml
+# Anthropic / model configuration. The keys here populate the `models`
+# section of the merged config — write fields at the top level, no header.
+
 # anthropic_api_key = "${ANTHROPIC_API_KEY}"
 # default_model = "claude-sonnet-4-5"
 
@@ -74,11 +76,14 @@ The exact wording can be tuned during implementation; the shape and coverage bel
 
 ### `carve/runner.toml`
 
-```toml
-# Runner configuration. The `local_venv` runner is the only M1 option;
-# Docker / remote runners arrive later.
+The whole file *is* the `[runner]` section — do **not** add a `[runner]` header.
 
-# [runner]
+```toml
+# Runner configuration. The keys here populate the `runner` section of
+# the merged config — write fields at the top level, no header.
+# The `local_venv` runner is the only M1 option; Docker / remote runners
+# arrive later.
+
 # type = "local_venv"
 # venv_cache_dir = ".carve/venvs"
 # default_timeout_seconds = 1800
@@ -119,8 +124,8 @@ Update `tests/test_cli.py`:
 - `test_init_carve_toml_content` — unchanged.
 - Replace / expand `test_init_writes_models_toml_placeholder` with **anchor-string** assertions for each templated file:
   - `connections.toml` contains `# [snowflake.dev]` and `# account = "${SNOWFLAKE_ACCOUNT}"` and `# authenticator = "externalbrowser"`.
-  - `models.toml` contains `# [anthropic]` and `# default_model = "claude-sonnet-4-5"`.
-  - `runner.toml` contains `# [runner]` and `# default_timeout_seconds = 1800`.
+  - `models.toml` contains `# anthropic_api_key = ` and `# default_model = "claude-sonnet-4-5"`. **Must not** contain a `[models]` or `[anthropic]` header — assert their absence.
+  - `runner.toml` contains `# type = "local_venv"` and `# default_timeout_seconds = 1800`. **Must not** contain a `[runner]` header — assert its absence.
   - `.env.example` contains `# SNOWFLAKE_ACCOUNT=` and `# SNOWFLAKE_USER=`.
 - Add an integration-shaped test (no real network) that calls `load_config()` against a `tmp_path` initialized by `carve init`. The loader should succeed using schema defaults (no real values uncommented), proving the templated files still parse to a valid empty-shaped config.
 
