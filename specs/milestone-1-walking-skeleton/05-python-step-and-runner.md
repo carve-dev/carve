@@ -125,12 +125,21 @@ Note that `execute()` is non-blocking. `wait()` is blocking. This separation let
 
 The OSS implementation. `src/carve/core/runners/local_venv.py`:
 
+> **Updated during implementation (2026-04-29):** `__init__` gained a `python_executable` keyword (defaulting to `sys.executable`) so tests can pin the interpreter used to *create* venvs. Subprocess env strips Carve-internal secrets (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) before the user script can read them. `start_new_session=True` puts the child in its own process group so cancellation can signal the whole tree. Snowflake credentials come from `context.config` rather than `self.config` (see the note under "Snowflake env injection"). A watchdog thread is spawned alongside the streamer.
+
 ```python
 class LocalVenvRunner:
-    def __init__(self, config: RunnerConfig, repo: Repository):
+    def __init__(
+        self,
+        config: RunnerConfig,
+        repo: Repository,
+        *,
+        python_executable: str | None = None,
+    ):
         self.config = config
         self.repo = repo
-        self.processes: dict[str, subprocess.Popen] = {}
+        self.python_executable = python_executable or sys.executable
+        self._processes: dict[str, subprocess.Popen] = {}
 
     def execute(self, step: PythonStep, context: RunContext) -> RunHandle:
         run_id = context.run_id
@@ -140,27 +149,38 @@ class LocalVenvRunner:
 
         # 2. Build the command
         python = venv_path / "bin" / "python"
-        script_abs = context.project_dir / step.config.script
+        script_abs = self._resolve_script(context.project_dir, step.config.script)
 
-        # 3. Build env
-        env = os.environ.copy()
+        # 3. Build env, stripping Carve-internal secrets so the user
+        #    script (which may be LLM-authored) can't read them.
+        env = {
+            k: v for k, v in os.environ.items()
+            if k not in {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+        }
         env.update(step.config.env)
-        env.update(self._snowflake_env(context.target))
+        env.update(_snowflake_env(context))
 
-        # 4. Spawn subprocess
+        # 4. Spawn subprocess in its own process group so cancel()
+        #    can signal the whole tree (forks of the user script).
         proc = subprocess.Popen(
             [str(python), str(script_abs)],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=context.project_dir,
+            cwd=str(context.project_dir),
+            start_new_session=True,
         )
-        self.processes[run_id] = proc
+        self._processes[run_id] = proc
 
-        # 5. Spawn log-streaming thread
+        # 5. Spawn log-streaming thread + watchdog thread
         threading.Thread(
             target=self._stream_logs_to_repo,
             args=(run_id, proc),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._watchdog,
+            args=(run_id, proc, step.config.timeout_seconds),
             daemon=True,
         ).start()
 
@@ -171,21 +191,27 @@ class LocalVenvRunner:
 
 Venvs are expensive to create (~3-10 seconds depending on dependencies). Cache them per unique requirements set:
 
+> **Updated during implementation (2026-04-29):** The cache-key hash is the full SHA-256 hex digest (no `[:16]` truncation), and pip is invoked with a `--` separator so requirement entries can never be parsed as flags. `PythonStepConfig.requirements` also rejects flag-shaped entries at validation time as a defence in depth. The interpreter used to create the venv is `self.python_executable` (overridable via the `LocalVenvRunner` kwarg) rather than `sys.executable` directly.
+
 ```python
 def _ensure_venv(self, requirements: list[str]) -> Path:
-    # Hash the sorted requirements list
+    # Hash the sorted requirements list (full SHA-256, no truncation)
     req_hash = hashlib.sha256(
-        "\n".join(sorted(requirements)).encode()
-    ).hexdigest()[:16]
+        "\n".join(sorted(requirements)).encode("utf-8")
+    ).hexdigest()
 
     venv_dir = Path(self.config.venv_cache_dir) / req_hash
 
     if not venv_dir.exists():
-        # Create venv
-        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
-        # Install deps
-        pip = venv_dir / "bin" / "pip"
-        subprocess.check_call([str(pip), "install", *requirements])
+        # Create venv with the runner's chosen interpreter
+        subprocess.check_call(
+            [self.python_executable, "-m", "venv", str(venv_dir)]
+        )
+        # Install deps. `--` terminates pip's flag parsing so a
+        # requirement entry can never be interpreted as a flag.
+        if requirements:
+            pip = venv_dir / "bin" / "pip"
+            subprocess.check_call([str(pip), "install", "--", *requirements])
 
     return venv_dir
 ```
@@ -198,9 +224,14 @@ Cap total disk usage at 5GB by default; warn if exceeded.
 
 The agent generates Python scripts that read Snowflake credentials from environment variables. The runner injects these from the active connection:
 
+> **Updated during implementation (2026-04-29):** Connections live on the top-level `Config`, not on `RunnerConfig`, so the runner reads them from `RunContext.config` rather than `self.config`. The function was hoisted to a module-level helper (`_snowflake_env(context)`) and now returns an empty dict if the target is not configured rather than raising `KeyError`. The Snowflake config field is `schema_` in Python (the `_` avoids shadowing `BaseModel.schema`); it still serialises as `schema` in TOML.
+
 ```python
-def _snowflake_env(self, target: str) -> dict[str, str]:
-    sf = self.config.connections.snowflake[target]
+def _snowflake_env(context: RunContext) -> dict[str, str]:
+    snowflake = context.config.connections.snowflake
+    sf = snowflake.get(context.target)
+    if sf is None:
+        return {}
     return {
         "SNOWFLAKE_ACCOUNT": sf.account,
         "SNOWFLAKE_USER": sf.user,
@@ -208,7 +239,7 @@ def _snowflake_env(self, target: str) -> dict[str, str]:
         "SNOWFLAKE_ROLE": sf.role,
         "SNOWFLAKE_WAREHOUSE": sf.warehouse,
         "SNOWFLAKE_DATABASE": sf.database,
-        "SNOWFLAKE_SCHEMA": sf.schema or "",
+        "SNOWFLAKE_SCHEMA": sf.schema_ or "",
     }
 ```
 
@@ -238,14 +269,20 @@ The future WebSocket layer (M2) reads from the repo's logs table to stream to cl
 
 Track run start time. A separate watchdog thread or `psutil`-based check kills runs that exceed the configured timeout:
 
+> **Updated during implementation (2026-04-29):** The watchdog captures the `Popen` object at registration and verifies object identity (`tracked is proc`) before cancelling, so a recycled run id can't trigger a stale watchdog against a different process. `cancel()` signals the subprocess's *process group* (via `os.killpg`) rather than just the leader, so forks of the user script die too — paired with `start_new_session=True` at spawn.
+
 ```python
-def _watchdog(self, run_id: str, timeout_seconds: int):
+def _watchdog(self, run_id: str, proc: subprocess.Popen, timeout_seconds: int):
+    if timeout_seconds <= 0:
+        return
     time.sleep(timeout_seconds)
-    if run_id in self.processes:
+    with self._lock:
+        tracked = self._processes.get(run_id)
+    if tracked is proc:
         self.cancel(run_id)
 ```
 
-`cancel()` sends SIGTERM, waits 5 seconds, then SIGKILL if needed.
+`cancel()` sends SIGTERM to the process group, waits 5 seconds, then SIGKILL if needed.
 
 ### Finalizing a run
 
