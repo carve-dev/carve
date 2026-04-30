@@ -73,7 +73,12 @@ class ModelsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    anthropic_api_key: str
+    # Required at *use*-time (commands like `plan` / `build` that talk to the
+    # Anthropic API), not at *load*-time. Keeping it optional lets
+    # `load_config()` succeed against a freshly-initialised project whose
+    # `models.toml` is fully commented; commands that need the key raise a
+    # `ConfigError` themselves when they go to use it.
+    anthropic_api_key: str | None = None
     default_model: str = "claude-sonnet-4-5-20250929"
 
 

@@ -1,5 +1,6 @@
 [project]
-name = "missing-required-project"
+# `name` is required and intentionally omitted so the loader raises
+# ConfigError with a helpful field-path message.
 
 [paths]
 config_dir = "carve"

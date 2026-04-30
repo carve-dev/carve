@@ -106,9 +106,19 @@ class TestConnectionsConfig:
 
 
 class TestModelsConfig:
-    def test_anthropic_key_required(self) -> None:
-        with pytest.raises(ValidationError):
-            ModelsConfig()  # type: ignore[call-arg]
+    def test_anthropic_key_optional_at_load_time(self) -> None:
+        """The API key is required at *use*-time (plan/build), not load-time.
+
+        Keeping it optional lets `load_config()` succeed against a freshly-
+        initialised project whose `models.toml` is fully commented out.
+        """
+        cfg = ModelsConfig()
+        assert cfg.anthropic_api_key is None
+        assert cfg.default_model == "claude-sonnet-4-5-20250929"
+
+    def test_anthropic_key_accepted_when_provided(self) -> None:
+        cfg = ModelsConfig(anthropic_api_key="sk-foo")
+        assert cfg.anthropic_api_key == "sk-foo"
 
 
 class TestRunnerConfig:

@@ -157,9 +157,9 @@ def test_missing_required_field_has_helpful_message(tmp_path: Path) -> None:
         load_config(project)
 
     err = excinfo.value
-    # `models.anthropic_api_key` is required and no models.toml exists.
+    # The fixture omits `project.name`, which has no default.
     assert err.field is not None
-    assert "anthropic_api_key" in err.field
+    assert "name" in err.field
     assert "missing" in err.message.lower() or "required" in err.message.lower()
 
 

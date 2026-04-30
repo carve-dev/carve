@@ -52,7 +52,7 @@ from carve.core.agents import (
     make_write_file_tool,
 )
 from carve.core.agents.loop import TokenUsage
-from carve.core.config import Config
+from carve.core.config import Config, ConfigError
 from carve.core.connectors.exceptions import SnowflakeError
 from carve.core.connectors.snowflake import SnowflakePool
 from carve.core.state import Plan, Repository
@@ -157,9 +157,22 @@ def generate_plan(
     project_dir = project_dir.resolve()
     plan_id = _new_plan_id()
     model = config.models.default_model
-    anthropic_client = client if client is not None else anthropic.Anthropic(
-        api_key=config.models.anthropic_api_key
-    )
+    if client is not None:
+        anthropic_client: Any = client
+    else:
+        api_key = config.models.anthropic_api_key
+        if api_key is None:
+            raise ConfigError(
+                "Anthropic API key is required to generate a plan but is unset.",
+                file="carve/models.toml",
+                field="models.anthropic_api_key",
+                hint=(
+                    "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
+                    "carve/models.toml and set ANTHROPIC_API_KEY in your "
+                    "environment (or .env)."
+                ),
+            )
+        anthropic_client = anthropic.Anthropic(api_key=api_key)
 
     tools = _build_tools(config, project_dir)
 
@@ -170,10 +183,10 @@ def generate_plan(
 
     # `AgentLoop` types its client as the `_AnthropicLike` Protocol; both
     # the real `anthropic.Anthropic` instance and the test `MagicMock`
-    # satisfy it structurally, but mypy's strict mode can't infer that
-    # through the `Any | Anthropic` union — hence the cast.
+    # satisfy it structurally. The local `anthropic_client` is typed
+    # `Any` so the call passes mypy's strict mode without an extra cast.
     loop = AgentLoop(
-        client=anthropic_client,  # type: ignore[arg-type]
+        client=anthropic_client,
         tools=tools,
         system_prompt=system_prompt,
         model=model,

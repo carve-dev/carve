@@ -24,6 +24,7 @@ from carve.cli.orchestrator.planner import (
     PlanGenerationError,
     generate_plan,
 )
+from carve.core.config import ConfigError
 from carve.core.config.schema import (
     Config,
     ConnectionsConfig,
@@ -363,6 +364,30 @@ def test_plan_id_format(
     assert len(parts[1]) == 8 and parts[1].isdigit()
     assert len(parts[2]) == 6 and parts[2].isdigit()
     assert len(parts[3]) == 6 and all(c in "0123456789abcdef" for c in parts[3])
+
+
+def test_plan_raises_config_error_when_api_key_missing(
+    project_dir: Path, repository: Repository
+) -> None:
+    """`models.anthropic_api_key=None` is allowed at load-time; plan must
+    surface a ConfigError pointing the user at `carve/models.toml`. The
+    plan command's existing handler maps that to exit code 2."""
+    config = _config()
+    config.models.anthropic_api_key = None
+
+    with pytest.raises(ConfigError) as exc_info:
+        generate_plan(
+            goal="g",
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            # No client provided — forces the planner to consult the config.
+        )
+
+    err = exc_info.value
+    assert err.field == "models.anthropic_api_key"
+    assert err.file is not None and err.file.as_posix() == "carve/models.toml"
+    assert err.hint is not None and "ANTHROPIC_API_KEY" in err.hint
 
 
 def test_plan_skips_flag_shaped_requirements(

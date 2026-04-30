@@ -34,22 +34,66 @@ config_dir = "carve"
 """
 
 CONNECTIONS_TOML_CONTENT = """\
-# Connection definitions live here. See `M1-02` for the schema.
+# Connection definitions for Snowflake (and future connectors).
+# The key after `[snowflake.<target>]` is the target name, referenced from
+# carve.toml's `default_target` (default: "dev").
+#
+# Use ${VAR_NAME} to interpolate environment variables from .env or your shell.
+
+# [snowflake.dev]
+# account = "${SNOWFLAKE_ACCOUNT}"          # e.g. "abc12345.us-east-1"
+# user = "${SNOWFLAKE_USER}"
+# password = "${SNOWFLAKE_PASSWORD}"
+# role = "${SNOWFLAKE_ROLE}"                # e.g. "SYSADMIN"
+# warehouse = "${SNOWFLAKE_WAREHOUSE}"      # e.g. "COMPUTE_WH"
+# database = "${SNOWFLAKE_DATABASE}"
+# schema = "PUBLIC"                          # optional; defaults to PUBLIC
+
+# Alternative auth methods (uncomment one and remove `password = ...`):
+#
+# Key-pair:
+#   private_key_path = "/path/to/rsa_key.p8"
+#   # set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE in your env if the key is encrypted
+#
+# SSO / external browser (dev only — pops a browser window):
+#   authenticator = "externalbrowser"
 """
 
 RUNNER_TOML_CONTENT = """\
-# Runner configuration lives here. See `M1-02` for the schema.
+# Runner configuration. The keys here populate the `runner` section of
+# the merged config — write fields at the top level, no header.
+# The `local_venv` runner is the only M1 option; Docker / remote runners
+# arrive later.
+
+# type = "local_venv"
+# venv_cache_dir = ".carve/venvs"
+# default_timeout_seconds = 1800
+# max_concurrent_runs = 4
 """
 
 MODELS_TOML_CONTENT = """\
-# Anthropic / model configuration. See M1-02 for the schema.
+# Anthropic / model configuration. The keys here populate the `models`
+# section of the merged config — write fields at the top level, no header.
+
 # anthropic_api_key = "${ANTHROPIC_API_KEY}"
-# default_model = "claude-sonnet-4-5"
+# default_model = "claude-sonnet-4-5-20250929"
+
+# To use your Claude Code subscription instead of an API key, see M1.1-02
+# (auth_mode = "claude_code_oauth"). Not yet implemented as of this version.
 """
 
 ENV_EXAMPLE_CONTENT = """\
 # Copy this to `.env` and fill in real values. `.env` is gitignored.
 # ANTHROPIC_API_KEY=
+
+# Snowflake (used by carve/connections.toml's [snowflake.dev]):
+# SNOWFLAKE_ACCOUNT=
+# SNOWFLAKE_USER=
+# SNOWFLAKE_PASSWORD=
+# SNOWFLAKE_ROLE=
+# SNOWFLAKE_WAREHOUSE=
+# SNOWFLAKE_DATABASE=
+# SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
 """
 
 GITIGNORE_CONTENT = """\

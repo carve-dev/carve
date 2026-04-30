@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from carve.cli.main import app
+from carve.core.config import load_config
 from carve.version import __version__
 
 EXPECTED_COMMANDS = [
@@ -120,9 +121,13 @@ def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) 
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "models.toml").read_text()
-    # Body is a comment block (commented out); active config lines don't appear.
-    assert "anthropic_api_key" in content
-    assert "default_model" in content
+    # Anchor strings — these are the field names a user needs to recognise.
+    assert "# anthropic_api_key = " in content
+    assert '# default_model = "claude-sonnet-4-5-20250929"' in content
+    # `models.toml`'s body *is* the [models] section — the loader merges it
+    # under that key, so the file must not declare its own header.
+    assert "[models]" not in content
+    assert "[anthropic]" not in content
     # The keys must be commented; if they aren't, the loader would parse
     # the placeholder as a real, broken config.
     for line in content.splitlines():
@@ -131,6 +136,64 @@ def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) 
             continue
         # No active config lines expected.
         raise AssertionError(f"unexpected active line in models.toml placeholder: {line!r}")
+
+
+def test_init_writes_connections_toml_template(runner: CliRunner, tmp_path: Path) -> None:
+    """`connections.toml` should ship a fully-commented Snowflake template."""
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    content = (tmp_path / "carve" / "connections.toml").read_text()
+    # Connections is a dict-of-targets shape, so the [snowflake.<target>]
+    # header *does* belong in this file (commented out).
+    assert "# [snowflake.dev]" in content
+    assert '# account = "${SNOWFLAKE_ACCOUNT}"' in content
+    # Both alternative auth methods are documented.
+    assert 'authenticator = "externalbrowser"' in content
+    assert "private_key_path" in content
+
+
+def test_init_writes_runner_toml_template(runner: CliRunner, tmp_path: Path) -> None:
+    """`runner.toml` is the [runner] section — no header inside the file."""
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    content = (tmp_path / "carve" / "runner.toml").read_text()
+    assert '# type = "local_venv"' in content
+    assert "# default_timeout_seconds = 1800" in content
+    # Sub-section file: must not declare its own [runner] header.
+    assert "[runner]" not in content
+
+
+def test_init_writes_env_example_template(runner: CliRunner, tmp_path: Path) -> None:
+    """`.env.example` should list every env var referenced by the templates."""
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    content = (tmp_path / ".env.example").read_text()
+    assert "# ANTHROPIC_API_KEY=" in content
+    assert "# SNOWFLAKE_ACCOUNT=" in content
+    assert "# SNOWFLAKE_USER=" in content
+    assert "# SNOWFLAKE_PASSWORD=" in content
+
+
+def test_init_produces_loadable_config(runner: CliRunner, tmp_path: Path) -> None:
+    """A freshly-initialised project must round-trip through `load_config()`.
+
+    The templates are all commented out, so the merged config falls back to
+    schema defaults. Crucially, `models.anthropic_api_key` is `None` (the
+    field is now optional at load-time); commands that need it raise their
+    own ConfigError at use-time.
+    """
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    config = load_config(tmp_path)
+    assert config.project.name == "my-carve-project"
+    assert config.models.anthropic_api_key is None
+    assert config.models.default_model == "claude-sonnet-4-5-20250929"
+    assert config.runner.type == "local_venv"
+    assert config.connections.snowflake == {}
 
 
 def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
