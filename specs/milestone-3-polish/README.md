@@ -16,6 +16,7 @@ A stranger from the internet can:
 ## What ships in addition to M2
 
 - Multi-step pipelines with `sql`, `shell`, `http` step types
+- Per-step `enabled` flag and `carve step enable/disable/list` commands
 - MCP client integration (consume external MCP servers as skills)
 - Quality agent (split out from dbt agent)
 - Skills SDK (drop a Python file, register a skill)
@@ -54,10 +55,11 @@ In recommended build order:
 11. [`11-example-projects.md`](./11-example-projects.md) — three working examples
 12. [`12-documentation-site.md`](./12-documentation-site.md) — mkdocs-material site
 13. [`13-doctor-command.md`](./13-doctor-command.md) — health checks
+14. [`14-step-disable-enable.md`](./14-step-disable-enable.md) — per-step `enabled` flag and `carve step` commands
 
 ## Definition of done
 
-- All 13 specs implemented
+- All 14 specs implemented
 - Acceptance criteria above met
 - v0.1.0 tagged and pushed
 - Launch blog post written
