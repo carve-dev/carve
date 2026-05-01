@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.markup import escape as _escape
 
 from carve.cli.orchestrator import generate_plan
+from carve.cli.orchestrator.observers import RichConsoleObserver
 from carve.cli.orchestrator.planner import PlanGenerationError
 from carve.core.agents.exceptions import AgentError
 from carve.core.config import ConfigError, load_config
@@ -24,6 +25,12 @@ console = Console()
 
 def command(
     goal: str = typer.Argument(..., help="The goal for the agent."),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress live progress output; print only the final summary.",
+    ),
 ) -> None:
     """Generate a plan for the given goal."""
     project_dir = Path.cwd()
@@ -39,13 +46,22 @@ def command(
     session_factory = create_session_factory(engine)
     repository = Repository(session_factory)
 
+    observer = RichConsoleObserver(console, quiet=quiet)
+
     try:
-        artifact = generate_plan(
-            goal=goal,
-            config=config,
-            project_dir=project_dir,
-            repository=repository,
-        )
+        try:
+            artifact = generate_plan(
+                goal=goal,
+                config=config,
+                project_dir=project_dir,
+                repository=repository,
+                observer=observer,
+            )
+        finally:
+            # Always tear down the live spinner, even if `generate_plan`
+            # raised — otherwise the cursor stays hidden and subsequent
+            # error output collides with the half-drawn live region.
+            observer.close()
     except PlanGenerationError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `carve plan` now prints live progress as the agent works: a spinner
+  status line plus per-tool-call `→ name(args)` / `✓ summary` lines so
+  the terminal no longer appears frozen for 30+ seconds. A `--quiet`
+  (`-q`) flag suppresses the live output for CI/scripted use, leaving
+  only the existing final plan summary. Internally this is driven by a
+  new `AgentObserver` protocol on `AgentLoop`; M2 sinks (WebSocket,
+  JSONL) can plug in without further loop changes.
 - The CLI now auto-loads a project-local `.env` (defaulting to
   `<project-dir>/.env`, overridable with `--env-file`) before any command
   runs. Existing shell vars win — `.env` provides defaults only. Set

@@ -43,6 +43,8 @@ import anthropic
 
 from carve.core.agents import (
     AgentLoop,
+    AgentObserver,
+    NullObserver,
     Tool,
     ToolExecutionError,
     build_m1_tools,
@@ -135,6 +137,7 @@ def generate_plan(
     repository: Repository,
     client: Any | None = None,
     max_turns: int = 30,
+    observer: AgentObserver | None = None,
 ) -> PlanArtifact:
     """Run the M1 code agent and persist the resulting plan.
 
@@ -147,6 +150,9 @@ def generate_plan(
             Production callers pass ``None`` and let us build one from
             ``config.models.anthropic_api_key``.
         max_turns: Cap on agent turns. Same default as `AgentLoop.run`.
+        observer: Optional progress observer. Defaults to `NullObserver`
+            so existing callers and tests keep working unchanged. The
+            CLI passes a `RichConsoleObserver` for live progress output.
 
     Returns:
         `PlanArtifact` with `file_path` populated.
@@ -190,6 +196,7 @@ def generate_plan(
         tools=tools,
         system_prompt=system_prompt,
         model=model,
+        observer=observer if observer is not None else NullObserver(),
     )
     agent_result = loop.run(goal, max_turns=max_turns)
 

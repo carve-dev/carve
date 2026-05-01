@@ -45,7 +45,7 @@ def venv_cache_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if cached is None:
         cached = tmp_path_factory.mktemp("apply-venv-cache")
         _VENV_CACHE_TMPDIR["p"] = cached
-    return cached  # type: ignore[no-any-return]
+    return cached
 
 
 def _config(*, venv_cache_dir: Path, state_db: str) -> Config:

@@ -390,6 +390,79 @@ def test_plan_raises_config_error_when_api_key_missing(
     assert err.hint is not None and "ANTHROPIC_API_KEY" in err.hint
 
 
+def test_plan_forwards_observer_events(
+    project_dir: Path, repository: Repository
+) -> None:
+    """`generate_plan` must thread `observer` through to `AgentLoop`."""
+    config = _config()
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        def on_turn_start(self, turn: int) -> None:
+            self.events.append(f"turn_start:{turn}")
+
+        def on_tool_call(self, name: str, input: dict[str, Any]) -> None:
+            self.events.append(f"tool_call:{name}")
+
+        def on_tool_result(
+            self, name: str, ok: bool, summary: str, duration_ms: int
+        ) -> None:
+            self.events.append(f"tool_result:{name}:{ok}")
+
+        def on_turn_complete(
+            self, turn: int, input_tokens: int, output_tokens: int
+        ) -> None:
+            self.events.append(f"turn_complete:{turn}")
+
+        def on_done(
+            self,
+            total_turns: int,
+            total_tool_calls: int,
+            input_tokens: int,
+            output_tokens: int,
+            cost_usd: float,
+        ) -> None:
+            self.events.append(
+                f"done:{total_turns}:{total_tool_calls}"
+            )
+
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block(
+                    "write_file",
+                    {"path": "pipelines/p/main.py", "content": "print('x')\n"},
+                    tool_id="tu_1",
+                ),
+            ],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("done")], stop_reason="end_turn"),
+    )
+    observer = _Recorder()
+
+    artifact = generate_plan(
+        goal="g",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        observer=observer,
+    )
+
+    # Plan still persists normally
+    assert isinstance(artifact, PlanArtifact)
+    assert repository.get_plan(artifact.id) is not None
+
+    # Observer received turn / tool / done events
+    assert "turn_start:1" in observer.events
+    assert "tool_call:write_file" in observer.events
+    assert "tool_result:write_file:True" in observer.events
+    assert any(e.startswith("done:") for e in observer.events)
+
+
 def test_plan_skips_flag_shaped_requirements(
     project_dir: Path, repository: Repository
 ) -> None:

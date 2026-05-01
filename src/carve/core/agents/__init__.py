@@ -31,16 +31,19 @@ from carve.core.agents.m1_tools import (
     make_run_snowflake_query_tool,
     make_write_file_tool,
 )
+from carve.core.agents.observer import AgentObserver, NullObserver
 from carve.core.agents.pricing import ModelPricing, compute_cost_usd, lookup_pricing
 from carve.core.agents.tools import Tool, ToolExecutionError, ToolExecutor
 
 __all__ = [
     "AgentError",
     "AgentLoop",
+    "AgentObserver",
     "AgentResult",
     "InvalidRequestError",
     "MaxTurnsExceeded",
     "ModelPricing",
+    "NullObserver",
     "RateLimitExhausted",
     "SnowflakeQueryRunner",
     "TokenUsage",

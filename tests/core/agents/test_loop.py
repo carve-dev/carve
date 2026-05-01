@@ -440,3 +440,200 @@ class TestSystemPrompt:
         assert "read_file" in prompt
         assert "write_file" in prompt
         assert "run_snowflake_query" in prompt
+
+
+# --------------------------------------------------------------- observers
+
+
+class _RecordingObserver:
+    """Captures every observer event for later assertions."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def on_turn_start(self, turn: int) -> None:
+        self.events.append(("turn_start", {"turn": turn}))
+
+    def on_tool_call(self, name: str, input: dict[str, Any]) -> None:
+        self.events.append(("tool_call", {"name": name, "input": dict(input)}))
+
+    def on_tool_result(
+        self, name: str, ok: bool, summary: str, duration_ms: int
+    ) -> None:
+        self.events.append(
+            (
+                "tool_result",
+                {
+                    "name": name,
+                    "ok": ok,
+                    "summary": summary,
+                    "duration_ms": duration_ms,
+                },
+            )
+        )
+
+    def on_turn_complete(
+        self, turn: int, input_tokens: int, output_tokens: int
+    ) -> None:
+        self.events.append(
+            (
+                "turn_complete",
+                {
+                    "turn": turn,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            )
+        )
+
+    def on_done(
+        self,
+        total_turns: int,
+        total_tool_calls: int,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+    ) -> None:
+        self.events.append(
+            (
+                "done",
+                {
+                    "total_turns": total_turns,
+                    "total_tool_calls": total_tool_calls,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost_usd,
+                },
+            )
+        )
+
+
+class TestObserver:
+    def test_observer_receives_turn_and_tool_events(self) -> None:
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("echo", {"msg": "hi"}, tool_id="tu_a")],
+                stop_reason="tool_use",
+                usage=_usage(input_tokens=100, output_tokens=20),
+            ),
+            _response(
+                content=[_text_block("ok")],
+                stop_reason="end_turn",
+                usage=_usage(input_tokens=110, output_tokens=15),
+            ),
+        )
+        observer = _RecordingObserver()
+        loop = AgentLoop(
+            client,
+            [_echo_tool()],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+            observer=observer,
+        )
+        loop.run("go")
+
+        names = [name for name, _ in observer.events]
+        assert names == [
+            "turn_start",
+            "turn_complete",
+            "tool_call",
+            "tool_result",
+            "turn_start",
+            "turn_complete",
+            "done",
+        ]
+
+        # Turn numbers
+        assert observer.events[0][1]["turn"] == 1
+        assert observer.events[4][1]["turn"] == 2
+
+        # Tool call carries name + input dict
+        tool_call_payload = observer.events[2][1]
+        assert tool_call_payload["name"] == "echo"
+        assert tool_call_payload["input"] == {"msg": "hi"}
+
+        # Tool result reports ok + duration
+        tool_result_payload = observer.events[3][1]
+        assert tool_result_payload["name"] == "echo"
+        assert tool_result_payload["ok"] is True
+        assert tool_result_payload["duration_ms"] >= 0
+        assert tool_result_payload["summary"]
+
+        # Turn-complete reports running token totals (cumulative)
+        first_complete = observer.events[1][1]
+        assert first_complete["input_tokens"] == 100
+        assert first_complete["output_tokens"] == 20
+        second_complete = observer.events[5][1]
+        assert second_complete["input_tokens"] == 210
+        assert second_complete["output_tokens"] == 35
+
+        # Done reports cumulative numbers
+        done_payload = observer.events[6][1]
+        assert done_payload["total_turns"] == 2
+        assert done_payload["total_tool_calls"] == 1
+        assert done_payload["input_tokens"] == 210
+        assert done_payload["output_tokens"] == 35
+
+    def test_observer_records_tool_failure(self) -> None:
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("boom", {}, tool_id="tu_x")],
+                stop_reason="tool_use",
+            ),
+            _response(content=[_text_block("recovered")], stop_reason="end_turn"),
+        )
+        observer = _RecordingObserver()
+        loop = AgentLoop(
+            client,
+            [_failing_tool()],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+            observer=observer,
+        )
+        result = loop.run("go")
+
+        # Loop kept going past the failure
+        assert result.text == "recovered"
+
+        # The tool_result event is recorded as ok=False
+        tool_results = [e for e in observer.events if e[0] == "tool_result"]
+        assert len(tool_results) == 1
+        payload = tool_results[0][1]
+        assert payload["name"] == "boom"
+        assert payload["ok"] is False
+        assert "boom" in payload["summary"]
+
+        # `done` still fires after recovery
+        assert any(e[0] == "done" for e in observer.events)
+
+    def test_observer_default_is_null_observer(self) -> None:
+        # No observer supplied — the loop must still complete cleanly.
+        client = _client_returning(
+            _response(content=[_text_block("ok")], stop_reason="end_turn"),
+        )
+        loop = AgentLoop(client, [], "sys", "claude-sonnet-4-5-20250929")
+        result = loop.run("go")
+        assert result.text == "ok"
+
+    def test_observer_records_unknown_tool_as_failure(self) -> None:
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("does_not_exist", {}, tool_id="tu_z")],
+                stop_reason="tool_use",
+            ),
+            _response(content=[_text_block("done")], stop_reason="end_turn"),
+        )
+        observer = _RecordingObserver()
+        loop = AgentLoop(
+            client,
+            [],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+            observer=observer,
+        )
+        loop.run("go")
+        tool_results = [e for e in observer.events if e[0] == "tool_result"]
+        assert len(tool_results) == 1
+        payload = tool_results[0][1]
+        assert payload["ok"] is False
+        assert "Unknown tool" in payload["summary"]

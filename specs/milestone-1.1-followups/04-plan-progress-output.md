@@ -87,10 +87,14 @@ The summary-extraction helper lives in `loop.py` as a small private function; to
 
 ### `RichConsoleObserver`
 
+> **Updated during implementation (2026-04-29):** added a public idempotent `close()` method, a non-TTY short-circuit in `_ensure_live`, and `rich.markup.escape` on tool name + arg values to prevent model-controlled strings from injecting Rich markup.
+
 `src/carve/cli/orchestrator/observers.py`:
 
 - Constructor takes a `rich.console.Console` and a `quiet: bool` flag.
 - Maintains a `rich.live.Live` instance for the spinner status line, started in `on_turn_start(1)` and stopped in `on_done(...)`.
+- Exposes a public `close()` method that idempotently stops the `Live` region. The CLI calls it from a `finally` block around `generate_plan(...)` so the cursor is restored even when the agent loop raises (e.g. `MaxTurnsExceeded`, `RateLimitExhausted`).
+- `_ensure_live` short-circuits when `console.is_terminal` is False — non-TTY stdout (CI, piped output) gets the per-event lines but no cursor-control sequences.
 - `on_tool_call`: stops live for the duration, prints the `→ name(args)` line, restarts live (or just uses `live.console.log(...)` which prints above the live region).
 - Truncation rules:
   - `path` argument → `basename(path)` only.
@@ -98,6 +102,7 @@ The summary-extraction helper lives in `loop.py` as a small private function; to
   - Any string argument over 80 chars → first 60 chars + `…`.
   - `content` arg → omit entirely.
   - All other args → repr'd at most 40 chars.
+- Tool name and every argument value are passed through `rich.markup.escape` before being assembled into the `→`/`✓` lines, since those lines are printed with `markup=True`.
 - In `quiet=True` mode, only `on_done` produces output.
 
 ### Planner wiring
@@ -119,9 +124,14 @@ def generate_plan(..., observer: AgentObserver | None = None) -> PlanArtifact:
 def command(goal: str, quiet: bool = typer.Option(False, "--quiet", "-q")):
     ...
     observer = RichConsoleObserver(console, quiet=quiet)
-    artifact = generate_plan(..., observer=observer)
+    try:
+        artifact = generate_plan(..., observer=observer)
+    finally:
+        observer.close()
     ...
 ```
+
+> **Updated during implementation (2026-04-29):** the `generate_plan(...)` call is wrapped in `try`/`finally` that calls `observer.close()`. Without it, when the agent loop raises (e.g. `MaxTurnsExceeded`, `RateLimitExhausted`), the `Live` region never tears down and the terminal cursor stays hidden.
 
 The existing per-plan summary line stays; the observer just adds the running play-by-play above it.
 
@@ -153,20 +163,24 @@ The existing per-plan summary line stays; the observer just adds the running pla
 
 ## Files this spec produces
 
+> **Updated during implementation (2026-04-29):** added `src/carve/py.typed` (marker so `mypy --strict tests/` resolves carve imports — needed to drop now-unused `# type: ignore[arg-type]` comments) and a related cleanup edit in `tests/cli/orchestrator/test_applier.py`.
+
 New:
 
 - `src/carve/core/agents/observer.py`
 - `src/carve/cli/orchestrator/observers.py`
 - `tests/cli/orchestrator/test_observers.py`
+- `src/carve/py.typed` (PEP 561 marker; lets downstream type-checkers resolve `carve.*` imports)
 
 Modified:
 
 - `src/carve/core/agents/loop.py` (observer hooks + summary extraction)
 - `src/carve/core/agents/__init__.py` (export observer types)
 - `src/carve/cli/orchestrator/planner.py` (accept observer arg)
-- `src/carve/cli/commands/plan.py` (--quiet flag, instantiate observer)
+- `src/carve/cli/commands/plan.py` (--quiet flag, instantiate observer, `try`/`finally` around `generate_plan` to call `observer.close()`)
 - `tests/core/agents/test_loop.py` (observer tests)
 - `tests/cli/orchestrator/test_planner.py` (observer wiring assertion)
+- `tests/cli/orchestrator/test_applier.py` (drop unused `# type: ignore[no-any-return]`, now redundant with `py.typed`)
 - `CHANGELOG.md`
 
 ## What this enables

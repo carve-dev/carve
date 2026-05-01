@@ -35,6 +35,7 @@ from carve.core.agents.exceptions import (
     RateLimitExhausted,
     UnexpectedStopReason,
 )
+from carve.core.agents.observer import AgentObserver, NullObserver
 from carve.core.agents.pricing import compute_cost_usd
 
 if TYPE_CHECKING:
@@ -133,6 +134,7 @@ class AgentLoop:
         max_retries: int = 3,
         retry_base_delay: float = 1.0,
         sleep: Any = time.sleep,
+        observer: AgentObserver | None = None,
     ) -> None:
         self.client = client
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
@@ -144,8 +146,10 @@ class AgentLoop:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self._sleep = sleep
+        self.observer: AgentObserver = observer if observer is not None else NullObserver()
         self.messages: list[dict[str, Any]] = []
         self.token_usage = TokenUsage()
+        self._tool_calls_total = 0
 
     # ------------------------------------------------------------------ run
 
@@ -154,13 +158,26 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_message})
 
         for turn in range(1, max_turns + 1):
+            self.observer.on_turn_start(turn)
             response = self._call_api()
             self.token_usage.add(response.usage)
+            self.observer.on_turn_complete(
+                turn,
+                self.token_usage.input_tokens,
+                self.token_usage.output_tokens,
+            )
             assistant_content = self._content_to_serializable(response.content)
             self.messages.append({"role": "assistant", "content": assistant_content})
 
             stop_reason = getattr(response, "stop_reason", None)
             if stop_reason == "end_turn":
+                self.observer.on_done(
+                    total_turns=turn,
+                    total_tool_calls=self._tool_calls_total,
+                    input_tokens=self.token_usage.input_tokens,
+                    output_tokens=self.token_usage.output_tokens,
+                    cost_usd=self.token_usage.cost_usd(self.model),
+                )
                 return AgentResult(
                     text=self._extract_text(response),
                     token_usage=self.token_usage,
@@ -235,22 +252,30 @@ class AgentLoop:
             tool_input = getattr(block, "input", {}) or {}
             tool_use_id = getattr(block, "id", "")
             self._log_tool_call(tool_name, tool_input)
+            self.observer.on_tool_call(tool_name, dict(tool_input))
+            self._tool_calls_total += 1
 
             tool = self.tools.get(tool_name)
             if tool is None:
+                msg = f"Unknown tool: {tool_name!r}"
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": f"Unknown tool: {tool_name!r}",
+                        "content": msg,
                         "is_error": True,
                     }
                 )
+                self.observer.on_tool_result(
+                    tool_name, ok=False, summary=msg, duration_ms=0
+                )
                 continue
 
+            start = time.perf_counter_ns()
             try:
                 output = tool.executor(dict(tool_input))
             except Exception as exc:
+                duration_ms = (time.perf_counter_ns() - start) // 1_000_000
                 results.append(
                     {
                         "type": "tool_result",
@@ -260,14 +285,27 @@ class AgentLoop:
                     }
                 )
                 self._log_tool_error(tool_name, exc)
+                self.observer.on_tool_result(
+                    tool_name,
+                    ok=False,
+                    summary=str(exc),
+                    duration_ms=int(duration_ms),
+                )
                 continue
 
+            duration_ms = (time.perf_counter_ns() - start) // 1_000_000
             results.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
                     "content": _stringify_tool_output(output),
                 }
+            )
+            self.observer.on_tool_result(
+                tool_name,
+                ok=True,
+                summary=_summarize_tool_result(tool_name, output),
+                duration_ms=int(duration_ms),
             )
         return results
 
@@ -348,3 +386,46 @@ def _stringify_tool_output(output: Any) -> str:
         return json.dumps(output, default=str)
     except (TypeError, ValueError):
         return repr(output)
+
+
+def _summarize_tool_result(name: str, result: Any) -> str:
+    """Build a short caller-friendly summary of `result` for the observer.
+
+    Tools return either a string (e.g. `read_file` content) or a dict
+    (e.g. `write_file` returns ``{"path": ..., "bytes_written": ...}``,
+    `run_snowflake_query` returns ``{"row_count": ..., "rows": [...]}``).
+    The summary picks an obvious field per tool, with `"ok"` as the
+    fall-through. This is observer-only — the loop still serializes
+    the full result into the tool_result block separately.
+    """
+    if isinstance(result, dict):
+        if "row_count" in result:
+            try:
+                return f"{int(result['row_count'])} rows"
+            except (TypeError, ValueError):
+                return "ok"
+        if "bytes_written" in result:
+            return _format_bytes(result["bytes_written"]) + " written"
+        if "rows" in result and isinstance(result["rows"], list):
+            return f"{len(result['rows'])} rows"
+        return "ok"
+    if isinstance(result, str):
+        # `read_file` returns the file contents directly.
+        size = len(result.encode("utf-8"))
+        return f"{_format_bytes(size)} read"
+    if isinstance(result, list):
+        return f"{len(result)} items"
+    return "ok"
+
+
+def _format_bytes(n: Any) -> str:
+    """Render a byte count compactly: ``31 B``, ``1.8 KB``, ``2.4 MB``."""
+    try:
+        value = int(n)
+    except (TypeError, ValueError):
+        return "0 B"
+    if value < 1024:
+        return f"{value} B"
+    if value < 1024 * 1024:
+        return f"{value / 1024:.1f} KB"
+    return f"{value / (1024 * 1024):.1f} MB"
