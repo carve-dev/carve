@@ -9,6 +9,7 @@ Verify:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -219,3 +220,74 @@ def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path)
     second = runner.invoke(app, ["init", str(tmp_path)])
     assert second.exit_code == 0
     assert (tmp_path / "carve.toml").read_text() == sentinel
+
+
+# ---------------------------------------------------------------------------
+# M1.1-03: top-level `.env` auto-load callback
+# ---------------------------------------------------------------------------
+
+
+def _arm_probe_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register ``CARVE_DOTENV_PROBE`` with monkeypatch for auto-cleanup.
+
+    ``load_dotenv`` mutates ``os.environ`` directly; pytest's monkeypatch
+    only restores keys it was told about. Setting then deleting the key
+    through monkeypatch records the original (unset) state so the teardown
+    will pop the key regardless of which code path set it.
+    """
+    monkeypatch.setenv("CARVE_DOTENV_PROBE", "")
+    monkeypatch.delenv("CARVE_DOTENV_PROBE", raising=False)
+
+
+def test_callback_loads_env_before_command(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `.env` in --project-dir is loaded before the subcommand body runs."""
+    # tests/conftest.py disables auto-load globally; opt back in for this test.
+    monkeypatch.delenv("CARVE_NO_DOTENV", raising=False)
+    _arm_probe_cleanup(monkeypatch)
+    (tmp_path / ".env").write_text("CARVE_DOTENV_PROBE=from-dotenv\n")
+
+    result = runner.invoke(app, ["--project-dir", str(tmp_path), "version"])
+
+    assert result.exit_code == 0, result.output
+    assert os.environ.get("CARVE_DOTENV_PROBE") == "from-dotenv"
+
+
+def test_callback_respects_carve_no_dotenv(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`CARVE_NO_DOTENV=1` skips the auto-load entirely."""
+    monkeypatch.setenv("CARVE_NO_DOTENV", "1")
+    _arm_probe_cleanup(monkeypatch)
+    (tmp_path / ".env").write_text("CARVE_DOTENV_PROBE=should-not-be-set\n")
+
+    result = runner.invoke(app, ["--project-dir", str(tmp_path), "version"])
+
+    assert result.exit_code == 0, result.output
+    assert "CARVE_DOTENV_PROBE" not in os.environ
+
+
+def test_env_file_option_overrides_default(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--env-file` wins over <project-dir>/.env."""
+    monkeypatch.delenv("CARVE_NO_DOTENV", raising=False)
+    _arm_probe_cleanup(monkeypatch)
+    (tmp_path / ".env").write_text("CARVE_DOTENV_PROBE=default-env\n")
+    custom = tmp_path / "custom.env"
+    custom.write_text("CARVE_DOTENV_PROBE=custom-env\n")
+
+    result = runner.invoke(
+        app,
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--env-file",
+            str(custom),
+            "version",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert os.environ.get("CARVE_DOTENV_PROBE") == "custom-env"

@@ -64,6 +64,8 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 # signature. Flake8-bugbear B008 flags it; we intentionally accept the pattern
 # in CLI command modules where typer drives the signature.
 "src/carve/cli/commands/*.py" = ["B008"]
+# Same rationale for the top-level callback in main.py.
+"src/carve/cli/main.py" = ["B008"]
 
 [tool.mypy]
 strict = true

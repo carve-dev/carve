@@ -36,6 +36,8 @@ Close the gap: when the CLI starts up, look for a `.env` in the project root (th
 
 ### File: `src/carve/cli/dotenv.py`
 
+> **Updated during implementation (2026-04-29):** the double-quoted escape decoder uses a small explicit escape table instead of `bytes(...).decode("unicode_escape")`, and both `read_text()` and the per-line parsing loop are wrapped in try/except so an unreadable / non-UTF-8 / otherwise-broken file silently returns `{}` (extends the "missing file is not an error" contract to "unreadable file is also not an error"). Unknown escapes pass through as a literal `\` + next char so a truncated escape can't crash the CLI.
+
 ```python
 """Tiny .env loader. No external deps, intentional shape."""
 
@@ -58,30 +60,43 @@ _LINE_RE = re.compile(
     re.VERBOSE,
 )
 
+# Small, explicit escape table for double-quoted values. Unknown escapes
+# pass through as literal `\` + next char — never raises.
+_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
+
 
 def load_dotenv(path: Path, *, override: bool = False) -> dict[str, str]:
     """Parse `path` as a .env file. Set any keys not already in os.environ.
 
     Returns the dict of keys actually set this call (for caller logging).
-    Missing file is not an error — returns {}.
+    Missing or unreadable file is not an error — returns {}.
     """
     if not path.is_file():
         return {}
 
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+
     set_keys: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    for raw_line in text.splitlines():
+        try:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = _LINE_RE.match(line)
+            if not m:
+                continue  # silently skip malformed lines; keep this loader forgiving
+            key = m.group("key")
+            value = _unquote(m.group("value"))
+            if not override and key in os.environ:
+                continue
+            os.environ[key] = value
+            set_keys[key] = value
+        except Exception:
+            # Defense in depth: one bad line can't break the rest of the file.
             continue
-        m = _LINE_RE.match(line)
-        if not m:
-            continue  # silently skip malformed lines; keep this loader forgiving
-        key = m.group("key")
-        value = _unquote(m.group("value"))
-        if not override and key in os.environ:
-            continue
-        os.environ[key] = value
-        set_keys[key] = value
     return set_keys
 
 
@@ -89,10 +104,25 @@ def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         body = value[1:-1]
         if value[0] == '"':
-            # Process backslash escapes for double-quoted values.
-            return bytes(body, "utf-8").decode("unicode_escape")
+            return _decode_double_quoted(body)
         return body  # single-quoted: literal
     return value
+
+
+def _decode_double_quoted(body: str) -> str:
+    out: list[str] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = body[i + 1]
+            out.append(_ESCAPES.get(nxt, "\\" + nxt))
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 ```
 
 ### Wire-up: `src/carve/cli/main.py`
@@ -147,7 +177,9 @@ The callback fires exactly once per `carve` invocation. Subcommands that already
 - `test_load_dotenv_handles_quotes_and_comments` — covers `KEY="quoted value"`, `KEY='single'`, `KEY=bare`, `KEY= # comment`, blank lines, lines starting with `#`.
 - `test_load_dotenv_missing_file_is_noop` — returns `{}`, doesn't raise.
 - `test_load_dotenv_skips_malformed_lines` — `not_a_kv_line` and `=missing_key` don't blow up; the rest of the file still loads.
-- `test_load_dotenv_handles_backslash_escapes_in_double_quotes` — `KEY="line1\nline2"` becomes `line1\nline2`. (Use the literal `\n` two-char sequence in the source; the unicode_escape decoder turns it into a newline.)
+> **Updated during implementation (2026-04-29):** parser switched from `unicode_escape` to a small explicit escape table; the test still uses the literal `\n` two-char sequence and asserts it becomes a newline.
+
+- `test_load_dotenv_handles_backslash_escapes_in_double_quotes` — `KEY="line1\nline2"` becomes `line1\nline2`. (Use the literal `\n` two-char sequence in the source; the explicit escape table turns it into a newline.)
 
 `tests/cli/test_main.py` (or extend an existing CLI test):
 
@@ -175,8 +207,11 @@ New:
 
 Modified:
 
+> **Updated during implementation (2026-04-29):** the typer callback uses the same `Argument(...)` / `Option(...)`-as-default idiom as the subcommands, which trips ruff's B008 check. The existing `[tool.ruff.lint.per-file-ignores]` block was extended from `src/carve/cli/commands/*.py` to also cover `src/carve/cli/main.py`, so `pyproject.toml` is also a modified file.
+
 - `src/carve/cli/main.py` (callback)
 - `tests/cli/test_main.py` (or `tests/test_cli.py`, whichever holds the existing CLI tests)
+- `pyproject.toml` (extend the B008 per-file-ignore to cover `src/carve/cli/main.py`)
 - `CHANGELOG.md`
 - `README.md` (one line in the setup section)
 

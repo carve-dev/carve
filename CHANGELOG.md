@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The CLI now auto-loads a project-local `.env` (defaulting to
+  `<project-dir>/.env`, overridable with `--env-file`) before any command
+  runs. Existing shell vars win — `.env` provides defaults only. Set
+  `CARVE_NO_DOTENV=1` to disable for users managing env vars elsewhere
+  (direnv, mise, 1Password CLI).
+
 ### Changed
 
 - `carve init` now writes commented-but-complete templates for
