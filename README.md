@@ -15,6 +15,43 @@ root — the CLI auto-loads `.env` on startup, so there's no
 over `.env`. Set `CARVE_NO_DOTENV=1` to disable the auto-load if you
 manage env vars elsewhere (direnv, mise, 1Password CLI).
 
+## Pipeline lifecycle
+
+Carve splits authoring a pipeline into three verbs that match how
+operators actually think about the work:
+
+```text
+carve plan  "<goal>"         # design only — no files written
+carve build <plan_id>        # materialise the design into pipelines/<name>/
+carve run   <pipeline_name>  # execute the live files; re-runnable any time
+```
+
+Iterate on a draft before you build:
+
+```text
+carve plan --refine <plan_id> "<feedback>"
+```
+
+Modify an existing pipeline (with the live files inlined into the
+agent's context):
+
+```text
+carve plan --pipeline <name> "<change>"
+carve build <new_plan_id>
+```
+
+Inspect what's there:
+
+```text
+carve pipelines               # list all pipelines
+carve pipelines <name>        # plan lineage + recent runs
+carve runs --pipeline <name>  # run history scoped to one pipeline
+carve logs <run_id>           # logs from a specific run
+```
+
+`carve apply <pipeline>` is reserved for prod deploys via PR (M2). In
+M1 it prints a placeholder and points you at `carve run`.
+
 ## Where to look
 
 - **[`specs/`](./specs/)** — the 43 design specs that drive every line of code in this repo. Start with [`specs/PROJECT_PLAN.md`](./specs/PROJECT_PLAN.md) for the milestone roadmap, then [`specs/PRD.md`](./specs/PRD.md) for product context and [`specs/ARCHITECTURE.md`](./specs/ARCHITECTURE.md) for system design.

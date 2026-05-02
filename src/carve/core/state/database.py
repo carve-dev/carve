@@ -5,9 +5,9 @@ The connection string comes from `config.server.state_store` (see
 and `synchronous=NORMAL` on every connection so concurrent reads from
 the CLI and the future API server don't block each other.
 
-`initialize_database` creates the schema via
-`Base.metadata.create_all`. M1 doesn't ship alembic; the first M2 spec
-that needs a schema change will introduce it.
+`initialize_database` runs Alembic migrations to ``head`` so a fresh
+database lands on the latest schema and existing dev databases get the
+new columns when they upgrade across spec boundaries.
 """
 
 from __future__ import annotations
@@ -15,11 +15,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, event
+from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
+from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 from carve.core.config import Config
-from carve.core.state.models import Base
+
+# Repository-relative paths to the Alembic ini file and migrations
+# directory. Discovered by walking up from this module — the runtime
+# never `cd`s into the repo, so we have to find these deterministically.
+# Layout: src/carve/core/state/database.py  → parents[4] is the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 
 def create_engine_from_config(config: Config, *, project_dir: Path | None = None) -> Engine:
@@ -51,15 +60,50 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def initialize_database(engine: Engine) -> None:
-    """Create all known tables if they don't already exist.
+    """Bring the database to the latest migration revision.
 
-    Called from `carve init`. Idempotent — re-running on an existing
-    database is a no-op.
+    Called from `carve init` and as a best-effort safeguard from each CLI
+    command that opens an engine. Idempotent — re-running on an up-to-date
+    database is a fast no-op (Alembic checks the `alembic_version` table).
+
+    For an existing M1 database that pre-dates Alembic, the function
+    detects the legacy schema (`runs` exists, `alembic_version` does not)
+    and stamps the baseline before running `upgrade head` so the
+    pipeline-centric migration applies cleanly without trying to recreate
+    tables that are already there.
     """
     parent = _sqlite_path_parent(engine)
     if parent is not None:
         parent.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine)
+
+    cfg = _alembic_config(engine)
+
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    has_baseline_tables = {"runs", "logs", "plans"}.issubset(table_names)
+    has_alembic_table = "alembic_version" in table_names
+
+    with engine.begin() as connection:
+        cfg.attributes["connection"] = connection
+        if has_baseline_tables and not has_alembic_table:
+            # Pre-Alembic dev DB; jump the version pointer past the
+            # baseline so 0001 isn't re-run against existing tables.
+            alembic_command.stamp(cfg, "0001_baseline")
+        alembic_command.upgrade(cfg, "head")
+
+
+def _alembic_config(engine: Engine) -> AlembicConfig:
+    """Construct an Alembic `Config` pointing at the runtime engine.
+
+    The ini file is loaded for `script_location` and logging settings;
+    the URL is overridden so migrations target the same database the
+    runtime engine is bound to. The connection itself is passed via
+    `config.attributes` so env.py reuses it instead of opening a second.
+    """
+    cfg = AlembicConfig(str(_ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+    cfg.set_main_option("sqlalchemy.url", str(engine.url))
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -113,5 +157,10 @@ def _install_sqlite_pragmas(engine: Engine) -> None:
         try:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            # SQLite ships with FK enforcement off by default; the new
+            # M1.1-06 schema has real foreign keys (Pipeline.current_plan_id
+            # → Plan, Plan.pipeline_name → Pipeline, Run.pipeline_name →
+            # Pipeline) that need to be enforced or they're advisory only.
+            cursor.execute("PRAGMA foreign_keys=ON")
         finally:
             cursor.close()

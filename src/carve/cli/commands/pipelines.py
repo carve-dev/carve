@@ -1,4 +1,4 @@
-"""`carve runs` — list recent runs from the state store."""
+"""`carve pipelines` — list pipelines, or show a single pipeline's lineage."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from carve.cli.orchestrator import render_runs_table
+from carve.cli.orchestrator import (
+    render_pipeline_detail,
+    render_pipelines_table,
+)
 from carve.core.config import ConfigError, load_config
 from carve.core.state import Repository
 from carve.core.state.database import (
@@ -20,14 +23,12 @@ console = Console()
 
 
 def command(
-    limit: int = typer.Option(20, help="Maximum number of runs to show."),
-    pipeline: str | None = typer.Option(
+    name: str | None = typer.Argument(
         None,
-        "--pipeline",
-        help="Filter to runs of this pipeline.",
+        help="Pipeline name to inspect. Omit to list all pipelines.",
     ),
 ) -> None:
-    """List recent runs."""
+    """List pipelines or show a single pipeline's lineage."""
     project_dir = Path.cwd()
 
     try:
@@ -42,9 +43,14 @@ def command(
     repository = Repository(session_factory)
 
     try:
-        renderable = render_runs_table(repository, limit=limit, pipeline_name=pipeline)
-        console.print(renderable)
+        if name is None:
+            renderable = render_pipelines_table(repository)
+            console.print(renderable)
+            exit_code = 0
+        else:
+            renderable, exit_code = render_pipeline_detail(repository, name)
+            console.print(renderable)
     finally:
         engine.dispose()
 
-    raise typer.Exit(code=0)
+    raise typer.Exit(code=exit_code)

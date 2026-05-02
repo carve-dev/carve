@@ -6,23 +6,42 @@ transaction, commits, and returns plain ORM objects (or simple Python
 values). `expire_on_commit=False` on the session factory means the
 returned instances are safely detached and can be read after commit.
 
-For M1 the surface is small but covers everything the agent loop and CLI
-need: create/update/list runs, append/read logs, and save/get/list/expire
-plans. M2 will add step-level state and richer filters.
+For M1.1-06 the surface adds pipeline-centric helpers
+(`create_or_update_pipeline`, `get_pipeline`, `list_pipelines`,
+`get_pipeline_lineage`, `record_pipeline_run`) and renames
+`mark_plan_applied` -> `mark_plan_built` to fit the plan/build/run split.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from carve.core.state.models import Log, Plan, Run
+from carve.core.state.models import Log, Pipeline, Plan, Run
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
+
+
+@dataclass
+class PipelineLineage:
+    """Result of `Repository.get_pipeline_lineage`.
+
+    Encapsulates everything `carve pipelines <name>` needs: the parent
+    chain leading up to the current plan, the children/refinements of
+    that plan, and the most recent runs against the pipeline. Built once
+    in a single transaction so the CLI gets a consistent snapshot.
+    """
+
+    pipeline: Pipeline
+    current_plan: Plan | None
+    parent_chain: list[Plan] = field(default_factory=list)
+    children: list[Plan] = field(default_factory=list)
+    recent_runs: list[Run] = field(default_factory=list)
 
 
 class Repository:
@@ -38,7 +57,13 @@ class Repository:
 
     # ------------------------------------------------------------------ Runs
 
-    def create_run(self, kind: str, target_id: str) -> str:
+    def create_run(
+        self,
+        kind: str,
+        target_id: str,
+        *,
+        pipeline_name: str | None = None,
+    ) -> str:
         """Insert a new `runs` row in the default `queued` state.
 
         Returns the generated run id (a UUID4 hex string). The id is
@@ -47,7 +72,14 @@ class Repository:
         """
         run_id = uuid.uuid4().hex
         with self._session_factory() as session:
-            session.add(Run(id=run_id, kind=kind, target_id=target_id))
+            session.add(
+                Run(
+                    id=run_id,
+                    kind=kind,
+                    target_id=target_id,
+                    pipeline_name=pipeline_name,
+                )
+            )
             session.commit()
         return run_id
 
@@ -93,11 +125,15 @@ class Repository:
         self,
         status: str | None = None,
         limit: int = 50,
+        *,
+        pipeline_name: str | None = None,
     ) -> list[Run]:
-        """List runs newest-first, optionally filtered by status."""
+        """List runs newest-first, optionally filtered."""
         stmt = select(Run).order_by(Run.created_at.desc()).limit(limit)
         if status is not None:
             stmt = stmt.where(Run.status == status)
+        if pipeline_name is not None:
+            stmt = stmt.where(Run.pipeline_name == pipeline_name)
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
 
@@ -110,12 +146,7 @@ class Repository:
         source: str,
         message: str,
     ) -> None:
-        """Append a log line for `run_id`.
-
-        The autoincrement primary key plus the default timestamp give us
-        a deterministic ordering for log tails even when multiple lines
-        arrive in the same millisecond.
-        """
+        """Append a log line for `run_id`."""
         with self._session_factory() as session:
             session.add(
                 Log(
@@ -140,11 +171,6 @@ class Repository:
         appended within the same `datetime.now()` tick share a timestamp
         on most platforms; filtering by `Log.id > since_id` makes the
         tail loop deterministic regardless of clock resolution.
-
-        `since` is retained for backward compatibility — pass the
-        timestamp of the last line you've seen and you'll get strictly
-        newer ones back. If both `since_id` and `since` are supplied,
-        both filters apply (intersection).
         """
         stmt = select(Log).where(Log.run_id == run_id).order_by(Log.id.asc())
         if since is not None:
@@ -157,11 +183,7 @@ class Repository:
     # ----------------------------------------------------------------- Plans
 
     def save_plan(self, plan: Plan) -> None:
-        """Insert or update a plan row.
-
-        The ORM object is detached after commit; callers may keep using
-        it for read-only access.
-        """
+        """Insert or update a plan row."""
         with self._session_factory() as session:
             session.merge(plan)
             session.commit()
@@ -171,9 +193,16 @@ class Repository:
         with self._session_factory() as session:
             return session.get(Plan, plan_id)
 
-    def list_plans(self, limit: int = 50) -> list[Plan]:
-        """List plans newest-first."""
+    def list_plans(
+        self,
+        limit: int = 50,
+        *,
+        pipeline_name: str | None = None,
+    ) -> list[Plan]:
+        """List plans newest-first, optionally filtered by pipeline."""
         stmt = select(Plan).order_by(Plan.created_at.desc()).limit(limit)
+        if pipeline_name is not None:
+            stmt = stmt.where(Plan.pipeline_name == pipeline_name)
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
 
@@ -195,28 +224,165 @@ class Repository:
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
 
-    def mark_plan_applied(self, plan_id: str, run_id: str) -> None:
-        """Stamp `applied_at` and `apply_run_id` on a plan row.
+    def mark_plan_built(
+        self,
+        plan_id: str,
+        *,
+        pipeline_name: str,
+        build_run_id: str,
+    ) -> None:
+        """Stamp a plan as ``phase='built'`` after a successful build.
 
-        Called by the applier the moment it creates the run row, so the
-        plan/run join is consistent regardless of how the run finishes.
-        Raises `KeyError` if the plan doesn't exist — callers should
-        only invoke this after a successful `get_plan`.
+        Records the pipeline name the build settled on plus the build's
+        run id (kept on `apply_run_id` for now — same column, new
+        semantics: "first run that materialized this plan"). `applied_at`
+        is also stamped to make plan history queryable without a JOIN.
         """
         with self._session_factory() as session:
             plan = session.get(Plan, plan_id)
             if plan is None:
                 raise KeyError(f"plan {plan_id!r} not found")
+            plan.phase = "built"
+            plan.pipeline_name = pipeline_name
             plan.applied_at = datetime.now(UTC).replace(tzinfo=None)
-            plan.apply_run_id = run_id
+            plan.apply_run_id = build_run_id
             session.commit()
 
     def expire_old_plans(self, now: datetime | None = None) -> int:
-        """Convenience: count of currently-expired, un-applied plans.
-
-        For M1 we don't delete or rewrite anything — the index stays
-        and the on-disk JSON is the source of truth. Callers use the
-        count to surface a hint in the CLI; M2 may switch to a
-        soft-delete column.
-        """
+        """Convenience: count of currently-expired, un-applied plans."""
         return len(self.list_expired_plans(now=now))
+
+    # -------------------------------------------------------------- Pipelines
+
+    def create_or_update_pipeline(
+        self,
+        *,
+        name: str,
+        description: str,
+        pipeline_dir: str,
+        current_plan_id: str | None,
+    ) -> Pipeline:
+        """Insert or update a pipeline row keyed by ``name``.
+
+        The first call for a given name sets ``created_at`` and returns
+        a fresh row. Subsequent calls update ``description``,
+        ``pipeline_dir``, ``current_plan_id``, and ``updated_at``,
+        leaving ``created_at`` and the ``last_run_*`` denorms alone —
+        rebuilds shouldn't reset the run history.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        with self._session_factory() as session:
+            pipeline = session.get(Pipeline, name)
+            if pipeline is None:
+                pipeline = Pipeline(
+                    name=name,
+                    description=description,
+                    pipeline_dir=pipeline_dir,
+                    current_plan_id=current_plan_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(pipeline)
+            else:
+                pipeline.description = description
+                pipeline.pipeline_dir = pipeline_dir
+                pipeline.current_plan_id = current_plan_id
+                pipeline.updated_at = now
+            session.commit()
+            session.refresh(pipeline)
+            return pipeline
+
+    def get_pipeline(self, name: str) -> Pipeline | None:
+        """Fetch a pipeline by name."""
+        with self._session_factory() as session:
+            return session.get(Pipeline, name)
+
+    def list_pipelines(self, limit: int = 50) -> list[Pipeline]:
+        """List pipelines, most-recently-updated first."""
+        stmt = select(Pipeline).order_by(Pipeline.updated_at.desc()).limit(limit)
+        with self._session_factory() as session:
+            return list(session.scalars(stmt).all())
+
+    def get_pipeline_lineage(
+        self,
+        name: str,
+        *,
+        run_limit: int = 10,
+    ) -> PipelineLineage | None:
+        """Build a lineage snapshot for ``carve pipelines <name>``.
+
+        Walks ``parent_plan_id`` from the pipeline's current plan to find
+        the parent chain; queries plans whose ``parent_plan_id`` equals
+        the current plan to find children. Recent runs are filtered by
+        ``pipeline_name`` and capped at ``run_limit``.
+
+        Returns ``None`` if the pipeline doesn't exist.
+        """
+        with self._session_factory() as session:
+            pipeline = session.get(Pipeline, name)
+            if pipeline is None:
+                return None
+
+            current_plan: Plan | None = None
+            if pipeline.current_plan_id is not None:
+                current_plan = session.get(Plan, pipeline.current_plan_id)
+
+            parent_chain: list[Plan] = []
+            cursor = current_plan
+            while cursor is not None and cursor.parent_plan_id is not None:
+                parent = session.get(Plan, cursor.parent_plan_id)
+                if parent is None:
+                    break
+                parent_chain.append(parent)
+                cursor = parent
+
+            children: list[Plan] = []
+            if current_plan is not None:
+                child_stmt = (
+                    select(Plan)
+                    .where(Plan.parent_plan_id == current_plan.id)
+                    .order_by(Plan.created_at.asc())
+                )
+                children = list(session.scalars(child_stmt).all())
+
+            run_stmt = (
+                select(Run)
+                .where(Run.pipeline_name == name)
+                .order_by(Run.created_at.desc())
+                .limit(run_limit)
+            )
+            recent_runs = list(session.scalars(run_stmt).all())
+
+            return PipelineLineage(
+                pipeline=pipeline,
+                current_plan=current_plan,
+                parent_chain=parent_chain,
+                children=children,
+                recent_runs=recent_runs,
+            )
+
+    def record_pipeline_run(
+        self,
+        *,
+        pipeline_name: str,
+        run_id: str,
+        status: str,
+        run_at: datetime | None = None,
+    ) -> None:
+        """Update the denormalized last-run columns on a pipeline.
+
+        Called once a run reaches a terminal state. Idempotent — the
+        last call wins. Silently no-ops if the pipeline row doesn't
+        exist (the run row stays valid; we just have nowhere to update).
+        """
+        timestamp = run_at if run_at is not None else datetime.now(UTC).replace(tzinfo=None)
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone(UTC).replace(tzinfo=None)
+        with self._session_factory() as session:
+            pipeline = session.get(Pipeline, pipeline_name)
+            if pipeline is None:
+                return
+            pipeline.last_run_id = run_id
+            pipeline.last_run_status = status
+            pipeline.last_run_at = timestamp
+            session.commit()

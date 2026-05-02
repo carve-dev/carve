@@ -25,7 +25,8 @@ from carve.core.agents.exceptions import (
 from carve.core.agents.loop import (
     AgentLoop,
     TokenUsage,
-    load_m1_code_agent_prompt,
+    load_m1_build_agent_prompt,
+    load_m1_plan_agent_prompt,
 )
 from carve.core.agents.tools import Tool, ToolExecutionError
 
@@ -218,6 +219,97 @@ class TestToolUse:
         tool_results = client.messages_per_call[1][-1]["content"]
         assert tool_results[0]["is_error"] is True
         assert "Unknown tool" in tool_results[0]["content"]
+        assert result.text == "done"
+
+
+# ---------------------------------------------------------------- terminator
+
+
+class TestTerminatorTool:
+    """`terminator_tool` exits the loop after the matching tool runs."""
+
+    def test_terminator_tool_causes_early_exit(self) -> None:
+        """A turn that calls the terminator tool ends the loop without another API call."""
+        client = _client_returning(
+            _response(
+                content=[
+                    _tool_use_block("submit", {"design": "x"}, tool_id="tu_a"),
+                ],
+                stop_reason="tool_use",
+            ),
+            # This second response would never be requested if the
+            # terminator wiring works — leaving it here turns a regression
+            # into a `StopIteration` from the side_effect iterator.
+            _response(content=[_text_block("should-not-see")], stop_reason="end_turn"),
+        )
+
+        def _submit_executor(input_: dict[str, Any]) -> str:
+            return "ok"
+
+        submit_tool = Tool(
+            name="submit",
+            description="Submit and stop.",
+            input_schema={"type": "object", "properties": {}},
+            executor=_submit_executor,
+        )
+
+        loop = AgentLoop(
+            client,
+            [submit_tool],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+            terminator_tool="submit",
+        )
+        result = loop.run("go")
+
+        # Terminator triggered on turn 1; only one messages.create call.
+        assert client.messages.create.call_count == 1
+        assert result.turns == 1
+        # The synthetic response text is empty since the model didn't
+        # get a chance to summarize after the terminator fired.
+        assert result.text == ""
+        # The user-message-with-tool-results was still appended to the
+        # conversation before the loop exited.
+        assert result.messages[-1]["role"] == "user"
+        assert result.messages[-1]["content"][0]["type"] == "tool_result"
+
+    def test_terminator_tool_unset_behaves_as_before(self) -> None:
+        """No `terminator_tool` kwarg → loop keeps going until end_turn."""
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("echo", {"msg": "hi"}, tool_id="tu_a")],
+                stop_reason="tool_use",
+            ),
+            _response(content=[_text_block("done")], stop_reason="end_turn"),
+        )
+        loop = AgentLoop(
+            client,
+            [_echo_tool()],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+        )
+        result = loop.run("go")
+        assert client.messages.create.call_count == 2
+        assert result.text == "done"
+
+    def test_terminator_tool_name_not_invoked_has_no_effect(self) -> None:
+        """`terminator_tool="other"` while only `echo` runs → loop continues normally."""
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("echo", {"msg": "hi"}, tool_id="tu_a")],
+                stop_reason="tool_use",
+            ),
+            _response(content=[_text_block("done")], stop_reason="end_turn"),
+        )
+        loop = AgentLoop(
+            client,
+            [_echo_tool()],
+            "sys",
+            "claude-sonnet-4-5-20250929",
+            terminator_tool="something_else",
+        )
+        result = loop.run("go")
+        assert client.messages.create.call_count == 2
         assert result.text == "done"
 
 
@@ -433,13 +525,23 @@ class TestTokenUsageDataclass:
 # --------------------------------------------------------------- prompt
 
 
-class TestSystemPrompt:
-    def test_prompt_loads(self, tmp_path: Path) -> None:
-        prompt = load_m1_code_agent_prompt()
+class TestSystemPrompts:
+    def test_plan_agent_prompt_loads(self, tmp_path: Path) -> None:
+        prompt = load_m1_plan_agent_prompt()
+        assert "Carve" in prompt
+        assert "submit_plan" in prompt
+        # Plan agent must NOT have write_file in its toolkit.
+        assert "read_file" in prompt
+        assert "run_snowflake_query" in prompt
+
+    def test_build_agent_prompt_loads(self, tmp_path: Path) -> None:
+        prompt = load_m1_build_agent_prompt()
         assert "Carve" in prompt
         assert "read_file" in prompt
         assert "write_file" in prompt
-        assert "run_snowflake_query" in prompt
+        # M1.1-05 rules baked in:
+        assert "SNOWFLAKE_" in prompt or "SNOWFLAKE" in prompt
+        assert "How to Run" in prompt or "how to run" in prompt
 
 
 # --------------------------------------------------------------- observers

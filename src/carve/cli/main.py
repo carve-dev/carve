@@ -1,4 +1,4 @@
-"""Top-level typer app wiring up the eight carve subcommands."""
+"""Top-level typer app wiring up the carve subcommands."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ import typer
 
 from carve.cli.commands import (
     apply,
+    build,
     init,
     logs,
+    pipelines,
     plan,
     run,
     runs,
@@ -57,10 +59,12 @@ def _main_callback(
 
 app.command(name="init")(init.command)
 app.command(name="plan")(plan.command)
+app.command(name="build")(build.command)
 app.command(name="apply")(apply.command)
 app.command(name="run")(run.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)
+app.command(name="pipelines")(pipelines.command)
 app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
 

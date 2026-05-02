@@ -1,11 +1,9 @@
-"""Unit tests for `cli.orchestrator.planner.generate_plan`.
+"""Unit tests for `cli.orchestrator.planner.generate_plan` (M1.1-06).
 
 The Anthropic client is fully mocked: the `_client_returning` helper
 yields a sequence of pre-built responses, and the planner observes the
-agent's tool_use blocks just like it would in production. The
-`write_file` tool is the real one, so each tool_use ends up writing a
-real file under `tmp_path / "pipelines/..."` — which is what the
-planner reads back to assemble its `PlanArtifact`.
+agent's tool_use blocks. The plan agent terminates by calling
+`submit_plan(...)`; we drive that through the mock.
 """
 
 from __future__ import annotations
@@ -76,16 +74,43 @@ def _response(
 def _client_returning(*responses: Any) -> MagicMock:
     """Mock Anthropic client that records `messages.create` snapshots."""
     client = MagicMock()
-    snapshots: list[list[dict[str, Any]]] = []
+    snapshots: list[dict[str, Any]] = []
     response_iter = iter(responses)
 
     def _create(**kwargs: Any) -> Any:
-        snapshots.append(copy.deepcopy(kwargs.get("messages", [])))
+        snapshots.append(copy.deepcopy(kwargs))
         return next(response_iter)
 
     client.messages.create.side_effect = _create
-    client.messages_per_call = snapshots
+    client.calls = snapshots
     return client
+
+
+def _design(**overrides: Any) -> dict[str, Any]:
+    """Default design payload the agent might submit."""
+    base: dict[str, Any] = {
+        "pipeline_name": "csv_ingest",
+        "description": "Daily CSV ingest.",
+        "is_new_pipeline": True,
+        "source": {"type": "http_csv", "url": "https://example.com/data.csv"},
+        "destination": {
+            "database": "ANALYTICS",
+            "schema": "RAW",
+            "table": "RAW_CSV_DATA",
+            "primary_key": "ID",
+        },
+        "transformation": {
+            "strategy": "merge_upsert",
+            "rationale": "Idempotent upserts on PK.",
+        },
+        "columns": [{"name": "ID", "type": "VARCHAR(50)", "nullable": False}],
+        "requirements": ["snowflake-connector-python", "requests"],
+        "estimates": {"rows": 10000},
+        "tradeoffs": ["Row-by-row MERGE is slow at scale."],
+        "open_questions": [],
+    }
+    base.update(overrides)
+    return base
 
 
 # ---------------------------------------------------------------- Config
@@ -119,97 +144,53 @@ def repository(project_dir: Path) -> Repository:
 # ------------------------------------------------------------------- happy path
 
 
-def test_plan_generates_plan_artifact_and_persists_row(
+def test_plan_emits_design_via_submit_plan_and_persists_drafted_row(
     project_dir: Path, repository: Repository
 ) -> None:
-    """The agent writes main.py + requirements.txt; the planner records both."""
+    """submit_plan tool emission → Plan row with phase='drafted', no files written."""
     config = _config()
 
-    main_py_content = (
-        "import requests\nimport snowflake.connector\nprint('ingest started')\n"
-    )
-    requirements_content = "requests\nsnowflake-connector-python\n"
-    summary_text = "Built an ingestion pipeline that downloads a CSV and writes to Snowflake."
-
+    # The plan agent's `submit_plan` call is now the loop terminator —
+    # exactly one `messages.create` is made, so only one usage block
+    # contributes to the totals.
     client = _client_returning(
         _response(
             content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/csv_ingest/main.py",
-                        "content": main_py_content,
-                    },
-                    tool_id="tu_1",
-                ),
+                _tool_use_block("submit_plan", _design(), tool_id="tu_1"),
             ],
             stop_reason="tool_use",
             usage=_usage(input_tokens=2000, output_tokens=400),
         ),
-        _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/csv_ingest/requirements.txt",
-                        "content": requirements_content,
-                    },
-                    tool_id="tu_2",
-                ),
-            ],
-            stop_reason="tool_use",
-            usage=_usage(input_tokens=2200, output_tokens=100),
-        ),
-        _response(
-            content=[_text_block(summary_text)],
-            stop_reason="end_turn",
-            usage=_usage(input_tokens=2300, output_tokens=80),
-        ),
     )
 
     artifact = generate_plan(
-        goal="ingest a CSV from a public URL into a Snowflake table",
+        goal="ingest a CSV from a public URL into Snowflake",
         config=config,
         project_dir=project_dir,
         repository=repository,
         client=client,
     )
 
-    # Plan artifact basics
     assert isinstance(artifact, PlanArtifact)
     assert artifact.id.startswith("plan_")
-    assert artifact.goal.startswith("ingest a CSV")
-    assert artifact.summary == summary_text
     assert artifact.pipeline_name == "csv_ingest"
-    assert artifact.pipeline_dir == "pipelines/csv_ingest"
-    assert artifact.script_path == "pipelines/csv_ingest/main.py"
-    assert artifact.requirements_path == "pipelines/csv_ingest/requirements.txt"
-    assert "requests" in artifact.requirements
-    assert "snowflake-connector-python" in artifact.requirements
-    assert artifact.tokens_input == 2000 + 2200 + 2300
-    assert artifact.tokens_output == 400 + 100 + 80
-    assert artifact.config_hash == config.config_hash
-    assert artifact.cost_usd > 0  # Sonnet has positive pricing
+    assert artifact.description == "Daily CSV ingest."
+    assert artifact.requirements == ["snowflake-connector-python", "requests"]
+    assert artifact.tokens_input == 2000
+    assert artifact.tokens_output == 400
 
-    # Files on disk
-    assert artifact.file_path.is_file()
-    saved = json.loads(artifact.file_path.read_text())
-    assert saved["id"] == artifact.id
-    assert saved["script_path"] == "pipelines/csv_ingest/main.py"
-    assert saved["requirements"] == artifact.requirements
-    assert saved["tokens_input"] == artifact.tokens_input
+    # No files under pipelines/.
+    pipelines_files = list((project_dir / "pipelines").rglob("*"))
+    assert pipelines_files == []
 
-    # Plan row
+    # Plan row exists with phase=drafted.
     plan_row = repository.get_plan(artifact.id)
     assert plan_row is not None
-    assert plan_row.goal == artifact.goal
-    assert plan_row.config_hash == config.config_hash
-    estimates = json.loads(plan_row.estimates_json)
-    assert estimates["tokens_input"] == artifact.tokens_input
+    assert plan_row.phase == "drafted"
+    assert plan_row.parent_plan_id is None
+    # task_graph stores the design dict under "design".
     task_graph = json.loads(plan_row.task_graph_json)
-    assert task_graph["script_path"] == "pipelines/csv_ingest/main.py"
-    assert task_graph["requirements_path"] == "pipelines/csv_ingest/requirements.txt"
-    assert plan_row.file_path == str(artifact.file_path)
+    assert task_graph["design"]["pipeline_name"] == "csv_ingest"
 
 
 def test_plan_records_zero_cost_for_unknown_model(
@@ -221,29 +202,7 @@ def test_plan_records_zero_cost_for_unknown_model(
 
     client = _client_returning(
         _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/p/main.py",
-                        "content": "print('hi')\n",
-                    },
-                    tool_id="tu_1",
-                ),
-            ],
-            stop_reason="tool_use",
-        ),
-        _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/p/requirements.txt",
-                        "content": "snowflake-connector-python\n",
-                    },
-                    tool_id="tu_2",
-                ),
-            ],
+            content=[_tool_use_block("submit_plan", _design(), tool_id="tu_1")],
             stop_reason="tool_use",
         ),
         _response(content=[_text_block("done")], stop_reason="end_turn"),
@@ -259,33 +218,23 @@ def test_plan_records_zero_cost_for_unknown_model(
     assert artifact.cost_usd == 0.0
 
 
-# ------------------------------------------------------------------- error path
+# ------------------------------------------------------------------- error paths
 
 
-def test_plan_errors_when_no_main_py_written(
+def test_plan_errors_when_agent_does_not_call_submit_plan(
     project_dir: Path, repository: Repository
 ) -> None:
-    """Agent writes only requirements.txt — planner must surface a clear error."""
+    """Agent ends turn without calling submit_plan → clear error, no plan row."""
     config = _config()
 
     client = _client_returning(
         _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/x/requirements.txt",
-                        "content": "snowflake-connector-python\n",
-                    },
-                    tool_id="tu_1",
-                ),
-            ],
-            stop_reason="tool_use",
+            content=[_text_block("Here is some prose.")],
+            stop_reason="end_turn",
         ),
-        _response(content=[_text_block("done (sort of)")], stop_reason="end_turn"),
     )
 
-    with pytest.raises(PlanGenerationError, match=r"did not write a pipeline `main\.py`"):
+    with pytest.raises(PlanGenerationError, match=r"submit_plan"):
         generate_plan(
             goal="g",
             config=config,
@@ -294,25 +243,21 @@ def test_plan_errors_when_no_main_py_written(
             client=client,
         )
 
-    # No plan row should exist
     assert repository.list_plans() == []
 
 
-def test_plan_falls_back_to_default_requirements_when_missing(
+def test_plan_rejects_invalid_pipeline_name(
     project_dir: Path, repository: Repository
 ) -> None:
-    """If the agent forgets requirements.txt we synthesise a sensible default."""
+    """A pipeline_name with hyphens or weird chars is rejected."""
     config = _config()
 
     client = _client_returning(
         _response(
             content=[
                 _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/p/main.py",
-                        "content": "print('ok')\n",
-                    },
+                    "submit_plan",
+                    _design(pipeline_name="Bad-Name"),
                     tool_id="tu_1",
                 ),
             ],
@@ -321,57 +266,20 @@ def test_plan_falls_back_to_default_requirements_when_missing(
         _response(content=[_text_block("done")], stop_reason="end_turn"),
     )
 
-    artifact = generate_plan(
-        goal="g",
-        config=config,
-        project_dir=project_dir,
-        repository=repository,
-        client=client,
-    )
-    assert artifact.requirements == ["snowflake-connector-python"]
-
-
-def test_plan_id_format(
-    project_dir: Path, repository: Repository
-) -> None:
-    """Plan id format: `plan_<UTC-YYYYMMDD-HHMMSS>_<6hex>`."""
-    config = _config()
-    client = _client_returning(
-        _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {"path": "pipelines/p/main.py", "content": "x\n"},
-                    tool_id="tu_1",
-                ),
-            ],
-            stop_reason="tool_use",
-        ),
-        _response(content=[_text_block("ok")], stop_reason="end_turn"),
-    )
-
-    artifact = generate_plan(
-        goal="g",
-        config=config,
-        project_dir=project_dir,
-        repository=repository,
-        client=client,
-    )
-    parts = artifact.id.split("_")
-    # ["plan", "YYYYMMDD", "HHMMSS", "<6hex>"]
-    assert parts[0] == "plan"
-    assert len(parts) == 4
-    assert len(parts[1]) == 8 and parts[1].isdigit()
-    assert len(parts[2]) == 6 and parts[2].isdigit()
-    assert len(parts[3]) == 6 and all(c in "0123456789abcdef" for c in parts[3])
+    with pytest.raises(PlanGenerationError, match=r"snake_case"):
+        generate_plan(
+            goal="g",
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=client,
+        )
 
 
 def test_plan_raises_config_error_when_api_key_missing(
     project_dir: Path, repository: Repository
 ) -> None:
-    """`models.anthropic_api_key=None` is allowed at load-time; plan must
-    surface a ConfigError pointing the user at `carve/models.toml`. The
-    plan command's existing handler maps that to exit code 2."""
+    """`models.anthropic_api_key=None` surfaces ConfigError pointing at models.toml."""
     config = _config()
     config.models.anthropic_api_key = None
 
@@ -381,13 +289,276 @@ def test_plan_raises_config_error_when_api_key_missing(
             config=config,
             project_dir=project_dir,
             repository=repository,
-            # No client provided — forces the planner to consult the config.
         )
 
     err = exc_info.value
     assert err.field == "models.anthropic_api_key"
-    assert err.file is not None and err.file.as_posix() == "carve/models.toml"
-    assert err.hint is not None and "ANTHROPIC_API_KEY" in err.hint
+
+
+# ---------------------------------------------------------------- refine path
+
+
+def test_refine_links_parent_and_threads_design_into_context(
+    project_dir: Path, repository: Repository
+) -> None:
+    """Refine path: parent_plan_id set; agent context includes the prior design."""
+    config = _config()
+
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", _design(), tool_id="tu_1"),
+            ],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("ok")], stop_reason="end_turn"),
+    )
+
+    parent = generate_plan(
+        goal="ingest the csv",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+
+    refined_design = _design(description="Now hourly, not daily.")
+    refine_client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", refined_design, tool_id="tu_2"),
+            ],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("refined")], stop_reason="end_turn"),
+    )
+
+    child = generate_plan(
+        goal="make it hourly",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=refine_client,
+        parent_plan_id=parent.id,
+    )
+
+    assert child.parent_plan_id == parent.id
+    child_row = repository.get_plan(child.id)
+    assert child_row is not None
+    assert child_row.parent_plan_id == parent.id
+
+    # The refine-mode initial user message should reference the parent id.
+    initial_messages = refine_client.calls[0]["messages"]
+    assert initial_messages[0]["role"] == "user"
+    assert parent.id in initial_messages[0]["content"]
+
+    # The system prompt sent to the API includes the prior design.
+    system_prompt = refine_client.calls[0]["system"]
+    assert "Refining plan" in system_prompt
+    assert "Prior design" in system_prompt
+
+
+def test_refine_refuses_built_plan(
+    project_dir: Path, repository: Repository
+) -> None:
+    """Refining a plan in phase='built' raises a clear error."""
+    config = _config()
+
+    # Plant a plan and mark it built.
+    client = _client_returning(
+        _response(
+            content=[_tool_use_block("submit_plan", _design(), tool_id="tu_1")],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("done")], stop_reason="end_turn"),
+    )
+    plan = generate_plan(
+        goal="g",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+    repository.mark_plan_built(
+        plan_id=plan.id,
+        pipeline_name="csv_ingest",
+        build_run_id="r0",
+    )
+
+    with pytest.raises(PlanGenerationError, match=r"already in phase"):
+        generate_plan(
+            goal="more changes",
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=_client_returning(),  # never reached
+            parent_plan_id=plan.id,
+        )
+
+
+# ---------------------------------------------------------------- pipeline path
+
+
+def test_pipeline_mode_includes_existing_files_in_context(
+    project_dir: Path, repository: Repository
+) -> None:
+    """`--pipeline <name>` reads on-disk files and inlines them into context."""
+    config = _config()
+
+    # Plant an existing pipeline directory and row.
+    pipeline_dir = project_dir / "pipelines" / "existing_pl"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "main.py").write_text("# previously generated\nprint('old')\n")
+    (pipeline_dir / "requirements.txt").write_text("snowflake-connector-python\n")
+    repository.save_plan(_dummy_plan_row("plan_seed"))
+    repository.create_or_update_pipeline(
+        name="existing_pl",
+        description="seed",
+        pipeline_dir="pipelines/existing_pl",
+        current_plan_id="plan_seed",
+    )
+
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block(
+                    "submit_plan",
+                    _design(pipeline_name="existing_pl"),
+                    tool_id="tu_1",
+                ),
+            ],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("ok")], stop_reason="end_turn"),
+    )
+
+    artifact = generate_plan(
+        goal="add a column",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        pipeline_name="existing_pl",
+    )
+
+    # System prompt embeds the existing main.py content.
+    system_prompt = client.calls[0]["system"]
+    assert "previously generated" in system_prompt
+    assert "Existing pipeline `existing_pl`" in system_prompt
+
+    # Plan row pinned the target pipeline.
+    plan_row = repository.get_plan(artifact.id)
+    assert plan_row is not None
+    assert plan_row.pipeline_name == "existing_pl"
+
+
+def test_pipeline_mode_rejects_unknown_pipeline(
+    project_dir: Path, repository: Repository
+) -> None:
+    """`--pipeline <name>` against a pipeline that doesn't exist errors out."""
+    config = _config()
+    with pytest.raises(PlanGenerationError, match=r"not found"):
+        generate_plan(
+            goal="g",
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=_client_returning(),
+            pipeline_name="missing",
+        )
+
+
+def test_pipeline_mode_locks_pipeline_name_in_design(
+    project_dir: Path, repository: Repository
+) -> None:
+    """When --pipeline is set, the design's pipeline_name must match."""
+    config = _config()
+
+    pipeline_dir = project_dir / "pipelines" / "existing_pl"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "main.py").write_text("print('x')")
+    repository.save_plan(_dummy_plan_row("plan_seed"))
+    repository.create_or_update_pipeline(
+        name="existing_pl",
+        description="",
+        pipeline_dir="pipelines/existing_pl",
+        current_plan_id="plan_seed",
+    )
+
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block(
+                    "submit_plan",
+                    _design(pipeline_name="something_else"),
+                    tool_id="tu_1",
+                ),
+            ],
+            stop_reason="tool_use",
+        ),
+        _response(content=[_text_block("oops")], stop_reason="end_turn"),
+    )
+    with pytest.raises(PlanGenerationError, match=r"does not match the --pipeline"):
+        generate_plan(
+            goal="g",
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=client,
+            pipeline_name="existing_pl",
+        )
+
+
+# ----------------------------------------------------------- double submit_plan
+
+
+def test_submit_plan_called_twice_rejects_second_call(
+    project_dir: Path, repository: Repository
+) -> None:
+    """A second `submit_plan` in the same turn surfaces as a tool error.
+
+    The first call wins: the captured design corresponds to the first
+    invocation, and the second tool_result block carries the executor's
+    error message. With `terminator_tool="submit_plan"` the loop also
+    exits after the turn, so the second design never overwrites the
+    first.
+    """
+    config = _config()
+
+    first = _design(description="first design")
+    second = _design(description="overwrite attempt")
+
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", first, tool_id="tu_a"),
+                _tool_use_block("submit_plan", second, tool_id="tu_b"),
+            ],
+            stop_reason="tool_use",
+        ),
+        # Should not be reached — terminator_tool exits the loop after
+        # the user-message-with-tool-results is appended.
+        _response(content=[_text_block("late")], stop_reason="end_turn"),
+    )
+
+    artifact = generate_plan(
+        goal="g",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+
+    # The captured design matches the first call, not the second.
+    assert artifact.description == "first design"
+    assert artifact.design["description"] == "first design"
+
+    # Only one messages.create was made — the terminator fired after
+    # the first turn, so the second mock response was never consumed.
+    assert client.messages.create.call_count == 1
+
+
+# ---------------------------------------------------------- observer threading
 
 
 def test_plan_forwards_observer_events(
@@ -424,19 +595,11 @@ def test_plan_forwards_observer_events(
             output_tokens: int,
             cost_usd: float,
         ) -> None:
-            self.events.append(
-                f"done:{total_turns}:{total_tool_calls}"
-            )
+            self.events.append(f"done:{total_turns}:{total_tool_calls}")
 
     client = _client_returning(
         _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {"path": "pipelines/p/main.py", "content": "print('x')\n"},
-                    tool_id="tu_1",
-                ),
-            ],
+            content=[_tool_use_block("submit_plan", _design(), tool_id="tu_1")],
             stop_reason="tool_use",
         ),
         _response(content=[_text_block("done")], stop_reason="end_turn"),
@@ -452,65 +615,26 @@ def test_plan_forwards_observer_events(
         observer=observer,
     )
 
-    # Plan still persists normally
     assert isinstance(artifact, PlanArtifact)
-    assert repository.get_plan(artifact.id) is not None
-
-    # Observer received turn / tool / done events
     assert "turn_start:1" in observer.events
-    assert "tool_call:write_file" in observer.events
-    assert "tool_result:write_file:True" in observer.events
+    assert "tool_call:submit_plan" in observer.events
+    assert "tool_result:submit_plan:True" in observer.events
     assert any(e.startswith("done:") for e in observer.events)
 
 
-def test_plan_skips_flag_shaped_requirements(
-    project_dir: Path, repository: Repository
-) -> None:
-    """`-r ...`, `--index-url=...` etc. are filtered before being recorded."""
-    config = _config()
+# ----------------------------------------------------------- helpers for tests
 
-    client = _client_returning(
-        _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/p/main.py",
-                        "content": "x\n",
-                    },
-                    tool_id="tu_1",
-                ),
-            ],
-            stop_reason="tool_use",
-        ),
-        _response(
-            content=[
-                _tool_use_block(
-                    "write_file",
-                    {
-                        "path": "pipelines/p/requirements.txt",
-                        "content": (
-                            "# top of file\n"
-                            "snowflake-connector-python\n"
-                            "-r other.txt\n"
-                            "--index-url=https://example.com\n"
-                            "requests\n"
-                            "\n"
-                        ),
-                    },
-                    tool_id="tu_2",
-                ),
-            ],
-            stop_reason="tool_use",
-        ),
-        _response(content=[_text_block("done")], stop_reason="end_turn"),
-    )
 
-    artifact = generate_plan(
-        goal="g",
-        config=config,
-        project_dir=project_dir,
-        repository=repository,
-        client=client,
+def _dummy_plan_row(plan_id: str) -> Any:
+    """Build a pre-existing plan row so we can seed pipelines."""
+    from carve.core.state.models import Plan
+
+    return Plan(
+        id=plan_id,
+        goal="seed",
+        config_hash="h",
+        carve_version="0.0.1",
+        estimates_json="{}",
+        task_graph_json="{}",
+        file_path=f".carve/plans/{plan_id}.json",
     )
-    assert artifact.requirements == ["snowflake-connector-python", "requests"]

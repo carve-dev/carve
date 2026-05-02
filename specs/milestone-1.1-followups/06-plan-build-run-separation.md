@@ -89,12 +89,16 @@ The plan/build/run/apply split makes verbs honest, and the `<pipeline_name>` arg
 
 ### Migrations
 
+> **Updated during implementation (2026-04-29):** Alembic layout is the standard `migrations/versions/` directory tree, not flat `migrations/*.py`. Migration env disables foreign keys only during migrations to permit `batch_alter_table`; runtime keeps `PRAGMA foreign_keys=ON` via the SQLite connect listener. Backfill validates the derived `pipeline_name` against `^[a-z][a-z0-9_]*$` and skips with an INFO log on mismatch.
+
 The same path as M1.1-06's earlier draft: introduce Alembic now. Two migrations:
 
-- `0001_baseline.py` — capture the M1 schema as-is.
-- `0002_pipeline_centric.py` — add `pipelines` table, add columns, backfill `pipelines.name` rows from existing applied plans (for the dev who's been smoke-testing today).
+- `migrations/versions/0001_baseline.py` — capture the M1 schema as-is.
+- `migrations/versions/0002_pipeline_centric.py` — add `pipelines` table, add columns, backfill `pipelines.name` rows from existing applied plans (for the dev who's been smoke-testing today).
 
-Backfill logic: for each plan in the existing `plans` table where `applied_at IS NOT NULL`, attempt to derive `pipeline_name` from the plan's `task_graph_json.pipeline_dir` and synthesize a `Pipeline` row. Best-effort; if the JSON is missing fields, skip with a log line.
+Supporting infrastructure: `alembic.ini` at the project root, `migrations/env.py`, `migrations/script.py.mako`. `alembic>=1.13` is added to `pyproject.toml` as a runtime dependency.
+
+Backfill logic: for each plan in the existing `plans` table where `applied_at IS NOT NULL`, attempt to derive `pipeline_name` from the plan's `task_graph_json.pipeline_dir`, validate it matches `^[a-z][a-z0-9_]*$`, and synthesize a `Pipeline` row. Best-effort; if the JSON is missing fields or the derived name fails validation, skip with an INFO log line.
 
 ## Plan agent
 
@@ -106,6 +110,8 @@ Prompt covers:
 - Connection context preamble (from M1.1-05's pattern: target, database, schema, role, warehouse).
 - Pipeline context preamble: when invoked with `--pipeline <name>`, include the existing `pipelines/<name>/main.py` and `requirements.txt` contents so the agent can propose a delta. Otherwise the section is omitted.
 - Rules: design only; do not write any files; surface tradeoffs and open questions instead of guessing; if the user's goal is ambiguous (which connection target? which time window?), ASK in `open_questions`.
+
+> **Updated during implementation (2026-04-29):** `AgentLoop` gained a `terminator_tool: str | None = None` kwarg; the planner instantiates the loop with `terminator_tool="submit_plan"`. The loop returns its `AgentResult` immediately after the terminator tool fires (no extra `messages.create` round trip). `make_submit_plan_tool` rejects a second invocation so the contract holds even if the model retries.
 
 The agent calls `submit_plan(...)` once and the loop terminates.
 
@@ -243,7 +249,7 @@ Approximate file map. Engineers can rearrange:
 - `src/carve/cli/commands/apply.py` — print the M2 placeholder; accept a pipeline name argument.
 - `src/carve/cli/commands/pipelines.py` — new typer command.
 - `src/carve/cli/main.py` — register the new subcommands.
-- `migrations/0001_baseline.py`, `migrations/0002_pipeline_centric.py` — Alembic.
+- `migrations/versions/0001_baseline.py`, `migrations/versions/0002_pipeline_centric.py` — Alembic migration scripts. Plus `alembic.ini`, `migrations/env.py`, `migrations/script.py.mako` for Alembic infrastructure.
 
 ### Refine flow
 
@@ -271,6 +277,8 @@ Approximate file map. Engineers can rearrange:
 ### Run flow
 
 `carve run <pipeline_name>`:
+
+> **Updated during implementation (2026-04-29):** Runner additionally enforces project-root containment of `pipeline_dir` as defense in depth, rejecting any pipeline whose resolved directory escapes the project root.
 
 1. Look up pipeline by name. Reject with exit 2 if not found.
 2. Read `pipelines/<name>/requirements.txt` to pick up any drift (user may have hand-edited).
@@ -317,7 +325,7 @@ Substantial test work; outline:
 - `tests/core/state/test_repository.py`:
   - `Pipeline` CRUD, lineage walk, denorm updates.
   - Phase CHECK constraint enforcement.
-- Migration tests: `0002` adds the new tables, backfills correctly, leaves the old plans queryable.
+- Migration tests at `tests/migrations/test_migrations.py` (new test directory): `0002` adds the new tables, backfills correctly, leaves the old plans queryable.
 
 ## Acceptance criteria
 
@@ -335,6 +343,8 @@ Substantial test work; outline:
 
 ## Files this spec produces
 
+> **Updated during implementation (2026-04-29):** Alembic uses the standard `migrations/versions/` layout (not flat `migrations/*.py`); added supporting Alembic infrastructure files; added `tests/migrations/test_migrations.py` in a new `tests/migrations/` directory; recorded touches to `pyproject.toml` (alembic dependency), the agent loop (`terminator_tool` kwarg), `m1_tools.py` (submit_plan tool), `database.py` (FK pragma listener), and observers/loop module renames revealed by `git status`.
+
 New:
 
 - `src/carve/cli/orchestrator/builder.py`
@@ -344,25 +354,37 @@ New:
 - `src/carve/cli/commands/pipelines.py`
 - `tests/cli/orchestrator/test_builder.py`
 - `tests/cli/orchestrator/test_pipelines.py`
-- `migrations/0001_baseline.py`
-- `migrations/0002_pipeline_centric.py`
-- `alembic.ini` (or equivalent migration config)
+- `migrations/versions/0001_baseline.py`
+- `migrations/versions/0002_pipeline_centric.py`
+- `migrations/env.py`
+- `migrations/script.py.mako`
+- `alembic.ini`
+- `tests/migrations/__init__.py`
+- `tests/migrations/test_migrations.py`
 
 Modified:
 
-- `src/carve/cli/commands/plan.py` (`--refine`, `--pipeline`)
+- `pyproject.toml` (add `alembic>=1.13` runtime dep)
+- `src/carve/cli/commands/plan.py` (`--refine`, `--pipeline`; markup escape on agent-supplied strings)
 - `src/carve/cli/commands/apply.py` (M2 placeholder, accepts pipeline name)
 - `src/carve/cli/commands/run.py` (real impl)
 - `src/carve/cli/commands/runs.py` (`--pipeline` filter)
-- `src/carve/cli/orchestrator/planner.py`
-- `src/carve/cli/orchestrator/applier.py` → renamed to `runner.py`; replay guard removed
-- `src/carve/cli/orchestrator/listing.py`
 - `src/carve/cli/main.py`
+- `src/carve/cli/orchestrator/__init__.py`
+- `src/carve/cli/orchestrator/planner.py`
+- `src/carve/cli/orchestrator/applier.py` → renamed to `runner.py`; replay guard removed; project-root containment check added
+- `src/carve/cli/orchestrator/listing.py` (markup escape on agent-supplied strings; pipeline rendering helpers)
+- `src/carve/core/agents/__init__.py`
+- `src/carve/core/agents/loop.py` (add `terminator_tool` kwarg; early-return on terminator tool)
+- `src/carve/core/agents/m1_tools.py` (`make_submit_plan_tool`; rejects second call)
+- `src/carve/core/state/__init__.py`
+- `src/carve/core/state/database.py` (SQLite connect listener: `PRAGMA foreign_keys=ON`)
 - `src/carve/core/state/models.py`
 - `src/carve/core/state/repository.py`
 - `src/carve/core/agents/prompts/m1_code_agent.md` — delete
 - `tests/cli/orchestrator/test_planner.py` (rewritten)
-- `tests/cli/orchestrator/test_runner.py` (renamed)
+- `tests/cli/orchestrator/test_applier.py` → renamed to `tests/cli/orchestrator/test_runner.py`
+- `tests/core/agents/test_loop.py`
 - `tests/core/state/test_repository.py`
 - `tests/test_cli.py`
 - `README.md`

@@ -1,31 +1,28 @@
-"""`carve plan` orchestration.
+"""`carve plan` orchestration — design only, no files written.
 
 Wires the merged Carve config, the state store, the Anthropic agent
 loop, and (optionally) the Snowflake connector into a single
-`generate_plan` call. The result is a `PlanArtifact` that captures
-everything needed to apply the plan later: the agent's summary, the
-script and requirements files written under ``pipelines/``, the token
-counts, and the cost estimate.
+`generate_plan` call. The result is a `PlanArtifact` capturing the
+design document the agent submitted plus the bookkeeping needed for the
+plan row (token counts, cost, hashes).
 
-Design notes:
+M1.1-06 split the original "plan = design + code" agent into two:
 
-* Plan generation is *not* a "run" in the state-store sense. Cost is
-  recorded on the plan row's ``estimates_json`` field, and no row is
-  written to ``runs``.
-* The Snowflake tool is optional: if no Snowflake connection is
-  configured for the active target, we log a warning and fall back to a
-  stub runner whose only job is to surface a clear error if the agent
-  invokes the tool. This lets users run ``carve plan`` against a
-  partially-configured project without the planner blowing up at tool-
-  build time.
-* The agent's ``write_file`` tool reaches into the project tree. We
-  diff a snapshot of files under ``pipelines/`` taken before vs. after
-  the loop to figure out which directory the agent settled on. This
-  beats trying to parse the agent's prose for path hints.
-* The requirements.txt instruction lives in the M1 system prompt
-  itself (``carve.core.agents.prompts.m1_code_agent``); the planner
-  loads that prompt verbatim and does not append integration text on
-  top. Keep prompt edits in the .md file.
+- `generate_plan` (this module) — runs the plan agent. Tools:
+  `read_file`, `run_snowflake_query`, `submit_plan`. Produces a Plan
+  row with `phase="drafted"`. **No files are written under
+  ``pipelines/``.**
+- `build_plan` (`builder.py`) — runs the build agent against a saved
+  draft plan to materialise the pipeline directory.
+
+The planner also handles two refinement modes triggered from the CLI:
+
+- ``parent_plan_id`` set on `generate_plan` injects the parent plan's
+  goal + design as agent context; the new user message is the user's
+  feedback. The new plan is persisted with ``parent_plan_id``.
+- ``pipeline_name`` (without ``parent_plan_id``) loads existing
+  ``pipelines/<name>/main.py`` and ``requirements.txt`` into the agent
+  context so the design proposes a delta consistent with the live code.
 """
 
 from __future__ import annotations
@@ -45,13 +42,13 @@ from carve.core.agents import (
     AgentLoop,
     AgentObserver,
     NullObserver,
+    SubmitPlanCapture,
     Tool,
     ToolExecutionError,
-    build_m1_tools,
-    load_m1_code_agent_prompt,
+    load_m1_plan_agent_prompt,
     make_read_file_tool,
     make_run_snowflake_query_tool,
-    make_write_file_tool,
+    make_submit_plan_tool,
 )
 from carve.core.agents.loop import TokenUsage
 from carve.core.config import Config, ConfigError
@@ -64,29 +61,33 @@ logger = logging.getLogger(__name__)
 
 
 # Canonical plan-id format: `plan_YYYYMMDD_HHMMSS_<6 hex>`. Lives here
-# (the producer) and is re-exported to the applier for an explicit
-# format check at the apply boundary.
+# (the producer) and is re-exported to the runner for an explicit
+# format check at the run-by-plan boundary.
 PLAN_ID_RE = re.compile(r"^plan_\d{8}_\d{6}_[0-9a-f]{6}$")
+
+# Allowed shape for `design.pipeline_name`. snake_case, ASCII letters
+# and digits only. Mirrors the directory naming convention.
+_PIPELINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass
 class PlanArtifact:
     """Result of `generate_plan`.
 
-    The fields mirror the on-disk plan JSON shape one-for-one. The
-    `to_json()` helper serialises to the canonical format the applier
-    reads back later.
+    Captures the design the plan agent submitted plus persistence
+    metadata. The on-disk JSON file is written to
+    ``.carve/plans/<id>.json`` and round-trips through the planner's
+    `to_json()` helper.
     """
 
     id: str
     goal: str
-    summary: str
+    design: dict[str, Any]
     pipeline_name: str
-    pipeline_dir: str
-    script_path: str
-    requirements_path: str
+    description: str
     requirements: list[str]
-    files_written: list[str]
+    parent_plan_id: str | None
+    target_pipeline: str | None
     config_hash: str
     carve_version: str
     tokens_input: int
@@ -102,13 +103,12 @@ class PlanArtifact:
         return {
             "id": self.id,
             "goal": self.goal,
-            "summary": self.summary,
+            "design": self.design,
             "pipeline_name": self.pipeline_name,
-            "pipeline_dir": self.pipeline_dir,
-            "script_path": self.script_path,
-            "requirements_path": self.requirements_path,
+            "description": self.description,
             "requirements": list(self.requirements),
-            "files_written": list(self.files_written),
+            "parent_plan_id": self.parent_plan_id,
+            "target_pipeline": self.target_pipeline,
             "config_hash": self.config_hash,
             "carve_version": self.carve_version,
             "tokens_input": self.tokens_input,
@@ -121,7 +121,7 @@ class PlanArtifact:
 
 
 class PlanGenerationError(Exception):
-    """Raised when plan generation produces no usable script."""
+    """Raised when plan generation does not produce a valid design."""
 
 
 # ---------------------------------------------------------------------------
@@ -138,99 +138,104 @@ def generate_plan(
     client: Any | None = None,
     max_turns: int = 30,
     observer: AgentObserver | None = None,
+    parent_plan_id: str | None = None,
+    pipeline_name: str | None = None,
 ) -> PlanArtifact:
-    """Run the M1 code agent and persist the resulting plan.
+    """Run the plan agent and persist the resulting design.
 
     Args:
-        goal: Natural-language goal from the user.
+        goal: Natural-language goal from the user. For ``--refine`` this
+            is the new user feedback; for ``--pipeline`` it's the change
+            the user wants applied.
         config: Fully-loaded `Config`.
         project_dir: Resolved project root.
-        repository: State-store repository (plan row gets saved here).
+        repository: State-store repository.
         client: Optional pre-built Anthropic client (used in tests).
-            Production callers pass ``None`` and let us build one from
-            ``config.models.anthropic_api_key``.
-        max_turns: Cap on agent turns. Same default as `AgentLoop.run`.
-        observer: Optional progress observer. Defaults to `NullObserver`
-            so existing callers and tests keep working unchanged. The
-            CLI passes a `RichConsoleObserver` for live progress output.
-
-    Returns:
-        `PlanArtifact` with `file_path` populated.
+        max_turns: Cap on agent turns.
+        observer: Optional progress observer.
+        parent_plan_id: When set, the new plan is recorded as a refinement
+            of this parent. The parent's goal + design are pulled into the
+            agent context.
+        pipeline_name: When set (without ``parent_plan_id``), the design
+            targets an existing pipeline; existing files are loaded into
+            the agent's context so the proposed change stays consistent.
 
     Raises:
-        PlanGenerationError: Agent didn't write a `main.py`.
+        PlanGenerationError: Agent didn't call ``submit_plan`` or the
+            submitted design failed validation.
+        ConfigError: The Anthropic API key is missing (load-time-optional,
+            use-time-required).
     """
     project_dir = project_dir.resolve()
     plan_id = _new_plan_id()
     model = config.models.default_model
-    if client is not None:
-        anthropic_client: Any = client
-    else:
-        api_key = config.models.anthropic_api_key
-        if api_key is None:
-            raise ConfigError(
-                "Anthropic API key is required to generate a plan but is unset.",
-                file="carve/models.toml",
-                field="models.anthropic_api_key",
-                hint=(
-                    "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
-                    "carve/models.toml and set ANTHROPIC_API_KEY in your "
-                    "environment (or .env)."
-                ),
+    anthropic_client = _build_client(config, client)
+
+    parent_plan_row: Plan | None = None
+    if parent_plan_id is not None:
+        parent_plan_row = repository.get_plan(parent_plan_id)
+        if parent_plan_row is None:
+            raise PlanGenerationError(
+                f"Parent plan {parent_plan_id!r} not found; "
+                "cannot refine a plan that doesn't exist."
             )
-        anthropic_client = anthropic.Anthropic(api_key=api_key)
+        if parent_plan_row.phase != "drafted":
+            raise PlanGenerationError(
+                f"Plan {parent_plan_id!r} is already in phase "
+                f"{parent_plan_row.phase!r}. Refinement is only valid for "
+                "drafted plans; modify the pipeline directly via "
+                "`carve plan --pipeline <name>`."
+            )
 
-    tools = _build_tools(config, project_dir)
+    target_pipeline = pipeline_name
+    if pipeline_name is not None and parent_plan_row is None:
+        existing = repository.get_pipeline(pipeline_name)
+        if existing is None:
+            raise PlanGenerationError(
+                f"Pipeline {pipeline_name!r} not found. Use "
+                "`carve plan \"<goal>\"` to design a new pipeline."
+            )
 
-    system_prompt = load_m1_code_agent_prompt()
+    capture = SubmitPlanCapture()
+    tools = _build_tools(config, project_dir, capture)
+    system_prompt = _compose_plan_system_prompt(
+        config=config,
+        project_dir=project_dir,
+        parent_plan_row=parent_plan_row,
+        target_pipeline=target_pipeline,
+    )
 
-    pipelines_root = project_dir / "pipelines"
-    snapshot = _snapshot_pipelines(pipelines_root)
-
-    # `AgentLoop` types its client as the `_AnthropicLike` Protocol; both
-    # the real `anthropic.Anthropic` instance and the test `MagicMock`
-    # satisfy it structurally. The local `anthropic_client` is typed
-    # `Any` so the call passes mypy's strict mode without an extra cast.
     loop = AgentLoop(
         client=anthropic_client,
         tools=tools,
         system_prompt=system_prompt,
         model=model,
         observer=observer if observer is not None else NullObserver(),
+        terminator_tool="submit_plan",
     )
-    agent_result = loop.run(goal, max_turns=max_turns)
+    initial_user_message = _compose_initial_user_message(
+        goal=goal,
+        parent_plan_row=parent_plan_row,
+        target_pipeline=target_pipeline,
+    )
+    agent_result = loop.run(initial_user_message, max_turns=max_turns)
 
-    written_files = _changed_files(pipelines_root, snapshot)
-    main_py, requirements_txt = _identify_pipeline_files(written_files, project_dir)
-    if main_py is None:
+    if not capture.submitted or capture.design is None:
         raise PlanGenerationError(
-            "The agent did not write a pipeline `main.py`. "
-            "Try rephrasing the goal or check the agent's response for errors."
+            "The plan agent finished without calling `submit_plan`. "
+            "Re-run `carve plan` and consider rephrasing the goal."
         )
 
-    pipeline_dir_abs = main_py.parent
-    pipeline_name = pipeline_dir_abs.name
-    pipeline_dir_rel = pipeline_dir_abs.relative_to(project_dir).as_posix()
-    script_path_rel = main_py.relative_to(project_dir).as_posix()
-
-    if requirements_txt is not None:
-        requirements_path_rel = requirements_txt.relative_to(project_dir).as_posix()
-        requirements = _parse_requirements(requirements_txt)
-    else:
-        # The agent occasionally forgets the requirements file. Synthesise
-        # a sensible default so apply still works against Snowflake.
-        requirements_path_rel = (
-            (pipeline_dir_abs / "requirements.txt")
-            .relative_to(project_dir)
-            .as_posix()
-        )
-        requirements = ["snowflake-connector-python"]
-        logger.warning(
-            "agent did not produce requirements.txt; using default: %s",
-            requirements,
-        )
-
-    files_written_rel = sorted(p.relative_to(project_dir).as_posix() for p in written_files)
+    design = capture.design
+    submitted_name = _validate_pipeline_name(
+        design.get("pipeline_name"),
+        target_pipeline=target_pipeline,
+    )
+    description = _coerce_str(design.get("description"), default="")
+    requirements = _coerce_str_list(
+        design.get("requirements"),
+        fallback=["snowflake-connector-python"],
+    )
 
     now = _utcnow()
     expires = now + timedelta(hours=24)
@@ -238,13 +243,12 @@ def generate_plan(
     artifact = PlanArtifact(
         id=plan_id,
         goal=goal,
-        summary=agent_result.text,
-        pipeline_name=pipeline_name,
-        pipeline_dir=pipeline_dir_rel,
-        script_path=script_path_rel,
-        requirements_path=requirements_path_rel,
+        design=design,
+        pipeline_name=submitted_name,
+        description=description,
         requirements=requirements,
-        files_written=files_written_rel,
+        parent_plan_id=parent_plan_id,
+        target_pipeline=target_pipeline,
         config_hash=config.config_hash,
         carve_version=CARVE_VERSION,
         tokens_input=agent_result.token_usage.input_tokens,
@@ -259,18 +263,141 @@ def generate_plan(
 
 
 # ---------------------------------------------------------------------------
+# System prompt + initial message
+# ---------------------------------------------------------------------------
+
+
+def _compose_plan_system_prompt(
+    *,
+    config: Config,
+    project_dir: Path,
+    parent_plan_row: Plan | None,
+    target_pipeline: str | None,
+) -> str:
+    """Assemble the plan agent's system prompt: base + connection + pipeline.
+
+    The base prompt describes the agent's role and the `submit_plan`
+    contract. We append a connection-context preamble (M1.1-05 pattern)
+    and, if applicable, an existing-pipeline preamble so the agent has
+    the context the user already implicitly assumed.
+    """
+    sections: list[str] = [load_m1_plan_agent_prompt()]
+
+    sections.append(_render_connection_context(config))
+
+    if target_pipeline is not None:
+        existing = _render_existing_pipeline_section(project_dir, target_pipeline)
+        if existing is not None:
+            sections.append(existing)
+
+    if parent_plan_row is not None:
+        sections.append(_render_parent_plan_section(parent_plan_row))
+
+    return "\n\n".join(sections)
+
+
+def _render_connection_context(config: Config) -> str:
+    """Render the active target's connection context as a markdown block.
+
+    The agent uses these as defaults for `destination.database` and
+    `destination.schema`. Missing targets render as ``(none configured)``
+    so the agent flags the gap in `open_questions`.
+    """
+    target = config.project.default_target
+    snowflake = config.connections.snowflake.get(target)
+    lines = [
+        "## Connection context",
+        f"- **Active target:** `{target}`",
+    ]
+    if snowflake is None:
+        lines.append("- **Snowflake connection:** _(none configured)_")
+        return "\n".join(lines)
+    lines.append(f"- **Database:** `{snowflake.database}`")
+    if snowflake.schema_:
+        lines.append(f"- **Schema:** `{snowflake.schema_}`")
+    lines.append(f"- **Warehouse:** `{snowflake.warehouse}`")
+    lines.append(f"- **Role:** `{snowflake.role}`")
+    lines.append(f"- **Account:** `{snowflake.account}`")
+    return "\n".join(lines)
+
+
+def _render_existing_pipeline_section(
+    project_dir: Path,
+    pipeline_name: str,
+) -> str | None:
+    """Inline existing ``main.py`` / ``requirements.txt`` for delta mode."""
+    pipeline_dir = project_dir / "pipelines" / pipeline_name
+    main_py = pipeline_dir / "main.py"
+    requirements = pipeline_dir / "requirements.txt"
+    if not main_py.is_file():
+        return None
+    parts: list[str] = [
+        f"## Existing pipeline `{pipeline_name}`",
+        "The user wants to modify this pipeline. Propose a delta-consistent design.",
+        "",
+        "### `pipelines/" + pipeline_name + "/main.py`",
+        "```python",
+        main_py.read_text(encoding="utf-8").rstrip("\n"),
+        "```",
+    ]
+    if requirements.is_file():
+        parts += [
+            "",
+            "### `pipelines/" + pipeline_name + "/requirements.txt`",
+            "```",
+            requirements.read_text(encoding="utf-8").rstrip("\n"),
+            "```",
+        ]
+    return "\n".join(parts)
+
+
+def _render_parent_plan_section(parent: Plan) -> str:
+    """Inline the parent plan's goal + design for refinement context."""
+    try:
+        parent_design = json.loads(parent.task_graph_json or "{}").get("design")
+    except (TypeError, ValueError):
+        parent_design = None
+    parts = [
+        f"## Refining plan `{parent.id}`",
+        "The user provided feedback on a prior draft. Adjust the design accordingly.",
+        "",
+        f"### Original goal\n{parent.goal}",
+    ]
+    if parent_design is not None:
+        parts += [
+            "",
+            "### Prior design",
+            "```json",
+            json.dumps(parent_design, indent=2, sort_keys=True),
+            "```",
+        ]
+    return "\n".join(parts)
+
+
+def _compose_initial_user_message(
+    *,
+    goal: str,
+    parent_plan_row: Plan | None,
+    target_pipeline: str | None,
+) -> str:
+    """Frame the goal so the agent can tell which mode it's in."""
+    if parent_plan_row is not None:
+        return f"User feedback on plan {parent_plan_row.id}:\n\n{goal}"
+    if target_pipeline is not None:
+        return (
+            f"Modify pipeline `{target_pipeline}`. Change requested:\n\n"
+            f"{goal}"
+        )
+    return goal
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
 
 class _UnconfiguredSnowflakeRunner:
-    """Stub runner for the case where no Snowflake target is configured.
-
-    Returning a stub (instead of dropping the tool entirely) keeps the
-    Anthropic schema stable; the agent gets a clear error if it tries
-    to use the tool but isn't kept guessing at why a documented tool is
-    missing.
-    """
+    """Stub runner used when no Snowflake target is configured."""
 
     def run_query(self, sql: str, *, limit: int) -> list[dict[str, Any]]:
         raise ToolExecutionError(
@@ -280,36 +407,101 @@ class _UnconfiguredSnowflakeRunner:
         )
 
 
-def _build_tools(config: Config, project_dir: Path) -> list[Tool]:
-    """Build the M1 tool set for `generate_plan`."""
+def _build_tools(
+    config: Config,
+    project_dir: Path,
+    capture: SubmitPlanCapture,
+) -> list[Tool]:
+    """Plan-agent toolset: read_file + run_snowflake_query + submit_plan."""
     target = config.project.default_target
+    snowflake_runner: Any
     if target in config.connections.snowflake:
         pool = SnowflakePool(config)
         try:
-            sf_runner = pool.get(target)
+            snowflake_runner = pool.get(target)
         except SnowflakeError:
             logger.warning(
                 "Snowflake target %r is configured but unavailable; "
                 "the agent will get an error if it uses run_snowflake_query.",
                 target,
             )
-            return [
-                make_read_file_tool(project_dir),
-                make_write_file_tool(project_dir),
-                make_run_snowflake_query_tool(_UnconfiguredSnowflakeRunner()),
-            ]
-        return build_m1_tools(project_dir, sf_runner)
+            snowflake_runner = _UnconfiguredSnowflakeRunner()
+    else:
+        logger.warning(
+            "no Snowflake connection configured for target %r; "
+            "the agent's run_snowflake_query tool will return an error if used.",
+            target,
+        )
+        snowflake_runner = _UnconfiguredSnowflakeRunner()
 
-    logger.warning(
-        "no Snowflake connection configured for target %r; "
-        "the agent's run_snowflake_query tool will return an error if used.",
-        target,
-    )
     return [
         make_read_file_tool(project_dir),
-        make_write_file_tool(project_dir),
-        make_run_snowflake_query_tool(_UnconfiguredSnowflakeRunner()),
+        make_run_snowflake_query_tool(snowflake_runner),
+        make_submit_plan_tool(capture),
     ]
+
+
+def _build_client(config: Config, client: Any | None) -> Any:
+    """Return the Anthropic client, building one from config if needed."""
+    if client is not None:
+        return client
+    api_key = config.models.anthropic_api_key
+    if api_key is None:
+        raise ConfigError(
+            "Anthropic API key is required to generate a plan but is unset.",
+            file="carve/models.toml",
+            field="models.anthropic_api_key",
+            hint=(
+                "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
+                "carve/models.toml and set ANTHROPIC_API_KEY in your "
+                "environment (or .env)."
+            ),
+        )
+    return anthropic.Anthropic(api_key=api_key)
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_pipeline_name(
+    candidate: Any,
+    *,
+    target_pipeline: str | None,
+) -> str:
+    """Reject malformed pipeline names; lock to ``target_pipeline`` if set."""
+    if not isinstance(candidate, str) or not candidate:
+        raise PlanGenerationError(
+            "design.pipeline_name is missing or not a string."
+        )
+    if not _PIPELINE_NAME_RE.match(candidate):
+        raise PlanGenerationError(
+            f"design.pipeline_name {candidate!r} is invalid; must be "
+            "snake_case (lowercase letters, digits, underscores; first "
+            "char a letter)."
+        )
+    if target_pipeline is not None and candidate != target_pipeline:
+        raise PlanGenerationError(
+            f"design.pipeline_name {candidate!r} does not match the "
+            f"--pipeline target {target_pipeline!r}; the agent must keep "
+            "the existing pipeline name when modifying."
+        )
+    return candidate
+
+
+def _coerce_str(value: Any, *, default: str) -> str:
+    if isinstance(value, str):
+        return value
+    return default
+
+
+def _coerce_str_list(value: Any, *, fallback: list[str]) -> list[str]:
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        cleaned = [item for item in value if item and not item.startswith("-")]
+        if cleaned:
+            return cleaned
+    return list(fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -325,108 +517,6 @@ def _new_plan_id() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Filesystem snapshot / diff
-# ---------------------------------------------------------------------------
-
-
-def _snapshot_pipelines(pipelines_root: Path) -> dict[Path, float]:
-    """Return ``{path: mtime}`` for every file under `pipelines/`.
-
-    Used to detect both *new* files and *modified* files after the
-    agent runs.
-    """
-    if not pipelines_root.is_dir():
-        return {}
-    snapshot: dict[Path, float] = {}
-    for path in pipelines_root.rglob("*"):
-        if path.is_file():
-            snapshot[path.resolve()] = path.stat().st_mtime
-    return snapshot
-
-
-def _changed_files(
-    pipelines_root: Path,
-    snapshot: dict[Path, float],
-) -> list[Path]:
-    """Return absolute paths of files added or modified since `snapshot`."""
-    if not pipelines_root.is_dir():
-        return []
-    changed: list[Path] = []
-    for path in pipelines_root.rglob("*"):
-        if not path.is_file():
-            continue
-        resolved = path.resolve()
-        prev_mtime = snapshot.get(resolved)
-        cur_mtime = path.stat().st_mtime
-        if prev_mtime is None or cur_mtime > prev_mtime:
-            changed.append(resolved)
-    return changed
-
-
-def _identify_pipeline_files(
-    files: list[Path],
-    project_dir: Path,
-) -> tuple[Path | None, Path | None]:
-    """Pick the most-recently-written ``main.py`` and its sibling requirements.
-
-    Returns ``(main_py, requirements_txt)``. Either may be ``None`` if
-    the agent didn't write that file.
-    """
-    project_resolved = project_dir.resolve()
-    mains = [
-        p for p in files
-        if p.name == "main.py"
-        and _is_under(p, project_resolved / "pipelines")
-    ]
-    if not mains:
-        return None, None
-    mains.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    main_py = mains[0]
-    requirements_txt = main_py.parent / "requirements.txt"
-    if not requirements_txt.is_file():
-        # Maybe the agent wrote it under a different sibling location; try
-        # to find one in the same directory among the changed files.
-        candidates = [
-            p for p in files
-            if p.parent == main_py.parent and p.name == "requirements.txt"
-        ]
-        requirements_txt = candidates[0] if candidates else None  # type: ignore[assignment]
-    return main_py, requirements_txt
-
-
-def _is_under(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
-def _parse_requirements(path: Path) -> list[str]:
-    """Read a requirements.txt and return non-empty, non-comment lines.
-
-    Strips any line that looks like a flag (starts with ``-``) since the
-    M1 step config rejects those at validation time. We could let it
-    fail later, but a clear filter here makes the output more useful.
-    """
-    out: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("-"):
-            logger.warning(
-                "skipping flag-shaped requirement %r from %s; M1 only "
-                "accepts plain package specs.",
-                line,
-                path,
-            )
-            continue
-        out.append(line)
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 
@@ -436,11 +526,7 @@ def _persist_artifact(
     project_dir: Path,
     repository: Repository,
 ) -> Path:
-    """Write the plan JSON to disk and insert the index row.
-
-    Returns the absolute path to the JSON file, suitable for storing on
-    `Plan.file_path`.
-    """
+    """Write the plan JSON to disk and insert the index row."""
     plans_dir = project_dir / ".carve" / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)
     file_path = plans_dir / f"{artifact.id}.json"
@@ -455,21 +541,22 @@ def _persist_artifact(
         "model": artifact.model,
     }
     task_graph = {
-        "pipeline_dir": artifact.pipeline_dir,
-        "script_path": artifact.script_path,
-        "requirements_path": artifact.requirements_path,
+        "design": artifact.design,
+        "pipeline_name": artifact.pipeline_name,
         "requirements": list(artifact.requirements),
-        "files_written": list(artifact.files_written),
     }
 
     plan_row = Plan(
         id=artifact.id,
+        parent_plan_id=artifact.parent_plan_id,
         goal=artifact.goal,
         config_hash=artifact.config_hash,
         carve_version=artifact.carve_version,
         estimates_json=json.dumps(estimates, sort_keys=True),
         task_graph_json=json.dumps(task_graph, sort_keys=True),
         file_path=str(file_path),
+        phase="drafted",
+        pipeline_name=artifact.target_pipeline,
         created_at=artifact.created_at.replace(tzinfo=None),
         expires_at=artifact.expires_at.replace(tzinfo=None),
     )
@@ -494,7 +581,6 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-# Used by `TokenUsage` test sanity but not directly imported here.
 __all__ = [
     "PLAN_ID_RE",
     "PlanArtifact",

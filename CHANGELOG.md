@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M1.1-06 — pipeline-centric lifecycle)
+
+- **`carve plan` is now design-only**: it produces a structured design
+  document (no files written under `pipelines/`) and persists a `Plan`
+  row with `phase = "drafted"`. The plan agent calls a `submit_plan`
+  tool to finalize.
+- **New `carve build <plan_id>` command** runs a separate **build agent**
+  that consumes the design and writes `pipelines/<name>/main.py` and
+  `requirements.txt`. On success the `Pipeline` row is upserted, the
+  plan flips to `phase = "built"`, and the build run is recorded.
+  `--force` rebuilds an already-built plan.
+- **`carve run <pipeline_name>`** is the primary execution verb and is
+  freely re-runnable. `carve run --plan <plan_id>` is supported for
+  debug-replay against a specific built plan.
+- **`carve plan --refine <plan_id> "<feedback>"`** produces a child plan
+  with `parent_plan_id` set, plus a printed field-by-field diff of the
+  prior design.
+- **`carve plan --pipeline <name> "<change>"`** proposes a
+  delta-consistent modification design; the existing `main.py` /
+  `requirements.txt` are inlined into the agent's context.
+- **New `pipelines` table** tracking each pipeline as a first-class
+  entity (description, current plan, denormalised last-run status).
+  `carve pipelines` lists all pipelines; `carve pipelines <name>` shows
+  one pipeline's lineage and recent runs.
+- Plans gained `phase` (`drafted` | `built`, CHECK-constrained) and an
+  optional `pipeline_name` foreign key.
+- Runs gained a `pipeline_name` foreign key. `carve runs --pipeline <name>`
+  filters to a single pipeline's run history.
+- **Alembic** is now wired into the state-store bootstrap; migrations
+  live under `migrations/versions/`. A pre-Alembic dev DB is detected
+  and stamped at the baseline, then upgraded to the pipeline-centric
+  schema. The 0002 migration backfills a `Pipeline` row for every prior
+  applied plan whose `task_graph_json` includes a `pipeline_dir`.
+
+### Changed (M1.1-06)
+
+- **The replay guard is gone from `carve run`.** Re-running a pipeline
+  is the expected operation. (The guard moves to `carve apply` in M2,
+  where idempotency matters for prod deploys.)
+- The combined M1 code-agent prompt has been replaced by two narrower
+  prompts: `m1_plan_agent.md` (design only — no `write_file` tool) and
+  `m1_build_agent.md` (writes only `main.py` and `requirements.txt`,
+  with the design pinned as a markdown preamble in the system prompt).
+  M1.1-05's connection rules — no Python defaults for `SNOWFLAKE_*`
+  env vars, explicit `role=` to `connect()`, no "How to Run" section —
+  are folded into the build prompt.
+- `carve apply <pipeline>` is now a reserved-verb stub printing an M2
+  placeholder ("will create a prod-deploy PR; for dev execution use
+  `carve run`"). Exits 0.
+
+### Removed (M1.1-06)
+
+- `Repository.mark_plan_applied` is replaced by
+  `Repository.mark_plan_built`. `cli.orchestrator.applier.apply_plan`
+  is replaced by `cli.orchestrator.runner.run_pipeline_by_name` /
+  `run_pipeline_by_plan`.
+
 ### Added
 
 - `carve plan` now prints live progress as the agent works: a spinner

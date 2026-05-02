@@ -107,9 +107,14 @@ class AgentResult:
     messages: list[dict[str, Any]] = field(default_factory=list)
 
 
-def load_m1_code_agent_prompt() -> str:
-    """Load the M1 code-agent system prompt from disk."""
-    return (_PROMPTS_DIR / "m1_code_agent.md").read_text(encoding="utf-8")
+def load_m1_plan_agent_prompt() -> str:
+    """Load the M1 plan-agent system prompt from disk."""
+    return (_PROMPTS_DIR / "m1_plan_agent.md").read_text(encoding="utf-8")
+
+
+def load_m1_build_agent_prompt() -> str:
+    """Load the M1 build-agent system prompt from disk."""
+    return (_PROMPTS_DIR / "m1_build_agent.md").read_text(encoding="utf-8")
 
 
 class AgentLoop:
@@ -135,6 +140,7 @@ class AgentLoop:
         retry_base_delay: float = 1.0,
         sleep: Any = time.sleep,
         observer: AgentObserver | None = None,
+        terminator_tool: str | None = None,
     ) -> None:
         self.client = client
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
@@ -147,6 +153,13 @@ class AgentLoop:
         self.retry_base_delay = retry_base_delay
         self._sleep = sleep
         self.observer: AgentObserver = observer if observer is not None else NullObserver()
+        # When set, the loop exits immediately after a turn in which any
+        # tool call's name matches this string. The plan agent uses this
+        # to make `submit_plan` an authoritative terminator: a misbehaving
+        # model can't call `submit_plan` and then keep working, and a
+        # second invocation (rejected by the executor) never overwrites
+        # the captured design.
+        self.terminator_tool = terminator_tool
         self.messages: list[dict[str, Any]] = []
         self.token_usage = TokenUsage()
         self._tool_calls_total = 0
@@ -187,6 +200,24 @@ class AgentLoop:
             if stop_reason == "tool_use":
                 tool_results = self._execute_tool_calls(response)
                 self.messages.append({"role": "user", "content": tool_results})
+                if self._terminator_invoked(response):
+                    # The terminator tool fired this turn — exit the loop
+                    # without making another `messages.create` call. The
+                    # model didn't get to summarize; an empty text result
+                    # is the correct synthetic response.
+                    self.observer.on_done(
+                        total_turns=turn,
+                        total_tool_calls=self._tool_calls_total,
+                        input_tokens=self.token_usage.input_tokens,
+                        output_tokens=self.token_usage.output_tokens,
+                        cost_usd=self.token_usage.cost_usd(self.model),
+                    )
+                    return AgentResult(
+                        text="",
+                        token_usage=self.token_usage,
+                        turns=turn,
+                        messages=list(self.messages),
+                    )
                 continue
 
             raise UnexpectedStopReason(
@@ -308,6 +339,17 @@ class AgentLoop:
                 duration_ms=int(duration_ms),
             )
         return results
+
+    def _terminator_invoked(self, response: Any) -> bool:
+        """Return True if any tool_use block in `response` matches the terminator."""
+        if self.terminator_tool is None:
+            return False
+        for block in response.content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            if getattr(block, "name", "") == self.terminator_tool:
+                return True
+        return False
 
     # ---------------------------------------------------------------- log
 

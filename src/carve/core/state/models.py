@@ -1,9 +1,8 @@
-"""SQLAlchemy 2.0 declarative models for the M1 state store.
+"""SQLAlchemy 2.0 declarative models for the Carve state store.
 
-Three tables only — `runs`, `logs`, `plans`. The schema is intentionally
-minimal: M2 and M3 will add columns through alembic migrations once the
-shape stabilises. Every column type here is chosen to round-trip cleanly
-across SQLite and Postgres.
+Four tables: `runs`, `logs`, `plans`, `pipelines`. The schema is managed
+by Alembic — see ``migrations/`` — but the ORM models are still the
+canonical Python representation that repository methods return.
 
 Defaults that need server-side semantics (timestamps, autoincrement keys)
 use SQLAlchemy's column defaults rather than Python-side mutation, so the
@@ -15,7 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index
+from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -47,6 +46,10 @@ class Run(Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     kind: Mapped[str]
     target_id: Mapped[str]
+    pipeline_name: Mapped[str | None] = mapped_column(
+        ForeignKey("pipelines.name"),
+        default=None,
+    )
     owner_user_id: Mapped[int] = mapped_column(default=1)
     status: Mapped[str] = mapped_column(default="queued")
     started_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -76,14 +79,23 @@ class Log(Base):
 class Plan(Base):
     """Index row for a plan stored on disk at ``.carve/plans/<id>.json``.
 
-    The canonical plan is the JSON file; the row exists so the CLI/UI can
-    list, filter, and join plans against runs without re-reading every
-    file. ``estimates_json`` and ``task_graph_json`` are kept here as
-    plain TEXT (JSON-encoded) for cheap querying and to avoid a second
-    disk read for the listing view.
+    M1.1-06 adds two columns:
+
+    * ``phase`` — ``drafted`` (default) or ``built``. CHECK constraint
+      enforces those two values; transitions are driven by the build
+      flow, never written by hand.
+    * ``pipeline_name`` — set during ``carve build`` to the name the
+      build agent landed on. ``NULL`` while the plan is still in the
+      drafted phase.
     """
 
     __tablename__ = "plans"
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('drafted', 'built')",
+            name="ck_plans_phase",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(primary_key=True)
     parent_plan_id: Mapped[str | None] = mapped_column(default=None)
@@ -93,6 +105,11 @@ class Plan(Base):
     estimates_json: Mapped[str]
     task_graph_json: Mapped[str]
     file_path: Mapped[str]
+    phase: Mapped[str] = mapped_column(default="drafted")
+    pipeline_name: Mapped[str | None] = mapped_column(
+        ForeignKey("pipelines.name"),
+        default=None,
+    )
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(default=_default_plan_expiry)
     applied_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -102,6 +119,35 @@ class Plan(Base):
     )
 
 
-# Re-export the helper for callers that want to construct rows in tests with
-# a stable "now" they can compare against.
-__all__: list[Any] = ["Base", "Log", "Plan", "Run"]
+class Pipeline(Base):
+    """A first-class pipeline asset.
+
+    The directory under ``pipelines/<name>/`` is the source of truth for
+    code; this row exists so the CLI/UI can list pipelines, filter their
+    runs, and walk plan lineage without re-reading every file.
+
+    The ``last_run_*`` columns are denormalised from `runs` so that
+    ``carve pipelines`` doesn't need a per-row JOIN. They are updated by
+    `Repository.record_pipeline_run` when a run reaches a terminal state.
+    """
+
+    __tablename__ = "pipelines"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    description: Mapped[str] = mapped_column(default="")
+    pipeline_dir: Mapped[str]
+    current_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plans.id"),
+        default=None,
+    )
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    last_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id"),
+        default=None,
+    )
+    last_run_status: Mapped[str | None] = mapped_column(default=None)
+    last_run_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+__all__: list[Any] = ["Base", "Log", "Pipeline", "Plan", "Run"]

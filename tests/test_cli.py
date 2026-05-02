@@ -22,10 +22,12 @@ from carve.version import __version__
 EXPECTED_COMMANDS = [
     "init",
     "plan",
+    "build",
     "apply",
     "run",
     "runs",
     "logs",
+    "pipelines",
     "serve",
     "version",
 ]
@@ -66,7 +68,6 @@ def test_version_matches_pyproject(runner: CliRunner) -> None:
 @pytest.mark.parametrize(
     ("command", "args"),
     [
-        ("run", ["my_pipeline"]),
         ("serve", []),
         ("version", []),
     ],
@@ -77,19 +78,29 @@ def test_command_stub_exits_zero(runner: CliRunner, command: str, args: list[str
     assert result.exit_code == 0, result.output
 
 
+def test_apply_prints_m2_placeholder(runner: CliRunner) -> None:
+    """`carve apply` is a reserved-verb stub that prints a redirect to `carve run`."""
+    result = runner.invoke(app, ["apply", "my_pipeline"])
+    assert result.exit_code == 0, result.output
+    assert "M2" in result.output
+    assert "carve run my_pipeline" in result.output
+
+
 @pytest.mark.parametrize(
     ("command", "args"),
     [
         ("plan", ["a goal"]),
-        ("apply", ["plan-id-123"]),
+        ("build", ["plan-id-123"]),
+        ("run", ["my_pipeline"]),
         ("runs", []),
         ("logs", ["run-id-123"]),
+        ("pipelines", []),
     ],
 )
 def test_real_command_exits_2_without_carve_toml(
     runner: CliRunner, tmp_path: Path, command: str, args: list[str]
 ) -> None:
-    """Plan/apply/runs/logs fail with exit code 2 when run outside a project.
+    """Plan/build/run/runs/logs/pipelines fail with exit 2 when no config.
 
     Each command loads the merged `Config` and exits 2 on `ConfigError`,
     so invoking them in an empty tmpdir is the simplest way to exercise

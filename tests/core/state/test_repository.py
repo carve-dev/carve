@@ -20,7 +20,7 @@ from carve.core.state.database import (
     create_session_factory,
     initialize_database,
 )
-from carve.core.state.models import Plan
+from carve.core.state.models import Pipeline, Plan
 
 
 @pytest.fixture
@@ -247,3 +247,223 @@ def test_expire_old_plans_returns_count(repo: Repository) -> None:
     repo.save_plan(_make_plan("c", expires_at=now + timedelta(hours=1)))
 
     assert repo.expire_old_plans(now=now) == 2
+
+
+# -------------------------------------------------------------------- Pipelines
+
+
+def test_create_or_update_pipeline_round_trip(repo: Repository) -> None:
+    """First call inserts; second call updates without resetting created_at."""
+    repo.save_plan(_make_plan("plan-1"))
+    pipeline = repo.create_or_update_pipeline(
+        name="iowa_liquor_sales",
+        description="Daily ingest.",
+        pipeline_dir="pipelines/iowa_liquor_sales",
+        current_plan_id="plan-1",
+    )
+    assert pipeline.name == "iowa_liquor_sales"
+    assert pipeline.current_plan_id == "plan-1"
+    first_created = pipeline.created_at
+
+    repo.save_plan(_make_plan("plan-2"))
+    time.sleep(0.01)
+    updated = repo.create_or_update_pipeline(
+        name="iowa_liquor_sales",
+        description="Daily ingest, refined.",
+        pipeline_dir="pipelines/iowa_liquor_sales",
+        current_plan_id="plan-2",
+    )
+    assert updated.description == "Daily ingest, refined."
+    assert updated.current_plan_id == "plan-2"
+    assert updated.created_at == first_created
+    assert updated.updated_at > first_created
+
+
+def test_get_pipeline_returns_none_for_unknown(repo: Repository) -> None:
+    assert repo.get_pipeline("nonesuch") is None
+
+
+def test_list_pipelines_orders_recently_updated_first(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.save_plan(_make_plan("plan-2"))
+    repo.create_or_update_pipeline(
+        name="alpha",
+        description="",
+        pipeline_dir="pipelines/alpha",
+        current_plan_id="plan-1",
+    )
+    time.sleep(0.01)
+    repo.create_or_update_pipeline(
+        name="beta",
+        description="",
+        pipeline_dir="pipelines/beta",
+        current_plan_id="plan-2",
+    )
+    listed = repo.list_pipelines()
+    assert [p.name for p in listed] == ["beta", "alpha"]
+
+
+def test_get_pipeline_lineage_walks_parent_chain_and_children(
+    repo: Repository,
+) -> None:
+    """parent_chain returns the chain of refinements above current_plan."""
+    repo.save_plan(_make_plan("plan-A"))
+    repo.save_plan(_make_plan("plan-B", parent_plan_id="plan-A"))
+    repo.save_plan(_make_plan("plan-C", parent_plan_id="plan-B"))
+    repo.save_plan(_make_plan("plan-D", parent_plan_id="plan-C"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="pipelines/ingest",
+        current_plan_id="plan-C",
+    )
+    lineage = repo.get_pipeline_lineage("ingest")
+    assert lineage is not None
+    assert lineage.pipeline.name == "ingest"
+    assert lineage.current_plan is not None
+    assert lineage.current_plan.id == "plan-C"
+    assert [p.id for p in lineage.parent_chain] == ["plan-B", "plan-A"]
+    assert [p.id for p in lineage.children] == ["plan-D"]
+
+
+def test_get_pipeline_lineage_returns_none_for_unknown(repo: Repository) -> None:
+    assert repo.get_pipeline_lineage("nope") is None
+
+
+def test_record_pipeline_run_updates_denorms(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="pipelines/ingest",
+        current_plan_id="plan-1",
+    )
+    run_id = repo.create_run(
+        kind="run",
+        target_id="plan-1",
+        pipeline_name="ingest",
+    )
+    repo.update_run_status(run_id, "running")
+    repo.update_run_status(run_id, "success")
+    repo.record_pipeline_run(
+        pipeline_name="ingest",
+        run_id=run_id,
+        status="success",
+    )
+    pipeline = repo.get_pipeline("ingest")
+    assert pipeline is not None
+    assert pipeline.last_run_id == run_id
+    assert pipeline.last_run_status == "success"
+    assert pipeline.last_run_at is not None
+
+
+def test_record_pipeline_run_silently_noops_for_missing_pipeline(
+    repo: Repository,
+) -> None:
+    """Calling record_pipeline_run for a non-existent pipeline is a no-op."""
+    repo.record_pipeline_run(
+        pipeline_name="missing",
+        run_id="r",
+        status="success",
+    )
+    # No exception, no row created.
+    assert repo.get_pipeline("missing") is None
+
+
+def test_mark_plan_built_sets_phase_pipeline_and_apply_run(
+    repo: Repository,
+) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="pipelines/ingest",
+        current_plan_id="plan-1",
+    )
+    run_id = repo.create_run(kind="build", target_id="plan-1")
+    repo.mark_plan_built(
+        plan_id="plan-1",
+        pipeline_name="ingest",
+        build_run_id=run_id,
+    )
+    plan = repo.get_plan("plan-1")
+    assert plan is not None
+    assert plan.phase == "built"
+    assert plan.pipeline_name == "ingest"
+    assert plan.applied_at is not None
+    assert plan.apply_run_id == run_id
+
+
+def test_mark_plan_built_raises_for_unknown_plan(repo: Repository) -> None:
+    with pytest.raises(KeyError):
+        repo.mark_plan_built(
+            plan_id="nope",
+            pipeline_name="ingest",
+            build_run_id="r",
+        )
+
+
+def test_phase_check_constraint_rejects_invalid_value(repo: Repository) -> None:
+    """The CHECK constraint rejects a phase outside (drafted, built)."""
+    bad_plan = Plan(
+        id="bad",
+        goal="g",
+        config_hash="h",
+        carve_version="v",
+        estimates_json="{}",
+        task_graph_json="{}",
+        file_path=".carve/plans/bad.json",
+        phase="garbage",
+    )
+    # The integrity error surfaces from SQLAlchemy at commit time.
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        repo.save_plan(bad_plan)
+
+
+def test_list_runs_filters_by_pipeline_name(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="pipelines/ingest",
+        current_plan_id="plan-1",
+    )
+    a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
+    b = repo.create_run(kind="run", target_id="other", pipeline_name=None)
+    runs = repo.list_runs(pipeline_name="ingest")
+    assert {r.id for r in runs} == {a}
+    runs_unfiltered = repo.list_runs()
+    assert {r.id for r in runs_unfiltered} == {a, b}
+
+
+def test_pipeline_run_target_id_can_be_reused(repo: Repository) -> None:
+    """The replay guard is gone — running the same plan twice succeeds."""
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="pipelines/ingest",
+        current_plan_id="plan-1",
+    )
+    a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
+    b = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
+    assert a != b
+    runs = repo.list_runs(pipeline_name="ingest")
+    assert {r.id for r in runs} == {a, b}
+
+
+def test_pipeline_model_round_trip(repo: Repository) -> None:
+    """Construct via the ORM directly to exercise the column defaults."""
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="iowa",
+        description="d",
+        pipeline_dir="pipelines/iowa",
+        current_plan_id="plan-1",
+    )
+    pipeline = repo.get_pipeline("iowa")
+    assert isinstance(pipeline, Pipeline)
+    assert pipeline.name == "iowa"
+    assert pipeline.last_run_status is None

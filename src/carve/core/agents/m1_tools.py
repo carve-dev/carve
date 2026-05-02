@@ -251,6 +251,187 @@ def make_run_snowflake_query_tool(runner: SnowflakeQueryRunner) -> Tool:
 
 
 # ---------------------------------------------------------------------------
+# submit_plan
+# ---------------------------------------------------------------------------
+
+
+# Schema for the plan agent's terminator tool. Mirrors the design
+# document shape from spec M1.1-06's "Plan agent" section. We list every
+# named field explicitly so the Anthropic API can validate the model's
+# output before it hits us — but `additionalProperties` is left at the
+# JSON-Schema default (true) so the agent can include analysis fields
+# we haven't enumerated yet without the call being rejected.
+SUBMIT_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pipeline_name": {
+            "type": "string",
+            "description": (
+                "snake_case name for the pipeline. The build agent writes "
+                "files to pipelines/<pipeline_name>/."
+            ),
+        },
+        "description": {
+            "type": "string",
+            "description": "One-line summary of what the pipeline does.",
+        },
+        "is_new_pipeline": {
+            "type": "boolean",
+            "description": (
+                "True for a brand-new pipeline; False when the design "
+                "modifies an existing pipeline (--pipeline <name>)."
+            ),
+        },
+        "source": {
+            "type": "object",
+            "description": (
+                "Where the data comes from. `type` is freeform; common "
+                "values: socrata_api, http_csv, snowflake, postgres."
+            ),
+        },
+        "destination": {
+            "type": "object",
+            "description": (
+                "Snowflake destination. `database` and `schema` come from "
+                "the active connection target; `table` is named by the "
+                "agent (Snowflake convention: UPPER_SNAKE_CASE)."
+            ),
+            "properties": {
+                "database": {"type": "string"},
+                "schema": {"type": "string"},
+                "table": {"type": "string"},
+                "primary_key": {"type": ["string", "null"]},
+            },
+        },
+        "transformation": {
+            "type": "object",
+            "description": "Strategy choice plus a one-sentence rationale.",
+            "properties": {
+                "strategy": {
+                    "type": "string",
+                    "enum": ["truncate_load", "append_only", "merge_upsert"],
+                },
+                "rationale": {"type": "string"},
+            },
+        },
+        "columns": {
+            "type": "array",
+            "description": "Canonical column list for the destination table.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string"},
+                    "nullable": {"type": "boolean"},
+                },
+            },
+        },
+        "requirements": {
+            "type": "array",
+            "description": (
+                "pip-spec strings that go into requirements.txt. Always "
+                "includes snowflake-connector-python."
+            ),
+            "items": {"type": "string"},
+        },
+        "estimates": {
+            "type": "object",
+            "description": "Coarse expectations: row count, runtime.",
+        },
+        "tradeoffs": {
+            "type": "array",
+            "description": "Known costs / limitations of this design.",
+            "items": {"type": "string"},
+        },
+        "open_questions": {
+            "type": "array",
+            "description": (
+                "Ambiguities the agent surfaces back to the user. Empty "
+                "array if the design is fully specified."
+            ),
+            "items": {"type": "string"},
+        },
+    },
+    "required": [
+        "pipeline_name",
+        "description",
+        "source",
+        "destination",
+        "transformation",
+        "requirements",
+    ],
+}
+
+
+class SubmitPlanCapture:
+    """Stateful container for the plan agent's `submit_plan` payload.
+
+    The plan agent terminates by calling `submit_plan(...)` exactly
+    once. The orchestrator builds a fresh `SubmitPlanCapture`, hands it
+    to `make_submit_plan_tool`, runs the loop, and then reads
+    ``capture.design`` after the loop returns. If the agent never calls
+    `submit_plan` ``capture.design`` is ``None``; callers raise their own
+    `PlanGenerationError` in that case.
+    """
+
+    def __init__(self) -> None:
+        self.design: dict[str, Any] | None = None
+
+    @property
+    def submitted(self) -> bool:
+        return self.design is not None
+
+
+def make_submit_plan_tool(capture: SubmitPlanCapture) -> Tool:
+    """Build a `submit_plan` tool that records the design on `capture`.
+
+    The tool's executor returns a tiny acknowledgement so the model
+    sees the call succeeded; the orchestrator inspects ``capture.design``
+    after the loop completes. We do not parse the design with pydantic
+    here — the loop's tool layer already validates against the JSON
+    schema, and over-strict server-side validation would force a
+    cascade of edits whenever the spec's design shape evolves.
+
+    A second invocation within the same `capture` is rejected: the
+    plan agent's contract is exactly one design per planning session,
+    and the loop's `terminator_tool="submit_plan"` wiring exits after
+    the first call. The `called` flag is a belt-and-braces guard for
+    the unlikely case the model emits two `submit_plan` blocks in the
+    same turn — the first wins and the second surfaces as a tool error.
+    """
+    # Track whether `submit_plan` has already fired so a second call
+    # cannot silently overwrite the captured design.
+    called = False
+
+    def _execute(input_: ToolInput) -> ToolResult:
+        nonlocal called
+        if called:
+            raise ToolExecutionError(
+                "submit_plan already called; only one design can be "
+                "submitted per planning session."
+            )
+        if not isinstance(input_, dict):
+            raise ToolExecutionError("submit_plan input must be an object.")
+        # Record a defensive copy so subsequent mutation of the input
+        # dict (the loop reuses the parsed payload for logging) can't
+        # silently change what the orchestrator sees.
+        capture.design = dict(input_)
+        called = True
+        return {"status": "submitted"}
+
+    return Tool(
+        name="submit_plan",
+        description=(
+            "Finalize the pipeline design. Call this once with the complete "
+            "design document. The orchestrator captures the design and the "
+            "loop terminates after this call."
+        ),
+        input_schema=SUBMIT_PLAN_SCHEMA,
+        executor=_execute,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Bundle helper
 # ---------------------------------------------------------------------------
 
@@ -259,7 +440,12 @@ def build_m1_tools(
     project_dir: Path,
     snowflake_runner: SnowflakeQueryRunner,
 ) -> list[Tool]:
-    """Return the three M1 code-agent tools, bound to project resources."""
+    """Return the three M1 code-agent tools, bound to project resources.
+
+    Retained for callers that want the legacy combined toolset
+    (read_file + write_file + run_snowflake_query). The plan agent and
+    build agent each construct narrower toolsets directly.
+    """
     return [
         make_read_file_tool(project_dir),
         make_write_file_tool(project_dir),
