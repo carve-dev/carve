@@ -122,10 +122,15 @@ def build_plan(
     pipeline_dir_abs = project_dir / pipeline_dir_rel
     snapshot = _snapshot_pipeline_dir(pipeline_dir_abs)
 
+    # The Pipeline row is upserted at the end of a successful build, so it
+    # doesn't exist yet at create_run time. Pass pipeline_name=None to keep
+    # the runs.pipeline_name FK happy (the column is nullable specifically
+    # for this case — see M1.1-06 spec, "runs table changes"). After the
+    # pipeline lands we backfill via _attach_pipeline_to_run below.
     run_id = repository.create_run(
         kind="build",
         target_id=plan_id,
-        pipeline_name=pipeline_name,
+        pipeline_name=None,
     )
     repository.update_run_status(run_id, "running")
 
@@ -206,6 +211,9 @@ def build_plan(
         pipeline_dir=pipeline_dir_rel,
         current_plan_id=plan_id,
     )
+    # Pipeline now exists; safe to backfill the build run's FK so this
+    # build shows up in `runs --pipeline <name>` filters.
+    repository.attach_pipeline_to_run(run_id, pipeline_name)
     repository.mark_plan_built(
         plan_id=plan_id,
         pipeline_name=pipeline_name,

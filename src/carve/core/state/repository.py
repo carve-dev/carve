@@ -116,6 +116,23 @@ class Repository:
                     run.duration_ms = int(delta.total_seconds() * 1000)
             session.commit()
 
+    def attach_pipeline_to_run(self, run_id: str, pipeline_name: str) -> None:
+        """Backfill `Run.pipeline_name` after the Pipeline row exists.
+
+        Build runs are created before the Pipeline they materialize exists
+        on disk (the build agent is what writes it), so we can't set the
+        FK at create time without violating it. This helper fills the
+        column once the Pipeline row has been upserted, so subsequent
+        `runs --pipeline <name>` filters pick up build history alongside
+        run history.
+        """
+        with self._session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                raise KeyError(f"run {run_id!r} not found")
+            run.pipeline_name = pipeline_name
+            session.commit()
+
     def get_run(self, run_id: str) -> Run | None:
         """Fetch a run by id, or `None` if not found."""
         with self._session_factory() as session:
