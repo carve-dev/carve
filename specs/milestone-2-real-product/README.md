@@ -27,6 +27,7 @@ This is the version that goes on GitHub as `v0.0.5` and gets shared with five tr
 - FastAPI server with REST + WebSocket
 - Workbench and pipeline monitor screens
 - GitHub PR creation on apply
+- Recovery agent that auto-fixes failed runs in dev (Claude-Code-style: read error → patch or replan → re-run; bounded by attempts and dollars)
 
 ## What is still deferred to M3
 
@@ -59,10 +60,11 @@ In recommended build order:
 11. [`11-web-ui-workbench.md`](./11-web-ui-workbench.md) — goal input, active goal feed, task graph
 12. [`12-web-ui-pipeline-monitor.md`](./12-web-ui-pipeline-monitor.md) — pipeline list, status, runs
 13. [`13-github-pr-integration.md`](./13-github-pr-integration.md) — branch, commit, PR open
+14. [`14-recovery-agent.md`](./14-recovery-agent.md) — autonomous fix loop on `carve run` failures (depends on the specialist agents from 02–05)
 
 ## Definition of done
 
-- All 13 specs implemented with tests
+- All 14 specs implemented with tests
 - Acceptance criteria above met
 - A 5-minute screen recording of the demo flow exists
 - Internal tag `v0.0.5`
