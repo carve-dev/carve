@@ -116,8 +116,8 @@ A complete run, from goal to data in the warehouse:
 7. It computes cost and duration estimates
 8. The plan is written to `.carve/plans/plan_xxx.json`
 9. The CLI prints the plan summary; the user reviews
-10. User runs `carve apply plan_xxx`
-11. Apply checks the config hash, refuses if drifted
+10. User runs `carve deploy <pipeline_name>`
+11. Deploy checks the config hash, refuses if drifted
 12. The first step (dbt agent) is invoked with pre-scoped context: the goal, the current `stg_orders` SQL, the downstream model SQLs, and the project's conventions
 13. The dbt agent's reasoning loop runs: read SQL, generate modified SQL with incremental config, write the file
 14. `step.completed` fires
@@ -159,7 +159,7 @@ User goal → Orchestration agent → Plan object
 ### 4.3 Run data flow
 
 ```
-Plan → carve apply → Step DAG executor → Runners
+Plan → carve deploy → Step DAG executor → Runners
                           │                  │
                           │                  ▼
                           │          Subprocess execution
@@ -244,7 +244,7 @@ A few details that matter:
 - **Skill call caching within a run.** Identical skill calls in the same run return cached results. Tracked at the agent level, automatic.
 - **Result truncation.** A skill returning 1,000 rows truncates with a flag. The agent has to be specific.
 
-## 7. The plan/apply lifecycle
+## 7. The plan/deploy lifecycle
 
 Plans are first-class objects:
 
@@ -269,10 +269,36 @@ Plans support these operations:
 - **Refine** — `carve plan --refine <id> "<adjustment>"` produces a child plan
 - **Show** — print or render the plan
 - **Diff** — compare two plans
-- **Apply** — execute, with config-hash validation
+- **Deploy** — execute, with config-hash validation
 - **Expire** — automatically purged after `expires_at`
 
-The config hash check at apply time is the safety net. If you generate a plan, edit a guardrail, then try to apply, Carve refuses and asks you to re-plan. This prevents stale plans from running against drifted config.
+The config hash check at deploy time is the safety net. If you generate a plan, edit a guardrail, then try to deploy, Carve refuses and asks you to re-plan. This prevents stale plans from running against drifted config.
+
+### 7.1 Targets and the dev/prod boundary
+
+Carve uses a target-based environment model, mirroring dbt. `carve/connections.toml` defines named Snowflake targets — at minimum `dev` and `prod` — each with its own account, role, warehouse, database, and schema. `carve.toml` sets `default_target = "dev"`, and CLI commands accept `--target <name>` to override.
+
+The lifecycle verbs split cleanly along this boundary:
+
+| Verb | Touches data? | Default target | `--target` flag |
+|---|---|---|---|
+| `carve plan` | Yes — reads schema, samples rows | `default_target` (dev) | Yes — different targets surface different schemas, so the plan agent must know which one |
+| `carve build` | No — writes pipeline files only | n/a | No — code is target-agnostic; targets are resolved at run time |
+| `carve run <pipeline>` | Yes — executes against a target | `default_target` (dev) | Yes — `carve run --target prod <pipeline>` is the manual prod-execution path |
+| `carve deploy <pipeline>` | No — opens a PR with already-built code | n/a | No — deploy ships code, not data |
+
+**The promoted artifact is the pipeline directory.** `pipelines/<name>/main.py`, `requirements.txt`, and any other source files are what travel through the PR into prod. Plans and builds are dev-side records — they live in the developer's `.carve/state.db` and never leave it. Prod gets its own state DB (full of run records from `carve run --target prod`), but no plans, because you don't design pipelines in prod.
+
+**Dev iteration** lives entirely on `default_target`: plan, build, run, re-run, edit, re-run, until the rows in the dev schema look right. Re-running is free — no replay guard.
+
+**Prod execution** is the user's responsibility in M1/M2. Once `carve deploy` opens a PR and the team merges, the pipeline code lives in the repo. *What runs it on schedule against the prod target* is whatever orchestrator the user already operates: an Airflow DAG calling `carve run --target prod`, a GitHub Actions cron, a Dagster job, or a manual run from a deployment box. Carve provides the executable; the user provides the scheduler.
+
+**M3 closes this gap** with first-class scheduling: pipeline-level cron expressions, a scheduler daemon, pause/resume controls in the pipeline monitor. After M3, "prod" means "running on Carve's scheduler against the prod target." Until then, "prod" means "the merged code, runnable against the prod target by your existing orchestrator."
+
+Two implications worth naming:
+
+- **Targets are not authentication scopes.** A user with access to both targets can run either; the safety boundary is the human-reviewed PR at deploy time, not RBAC at the CLI. Multi-tenant target isolation is a SaaS-era concern.
+- **The `dev`/`prod` names are conventional, not enforced.** A team can define `staging`, `qa`, `eu_prod`, etc. The only target Carve treats specially is `default_target`, which is just a string in `carve.toml`.
 
 ## 8. Schema retrieval
 
@@ -359,7 +385,7 @@ Fail loudly, no retry. Surface the actual error in the UI with the SQL or Python
 
 ### 12.3 Logic failures (bug in generated code)
 
-Caught by the plan/apply review process or by CI tests on the generated PR. Once in production, surface clearly and let the user trigger a refinement (`carve plan --refine`).
+Caught by the plan/deploy review process or by CI tests on the generated PR. Once in production, surface clearly and let the user trigger a refinement (`carve plan --refine`).
 
 ### 12.4 Partial pipeline failures
 
