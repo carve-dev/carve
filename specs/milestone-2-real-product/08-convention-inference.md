@@ -1,8 +1,8 @@
-# M2-07 — Convention inference
+# M2-08 — Convention inference
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
-**Dependencies:** M2-05 (manifest reader), M2-06 (brownfield onboarding)
+**Dependencies:** M2-06 (manifest reader), M2-07 (brownfield onboarding)
 
 ## Purpose
 

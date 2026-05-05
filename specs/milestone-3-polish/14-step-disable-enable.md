@@ -28,7 +28,7 @@ Add a per-step `enabled` field to the pipeline TOML, plus imperative CLI command
   - `carve step list <pipeline>` — show the steps with their `enabled` status and most recent run status.
 - Validation: disabling a step that other enabled steps depend on must surface a warning. The pipeline still runs, but the user should know they're effectively orphaning a downstream branch. Don't outright reject — there are legit cases (debugging the disabled step's output bridge in isolation).
 - Run-row status `skipped` becomes a recognized terminal state alongside `success`, `failed`, `cancelled`, `crashed` (see M1-03's `runs.status` column). Add to the CHECK constraint.
-- The web UI's pipeline-monitor (M2-12) and dbt-run-view (M3-10) render disabled steps as visually distinct (greyed/striped/etc.). Out of scope here — flagged for those specs.
+- The web UI's pipeline-monitor (M2-13) and dbt-run-view (M3-10) render disabled steps as visually distinct (greyed/striped/etc.). Out of scope here — flagged for those specs.
 
 ### Out of scope
 

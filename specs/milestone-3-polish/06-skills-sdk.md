@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1 day
-**Dependencies:** M2-08 (skills registry)
+**Dependencies:** M2-09 (skills registry)
 
 ## Purpose
 

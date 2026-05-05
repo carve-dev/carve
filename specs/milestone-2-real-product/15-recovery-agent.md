@@ -1,8 +1,8 @@
-# M2-14 — Recovery agent (autonomous fix loop)
+# M2-15 — Recovery agent (autonomous fix loop)
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 2 days
-**Dependencies:** M1.1-04 (progress observer), M1.1-06 (pipeline-centric lifecycle), M2-01 (plan/apply workflow), M2-02 (orchestration agent), M2-03 / M2-04 / M2-05 / M3-05 (specialist agents — needed for the recovery agent to delegate fixes)
+**Dependencies:** M1.1-04 (progress observer), M1.1-06 (pipeline-centric lifecycle), M2-01 (plan/deploy workflow + build coordinator pattern), M2-02 (orchestration agent), M2-03 (extract-load agent) / M2-04 (dbt agent) / M2-05 (snowflake agent) / M3-05 (quality agent) — specialist agents the recovery agent delegates fixes to.
 
 ## Purpose
 
@@ -16,7 +16,7 @@ The first M1 smoke test landed exactly the kind of bug this should handle: `soda
 
 ### In scope
 
-- A new **recovery agent** with its own system prompt at `src/carve/core/agents/prompts/recovery_agent.md`. Tools: `read_file`, `write_file` (scoped to `pipelines/<pipeline_name>/`), `read_run_logs`, `run_snowflake_query` (read-only), and a `delegate_to_specialist` tool that hands off to one of the M2 specialist agents (orchestrator, dbt, snowflake, quality) for larger redesigns.
+- A new **recovery agent** with its own system prompt at `src/carve/core/agents/prompts/recovery_agent.md`. Tools: `read_file`, `write_file` (scoped to `pipelines/<pipeline_name>/`), `read_run_logs`, `run_snowflake_query` (read-only), and a `delegate_to_specialist` tool that hands off to one of the M2 build-time specialists (`extract_load`, `dbt`, `snowflake`, `quality`) for larger code-level redesigns. The tool reuses the same dispatch mechanism as M2-01's build coordinator (`invoke_specialist(agent_name, task)`), keeping a single specialist-invocation path across the codebase. For plan-level redesigns the recovery agent uses `request_replan(feedback)` to hand back to the orchestrator (M2-02), not `delegate_to_specialist`.
 - A failure-classification step that decides between **patch-and-retry** (small code fix; recovery agent handles directly) and **replan-and-rebuild** (larger redesign; recovery agent invokes the orchestrator to refine the plan, then `carve build` is rerun, then `carve run` is rerun).
 - A bounded fix loop: configurable `max_fix_attempts` (default 3) and `fix_cost_cap_usd` (default $1.00 per run). Both come from `carve/runner.toml`. CLI overrides: `--max-fix-attempts N` and `--no-auto-fix`.
 - Per-attempt visibility via the existing `AgentObserver` protocol from M1.1-04. Each attempt shows its diagnosis, action, and outcome.
@@ -43,7 +43,7 @@ The first M1 smoke test landed exactly the kind of bug this should handle: `soda
 - **Cross-run learning.** "This pipeline failed the same way last week; here's what worked." A `recovery_attempts` table is reasonable but training-on-history is M3+.
 - **Recovery for `carve build` failures.** Build failures are different (syntax errors in agent-generated code, missing imports, etc.) — they're rare in practice because the build agent generates code that ran in the agent's mind, but a separate spec can address them later.
 - **External-action recovery.** "Snowflake says we need to grant CREATE TABLE on the schema." Recovery agent can detect and *describe* this case; it does not run `GRANT` statements.
-- **Production recovery (M2 `carve apply`).** Auto-fix in dev is fine; auto-fix in prod with side-effecting writes is risky. `carve apply` always requires human review. Document the asymmetry.
+- **Production recovery (M2 `carve deploy`).** Auto-fix in dev is fine; auto-fix in prod with side-effecting writes is risky. `carve deploy` always requires human review. Document the asymmetry.
 
 ## Architecture
 
@@ -237,6 +237,6 @@ Modified:
 ## What this enables
 
 - The user-visible jump from M1.1's "Carve generates and runs" to M2's "Carve generates, runs, and self-corrects." This is the moment Carve starts feeling like Claude Code applied to data.
-- Specialist agents (M2-02 / M2-03 / M2-04 / M3-05) get a coordination layer at runtime, not just at plan time.
-- The recovery wrapper's per-attempt persistence becomes the foundation for the M2 web UI's "Pipeline Monitor" view (M2-12) — chain rendering plus live status.
+- Specialist agents (M2-02 / M2-04 / M2-05 / M3-05) get a coordination layer at runtime, not just at plan time.
+- The recovery wrapper's per-attempt persistence becomes the foundation for the M2 web UI's "Pipeline Monitor" view (M2-13) — chain rendering plus live status.
 - M3-01's multi-step pipelines plug into the same wrapper; the recovery agent learns to scope fixes to the failed step.

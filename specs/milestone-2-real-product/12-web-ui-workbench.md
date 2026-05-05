@@ -1,12 +1,12 @@
-# M2-11 — Web UI: Workbench
+# M2-12 — Web UI: Workbench
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 2 days
-**Dependencies:** M2-09 (FastAPI), M2-10 (WebSocket)
+**Dependencies:** M2-10 (FastAPI), M2-11 (WebSocket)
 
 ## Purpose
 
-Build the workbench — Carve's daily-driver screen. This is where users submit goals, watch active goals progress through their task graphs, and review generated artifacts before applying. It's the most-used screen in the app.
+Build the workbench — Carve's daily-driver screen. This is where users submit goals, watch active goals progress through their task graphs, and review generated artifacts before deploying. It's the most-used screen in the app.
 
 ## Tech stack
 
@@ -77,7 +77,7 @@ Three regions:
 │  Each card:                                              │
 │    Goal text + status + duration                         │
 │    Task graph (collapsed by default, expandable)         │
-│    "Review & apply" button when plan is ready            │
+│    "Review & deploy" button when plan is ready            │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -103,9 +103,9 @@ Keyboard: `Enter` submits; `Shift+Enter` for newline.
 A list of cards, newest first. Each card has states:
 
 - `generating_plan` — spinner + "Carve is thinking..." (10-30s typical)
-- `plan_ready` — plan summary + Review & Apply button
-- `applying` — task graph with live status per task
-- `applied` — green check + link to PR + total duration
+- `plan_ready` — plan summary + Review & Deploy button
+- `deploying` — task graph with live status per task
+- `deployed` — green check + link to PR + total duration
 - `failed` — red X + error summary + retry button
 
 ### `TaskGraph`
@@ -130,7 +130,7 @@ This is the user's chance to see what the agent generated before it lands in a P
 
 ### `PlanReviewModal`
 
-When the user clicks Review & Apply, a modal opens with:
+When the user clicks Review & Deploy, a modal opens with:
 
 - Goal restated
 - Agents involved (and skipped, with reasons)
@@ -138,7 +138,7 @@ When the user clicks Review & Apply, a modal opens with:
 - Estimated cost and duration
 - File diffs preview
 - "Refine" button (open a refinement input)
-- "Apply" button (commits to running)
+- "Deploy" button (commits to running)
 - "Discard" button (deletes the plan)
 
 The refinement input is another textarea: "What should we adjust?" → POST `/api/v1/plans/{id}/refine` → swap the modal to a new plan.
@@ -239,9 +239,9 @@ E2E tests with Playwright wait until M3 (the test setup is sizable).
 
 ## Acceptance criteria
 
-- A user can submit a goal, see the plan, review it, and apply it from the UI
+- A user can submit a goal, see the plan, review it, and deploy it from the UI
 - The active goal card updates live as the run progresses
-- File diffs are visible before apply
+- File diffs are visible before deploy
 - The UI builds and is served by FastAPI in production mode
 
 ## Files
@@ -256,11 +256,11 @@ E2E tests with Playwright wait until M3 (the test setup is sizable).
 - `src/carve/ui/src/ws/*.ts`
 - `src/carve/ui/src/components/*.tsx`
 - `src/carve/ui/src/pages/Workbench.tsx`
-- `src/carve/ui/src/pages/PipelineMonitor.tsx` (stub for M2-12)
+- `src/carve/ui/src/pages/PipelineMonitor.tsx` (stub for M2-13)
 - `src/carve/ui/src/lib/*.ts`
 
 ## What this enables
 
-- The primary workflow (submit goal, review, apply) has a UI
+- The primary workflow (submit goal, review, deploy) has a UI
 - The UI is the demoable surface for showing Carve to anyone
-- The pipeline monitor (M2-12) reuses these components
+- The pipeline monitor (M2-13) reuses these components

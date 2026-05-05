@@ -1,4 +1,4 @@
-# M2-04 — Snowflake agent
+# M2-05 — Snowflake agent
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
@@ -69,7 +69,7 @@ Tools available:
 - list_files: list files in a directory
 
 Write generated DDL to .sql files under snowflake/ — do not execute it directly.
-The plan/apply workflow handles execution. The user must review SQL before run.
+The plan/deploy workflow handles execution. The user must review SQL before run.
 
 After completing, summarize:
 - Files generated and what each contains
@@ -87,7 +87,7 @@ Four tools, in `src/carve/core/agents/tools/snowflake_tools.py`:
 3. `read_file(path)` — read project files
 4. `list_files(path, pattern)` — glob
 
-The Snowflake agent **does not** have a tool to execute DDL directly. All generated DDL goes to `.sql` files. Execution happens via the plan/apply workflow with explicit user approval.
+The Snowflake agent **does not** have a tool to execute DDL directly. All generated DDL goes to `.sql` files. Execution happens via the plan/deploy workflow with explicit user approval.
 
 This is a deliberate safety boundary. RBAC and DDL changes are high-impact and need review.
 
@@ -112,7 +112,7 @@ snowflake/
     └── 001_carve_wh.sql
 ```
 
-The numbered prefix orders the apply sequence. Generated grants reference the role and schema files by structure.
+The numbered prefix orders the deploy sequence. Generated grants reference the role and schema files by structure.
 
 ## Common task patterns
 
@@ -154,7 +154,7 @@ The agent is biased toward conservatism. Specifically:
 - Inserts comments in DDL (`COMMENT = '...'`) noting Carve's authorship
 - Surfaces operations requiring elevated privileges so the user knows
 
-Hard rules baked into the prompt and the apply layer:
+Hard rules baked into the prompt and the deploy layer:
 
 - Never generates `DROP DATABASE` (too destructive)
 - Never generates grants to PUBLIC role

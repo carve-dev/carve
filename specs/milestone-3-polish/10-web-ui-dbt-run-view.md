@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1.5 days
-**Dependencies:** M2-12 (run detail screen), M2-05 (manifest reader)
+**Dependencies:** M2-13 (run detail screen), M2-06 (manifest reader)
 
 ## Purpose
 
@@ -10,7 +10,7 @@ A specialized run detail view for dbt runs that renders the lineage DAG with per
 
 ## Why a dedicated view
 
-Generic run detail (M2-12) shows a sequential step list. A dbt run is fundamentally a graph — 50+ models with dependencies, some parallel, some sequential, with tests at various levels. A list view loses the structure. A graph view makes failure investigation immediate ("the upstream of `mart_revenue` failed; here's the chain").
+Generic run detail (M2-13) shows a sequential step list. A dbt run is fundamentally a graph — 50+ models with dependencies, some parallel, some sequential, with tests at various levels. A list view loses the structure. A graph view makes failure investigation immediate ("the upstream of `mart_revenue` failed; here's the chain").
 
 ## Layout
 
@@ -139,9 +139,9 @@ Two outcomes the user sees:
 
 **A. Diagnosis only:** the agent identifies the cause and proposes a fix in the chat-like investigation panel. The user can accept (which generates a refinement plan) or decline.
 
-**B. Auto-fix proposal:** for safer cases, the agent generates a Plan with the proposed fix. The user reviews and applies it like any other plan.
+**B. Auto-fix proposal:** for safer cases, the agent generates a Plan with the proposed fix. The user reviews and deploys it like any other plan.
 
-Both go through the standard plan/apply flow — investigation never bypasses review.
+Both go through the standard plan/deploy flow — investigation never bypasses review.
 
 ## API integration
 
@@ -152,7 +152,7 @@ New endpoints needed:
 - `GET /api/v1/runs/{id}/models/{name}/tests` — tests for a model
 - `POST /api/v1/runs/{id}/investigate` — start investigation; returns a job_id
 
-The dbt run graph endpoint reads the run's dbt structured logs (parsed during M2-05's runner) to extract per-node status, durations, and errors.
+The dbt run graph endpoint reads the run's dbt structured logs (parsed during M2-06's runner) to extract per-node status, durations, and errors.
 
 ## Components
 

@@ -2,7 +2,7 @@
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1.5 days
-**Dependencies:** M1-04 (agent loop), M2-01 (plan schema), M2-08 (schema retrieval skills)
+**Dependencies:** M1-04 (agent loop), M2-01 (plan schema), M2-09 (schema retrieval skills)
 
 ## Purpose
 

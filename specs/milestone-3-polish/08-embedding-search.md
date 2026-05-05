@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1.5 days
-**Dependencies:** M2-08 (skills), M2-05 (manifest reader)
+**Dependencies:** M2-09 (skills), M2-06 (manifest reader)
 
 ## Purpose
 

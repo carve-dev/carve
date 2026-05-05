@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 0.5 day
-**Dependencies:** M2-03 (dbt agent), M2-08 (skills)
+**Dependencies:** M2-04 (dbt agent), M2-09 (skills)
 
 ## Purpose
 

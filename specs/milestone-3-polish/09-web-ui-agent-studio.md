@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1 day
-**Dependencies:** M2-11 (workbench scaffolding), M3-04 (MCP client)
+**Dependencies:** M2-12 (workbench scaffolding), M3-04 (MCP client)
 
 ## Purpose
 
@@ -167,7 +167,7 @@ All built using the same shadcn primitives from M2.
 
 ## API endpoints
 
-In addition to M2-09:
+In addition to M2-10:
 
 - `GET /api/v1/agents/{name}` — already exists
 - `PUT /api/v1/agents/{name}` — update agent (M3 adds this)

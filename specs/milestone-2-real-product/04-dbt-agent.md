@@ -1,8 +1,8 @@
-# M2-03 — dbt agent
+# M2-04 — dbt agent
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1.5 days
-**Dependencies:** M1-04 (agent loop), M2-05 (dbt integration), M2-08 (schema retrieval)
+**Dependencies:** M1-04 (agent loop), M2-06 (dbt integration), M2-09 (schema retrieval)
 
 ## Purpose
 
@@ -208,5 +208,5 @@ Use a small test dbt project as a fixture (under `tests/fixtures/dbt-project/`).
 ## What this enables
 
 - The most common Carve workflow (modify a dbt model) works end-to-end
-- Convention inference (M2-07) has a direct consumer
+- Convention inference (M2-08) has a direct consumer
 - M3 quality agent splits cleanly from this one because tests are already isolated as a separate skill area

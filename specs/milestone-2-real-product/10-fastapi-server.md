@@ -1,4 +1,4 @@
-# M2-09 — FastAPI server
+# M2-10 — FastAPI server
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
@@ -12,7 +12,7 @@ Stand up the API server that the web UI will consume and the CLI will (gradually
 
 **FastAPI** for these reasons:
 
-- Async out of the box (matters for the WebSocket layer in M2-10)
+- Async out of the box (matters for the WebSocket layer in M2-11)
 - Pydantic integration native — schemas are shared with the rest of the codebase
 - Automatic OpenAPI generation
 - Mature, popular, well-maintained
@@ -49,7 +49,7 @@ All routes prefixed with `/api/v1`.
 - `GET /api/v1/plans/{plan_id}` — plan detail
 - `POST /api/v1/plans` — create new plan from goal (body: `{ "goal": "..." }`)
 - `POST /api/v1/plans/{plan_id}/refine` — refine a plan
-- `POST /api/v1/plans/{plan_id}/apply` — apply a plan
+- `POST /api/v1/plans/{plan_id}/deploy` — deploy a plan
 - `DELETE /api/v1/plans/{plan_id}` — discard a plan
 
 ### Agents (read-only in M2; full CRUD in M3 agent studio)
@@ -212,7 +212,7 @@ Add a `jobs` table to the state store:
 class Job(Base):
     __tablename__ = "jobs"
     id: str
-    kind: str  # "plan_generation" | "apply" | etc.
+    kind: str  # "plan_generation" | "deploy" | etc.
     status: str  # "pending" | "running" | "done" | "failed"
     result_json: str | None
     error: str | None
@@ -279,6 +279,6 @@ Use `httpx.AsyncClient` against the in-process FastAPI app.
 
 ## What this enables
 
-- The web UI in M2-11/M2-12 has a backend
+- The web UI in M2-12/M2-13 has a backend
 - The CLI gradually migrates to talking to the server (rather than the DB directly) for parity
 - The MCP server in M3 is built as another consumer of these endpoints

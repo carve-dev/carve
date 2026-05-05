@@ -1,8 +1,8 @@
-# M2-12 — Web UI: Pipeline monitor
+# M2-13 — Web UI: Pipeline monitor
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
-**Dependencies:** M2-11 (workbench scaffolding)
+**Dependencies:** M2-12 (workbench scaffolding)
 
 ## Purpose
 
@@ -80,7 +80,7 @@ Reused everywhere. Statuses and colors:
 
 ## API integration
 
-Endpoints (already from M2-09):
+Endpoints (already from M2-10):
 
 - `GET /api/v1/pipelines` for the list
 - `GET /api/v1/pipelines/{name}` for detail
@@ -103,7 +103,7 @@ The first time someone opens the pipeline monitor in a fresh project:
 ```
 No pipelines yet.
 
-Pipelines are created when you apply a plan that includes them.
+Pipelines are created when you deploy a plan that includes them.
 Try: carve plan "ingest a CSV from a public URL"
 
 [Open Workbench →]

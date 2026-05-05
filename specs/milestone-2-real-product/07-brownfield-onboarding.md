@@ -1,8 +1,8 @@
-# M2-06 — Brownfield onboarding
+# M2-07 — Brownfield onboarding
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
-**Dependencies:** M1-01 (CLI), M2-05 (dbt integration), M2-07 (convention inference)
+**Dependencies:** M1-01 (CLI), M2-06 (dbt integration), M2-08 (convention inference)
 
 ## Purpose
 
@@ -286,7 +286,7 @@ Use temporary directories with various dbt project layouts as fixtures.
 
 - `carve init` against an existing dbt project produces working Carve config without modifying the dbt project
 - Detection handles same-repo and sibling-dir cases
-- Convention inference (M2-07) runs as part of brownfield init
+- Convention inference (M2-08) runs as part of brownfield init
 - Post-init message is actionable
 
 ## Files

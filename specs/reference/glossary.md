@@ -10,8 +10,8 @@ A configured LLM with a system prompt and a set of skills. Carve ships four buil
 **Agent loop**
 The conversational pattern where an agent receives a goal, calls skills (tools), reads results, and continues until it produces a final answer or hits a limit. Implemented in `src/carve/agents/loop.py`.
 
-**Apply**
-The verb for executing a plan. After `carve plan` produces a plan, `carve apply <plan-id>` executes it. Modeled on Terraform's `terraform apply`.
+**Deploy**
+The verb for promoting a built pipeline to prod via PR. After `carve build` materializes a pipeline, `carve deploy <pipeline_name>` opens a PR with the pipeline's files.
 
 **Approval step**
 A pipeline step type that pauses execution and waits for a human to confirm before proceeding. Used for production deploys, destructive operations, or anything else where humans should be in the loop.
@@ -82,8 +82,8 @@ A named DAG of steps, scheduled or triggered manually. Defined in `carve/pipelin
 **Plan**
 A persisted, hash-validated representation of intended changes. Produced by `carve plan` (or implicitly by `carve build`). Contains: file edits, pipeline changes, expected effects, cost estimate. Lives under `.carve/plans/`.
 
-**Plan/apply**
-The two-phase workflow for changes: plan first, review, apply only if accepted. Modeled on Terraform; gives users a chance to catch problems before they happen.
+**Plan/deploy**
+The two-phase workflow for changes: plan first, review, deploy only if accepted. Modeled on Terraform; gives users a chance to catch problems before they happen.
 
 **Profile** (dbt)
 A connection configuration for dbt, in `~/.dbt/profiles.yml` or in-project. Carve reads but does not write profiles by default.
@@ -128,7 +128,7 @@ A specialist agent invoked by orchestration. Sub-agents don't directly receive u
 Anonymous usage data collected to understand how Carve is used. Opt-out via `CARVE_NO_TELEMETRY`. Documented in `docs/privacy.md`.
 
 **Workbench**
-The primary UI screen for daily use: goal input, active goals, task graph, artifact preview. Documented in `M2-11`.
+The primary UI screen for daily use: goal input, active goals, task graph, artifact preview. Documented in `M2-12`.
 
 **WebSocket bridge**
 The component that translates internal event-bus events to WebSocket frames for the UI. Implemented in `src/carve/server/ws.py`.

@@ -145,7 +145,7 @@ retain_days = 30
 
 ## `carve/guardrails.toml`
 
-Rules the orchestration agent enforces before applying a plan.
+Rules the orchestration agent enforces before deploying a plan.
 
 ```toml
 [approval]
@@ -297,7 +297,7 @@ on_failure = "warn"              # Don't fail the pipeline
 |---|---|---|
 | `python` | `command` | M1-05 |
 | `sql` | `connection`, (`sql` or `sql_file`) | M3-02 |
-| `dbt` | `command` (run/build/test/seed/snapshot) | M2-05 |
+| `dbt` | `command` (run/build/test/seed/snapshot) | M2-06 |
 | `shell` | `command` | M3-03 |
 | `http` | `method`, `url` | M3-03 |
 | `agent` | `agent`, `goal` | M2-02 |

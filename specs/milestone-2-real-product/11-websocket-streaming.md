@@ -1,8 +1,8 @@
-# M2-10 — WebSocket streaming
+# M2-11 — WebSocket streaming
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 0.5 day
-**Dependencies:** M2-09 (FastAPI server)
+**Dependencies:** M2-10 (FastAPI server)
 
 ## Purpose
 

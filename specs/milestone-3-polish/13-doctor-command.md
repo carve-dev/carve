@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1 day
-**Dependencies:** M1-02 (config loader), M1-06 (Snowflake connector), M2-05 (dbt integration), M3-04 (MCP client)
+**Dependencies:** M1-02 (config loader), M1-06 (Snowflake connector), M2-06 (dbt integration), M3-04 (MCP client)
 
 ## Purpose
 

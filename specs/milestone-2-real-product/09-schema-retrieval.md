@@ -1,8 +1,8 @@
-# M2-08 — Schema retrieval
+# M2-09 — Schema retrieval
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
-**Dependencies:** M1-06 (Snowflake), M2-05 (manifest reader)
+**Dependencies:** M1-06 (Snowflake), M2-06 (manifest reader)
 
 ## Purpose
 
@@ -36,7 +36,7 @@ These all hit Snowflake's `INFORMATION_SCHEMA` or system tables. Cheap, determin
 
 ### dbt manifest queries
 
-These wrap `M2-05`'s manifest reader as agent-callable skills:
+These wrap `M2-06`'s manifest reader as agent-callable skills:
 
 - `dbt_lookup_model(name)` → full model metadata
 - `dbt_downstream_of(model_name)` → list of dependent models

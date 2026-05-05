@@ -1,4 +1,4 @@
-# M2-05 — dbt integration
+# M2-06 — dbt integration
 
 **Milestone:** 2 — Real product
 **Estimated effort:** 1 day
@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Integrate dbt-core as a first-class step type and provide the manifest-reading layer that the dbt agent (M2-03) and orchestration agent (M2-02) depend on for context. This is what makes Carve a useful tool for analytics engineers.
+Integrate dbt-core as a first-class step type and provide the manifest-reading layer that the dbt agent (M2-04) and orchestration agent (M2-02) depend on for context. This is what makes Carve a useful tool for analytics engineers.
 
 ## Two distinct concerns
 
@@ -234,4 +234,4 @@ Use the same fixture dbt project as the dbt agent.
 
 - The dbt agent can verify its output by running dbt commands
 - Pipelines can include dbt steps mixed with other step types
-- Manifest queries power schema retrieval (M2-08)
+- Manifest queries power schema retrieval (M2-09)
