@@ -18,7 +18,8 @@ This is the version that goes on GitHub as `v0.0.5` and gets shared with five tr
 
 ## What ships in addition to M1
 
-- Persisted plans with `plan_id`, refinement, expiry, config-hash validation
+- Build as a first-class entity (the deployable artifact); Pipeline points to its current Build, not its current Plan
+- Multi-task task graph in plans (replaces the single-pipeline design blob from M1.1-06)
 - Orchestration agent + extract-load agent + dbt agent + Snowflake agent (split out from M1's combined agent)
 - Build agent reshaped into a coordinator that dispatches each task-graph entry to its assigned specialist sub-agent
 - dbt step type and dbt-core integration
@@ -27,7 +28,7 @@ This is the version that goes on GitHub as `v0.0.5` and gets shared with five tr
 - Schema retrieval skills (catalog + manifest queries; embeddings deferred to M3)
 - FastAPI server with REST + WebSocket
 - Workbench and pipeline monitor screens
-- GitHub PR creation on deploy
+- Deploy orchestration: `carve deploy <pipeline> --target X` runs local pre-flight (with AI recovery), opens a PR with code + DDL + migrations + a generated GitHub Actions workflow; post-merge the workflow applies DDL, runs idempotent migrations, and verifies the deploy
 - Recovery agent that auto-fixes failed runs in dev (Claude-Code-style: read error → patch or replan → re-run; bounded by attempts and dollars)
 
 ## What is still deferred to M3
@@ -62,7 +63,7 @@ In recommended build order:
 11. [`11-websocket-streaming.md`](./11-websocket-streaming.md) — live log and event streaming
 12. [`12-web-ui-workbench.md`](./12-web-ui-workbench.md) — goal input, active goal feed, task graph
 13. [`13-web-ui-pipeline-monitor.md`](./13-web-ui-pipeline-monitor.md) — pipeline list, status, runs
-14. [`14-github-pr-integration.md`](./14-github-pr-integration.md) — branch, commit, PR open on `carve deploy`
+14. [`14-github-pr-integration.md`](./14-github-pr-integration.md) — deploy orchestration: pre-flight, PR + workflow generation, post-merge GitHub Actions for DDL provisioning + idempotent migrations + verification *(spec proposal pending: rename to `14-deploy-orchestration.md` and broader scope)*
 15. [`15-recovery-agent.md`](./15-recovery-agent.md) — autonomous fix loop on `carve run` failures (depends on the build-time specialists from 03–05)
 
 ## Definition of done

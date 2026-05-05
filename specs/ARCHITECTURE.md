@@ -291,7 +291,9 @@ The lifecycle verbs split cleanly along this boundary:
 
 **Dev iteration** lives entirely on `default_target`: plan, build, run, re-run, edit, re-run, until the rows in the dev schema look right. Re-running is free — no replay guard.
 
-**Prod execution** is the user's responsibility in M1/M2. Once `carve deploy` opens a PR and the team merges, the pipeline code lives in the repo. *What runs it on schedule against the prod target* is whatever orchestrator the user already operates: an Airflow DAG calling `carve run --target prod`, a GitHub Actions cron, a Dagster job, or a manual run from a deployment box. Carve provides the executable; the user provides the scheduler.
+**Prod deploy** in M2 is automated: `carve deploy <pipeline> --target prod` runs a local pre-flight, opens a PR, and includes a generated GitHub Actions workflow (`.github/workflows/carve-deploy-<pipeline>-<target>.yml`). On merge, the workflow runs the *deploy phases* (DDL provisioning, idempotent migrations, verification) against the prod target via the deploy role. The deploy workflow is **push-triggered** (fires once per merge), not scheduled.
+
+**Prod ongoing execution** (running the pipeline on a recurring schedule) is still the user's responsibility in M1/M2. Once the pipeline is deployed, *what runs it on schedule against the prod target* is whatever orchestrator the user already operates: an Airflow DAG calling `carve run --target prod`, a GitHub Actions cron, a Dagster job, or a manual run from a deployment box. Carve provides the deploy automation and the executable; the user provides the recurring scheduler.
 
 **M3 closes this gap** with first-class scheduling: pipeline-level cron expressions, a scheduler daemon, pause/resume controls in the pipeline monitor. After M3, "prod" means "running on Carve's scheduler against the prod target." Until then, "prod" means "the merged code, runnable against the prod target by your existing orchestrator."
 

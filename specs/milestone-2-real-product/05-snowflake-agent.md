@@ -114,6 +114,15 @@ snowflake/
 
 The numbered prefix orders the deploy sequence. Generated grants reference the role and schema files by structure.
 
+### Per-pipeline output
+
+In addition to the shared `snowflake/` tree, when the snowflake agent is invoked as part of a multi-task plan that also involves an extract-load or dbt step, it emits two pipeline-scoped artifacts that M2-14's deploy orchestrator consumes:
+
+- **`snowflake/<pipeline>.sql`** — the consolidated DDL needed for *this pipeline's* destination (table CREATE, schema CREATE IF NOT EXISTS, grants the runtime role needs to write to the destination). M2-14's Phase 3 applies this file via the deploy role.
+- **`pipelines/<pipeline>/migrations/NNN_slug.sql`** — one or more idempotent migration files when the agent's task involves data transformations the runtime role can't perform during normal `carve run` (backfills, dedupe, conditional ALTERs). Numbered, alphabetical, must be idempotent. M2-14's Phase 4 runs all migration files in order on every deploy.
+
+Both file types must be **idempotent** — re-running is safe. The `snowflake/<pipeline>.sql` uses `CREATE TABLE IF NOT EXISTS` and `GRANT ... ON ... TO ROLE ...` (idempotent on Snowflake). Migrations use `IF NOT EXISTS`, conditional ALTERs, or `MERGE` patterns. See M2-14 §"Migrations contract" for the exact constraint.
+
 ## Common task patterns
 
 ### Pattern: create a new schema
