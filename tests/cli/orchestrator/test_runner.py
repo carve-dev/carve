@@ -105,7 +105,7 @@ def _plant_pipeline(
             file_path=f".carve/plans/{plan_id}.json",
             phase="built",
             pipeline_name=pipeline_name,
-            applied_at=datetime.now(UTC).replace(tzinfo=None),
+            deployed_at=datetime.now(UTC).replace(tzinfo=None),
         )
         repository.save_plan(plan)
 

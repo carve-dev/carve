@@ -24,10 +24,10 @@ The smallest end-to-end loop that proves the core idea works. CLI only, one agen
 
 ### Milestone 2 — real product (weeks 2-3)
 
-The version you'd publish to GitHub and start showing people. Multiple agents, plan/apply workflow, dbt integration, basic web UI, brownfield onboarding.
+The version you'd publish to GitHub and start showing people. Multiple agents, plan/deploy workflow, dbt integration, basic web UI, brownfield onboarding.
 
 - [`milestone-2-real-product/README.md`](./milestone-2-real-product/README.md) — overview and acceptance criteria
-- [`01-plan-apply-workflow.md`](./milestone-2-real-product/01-plan-apply-workflow.md)
+- [`01-plan-deploy-workflow.md`](./milestone-2-real-product/01-plan-deploy-workflow.md)
 - [`02-orchestration-agent.md`](./milestone-2-real-product/02-orchestration-agent.md)
 - [`03-dbt-agent.md`](./milestone-2-real-product/03-dbt-agent.md)
 - [`04-snowflake-agent.md`](./milestone-2-real-product/04-snowflake-agent.md)

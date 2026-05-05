@@ -8,8 +8,8 @@ from pathlib import Path
 import typer
 
 from carve.cli.commands import (
-    apply,
     build,
+    deploy,
     init,
     logs,
     pipelines,
@@ -60,7 +60,7 @@ def _main_callback(
 app.command(name="init")(init.command)
 app.command(name="plan")(plan.command)
 app.command(name="build")(build.command)
-app.command(name="apply")(apply.command)
+app.command(name="deploy")(deploy.command)
 app.command(name="run")(run.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)

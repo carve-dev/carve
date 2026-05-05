@@ -54,8 +54,8 @@ def test_runs_renders_empty_state_message(repository: Repository) -> None:
 
 
 def test_runs_renders_table_with_populated_state(repository: Repository) -> None:
-    run_id_a = repository.create_run(kind="apply", target_id="plan_aaa")
-    run_id_b = repository.create_run(kind="apply", target_id="plan_bbb")
+    run_id_a = repository.create_run(kind="deploy", target_id="plan_aaa")
+    run_id_b = repository.create_run(kind="deploy", target_id="plan_bbb")
     repository.update_run_status(run_id_a, "running")
     repository.update_run_status(run_id_a, "success")
     repository.update_run_status(run_id_b, "running")
@@ -80,7 +80,7 @@ def test_runs_renders_table_with_populated_state(repository: Repository) -> None
 
 
 def test_logs_prints_lines_for_existing_run(repository: Repository) -> None:
-    run_id = repository.create_run(kind="apply", target_id="plan_xxx")
+    run_id = repository.create_run(kind="deploy", target_id="plan_xxx")
     repository.append_log(run_id, "info", "runner", "first line")
     repository.append_log(run_id, "warning", "runner", "second line")
 
@@ -96,7 +96,7 @@ def test_logs_prints_lines_for_existing_run(repository: Repository) -> None:
 
 
 def test_logs_handles_run_with_no_logs(repository: Repository) -> None:
-    run_id = repository.create_run(kind="apply", target_id="plan_yyy")
+    run_id = repository.create_run(kind="deploy", target_id="plan_yyy")
     renderable, exit_code = render_logs(repository, run_id)
     assert exit_code == 0
     console = Console(record=True, width=120)

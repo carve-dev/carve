@@ -66,16 +66,16 @@ carve plan --agent dbt-engineer "add a customer_ltv mart"
 | `--output <path>` | Write plan to specific path (default: `.carve/plans/<id>.json`) |
 | `--dry-run` | Don't persist the plan |
 
-Output: a `Plan ID` that can be passed to `apply`.
+Output: a `Plan ID` that can be passed to `build`.
 
-### `carve apply`
+### `carve deploy`
 
-Execute a previously-generated plan.
+Promote a built pipeline to prod via PR.
 
 ```bash
-carve apply <plan-id>
-carve apply <plan-id> --auto-approve
-carve apply <plan-id> --pr-only        # Open the PR but don't trigger run
+carve deploy <pipeline_name>
+carve deploy <pipeline_name> --auto-approve
+carve deploy <pipeline_name> --pr-only        # Open the PR but don't trigger run
 ```
 
 | Flag | Description |
@@ -86,14 +86,14 @@ carve apply <plan-id> --pr-only        # Open the PR but don't trigger run
 
 ### `carve build`
 
-Plan + apply in one shot. Convenience for the common case.
+Plan + deploy in one shot. Convenience for the common case.
 
 ```bash
 carve build "ingest orders.csv"
-carve build --pipeline daily_revenue   # Re-plan and apply current pipeline
+carve build --pipeline daily_revenue   # Re-plan and deploy current pipeline
 ```
 
-Same flags as `plan` plus `apply`.
+Same flags as `plan` plus `deploy`.
 
 ### `carve run`
 

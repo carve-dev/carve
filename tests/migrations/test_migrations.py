@@ -284,3 +284,113 @@ def test_legacy_db_skips_backfill_for_malformed_pipeline_dir(
             text("SELECT phase, pipeline_name FROM plans WHERE id = 'plan_bad'")
         ).one()
         assert plan_row == ("drafted", None)
+
+
+# ---------------------------------------------------------------------------
+# 0003_rename_apply_to_deploy
+# ---------------------------------------------------------------------------
+
+
+def test_rename_apply_to_deploy_renames_columns_and_rewrites_kinds(
+    project_dir: Path,
+) -> None:
+    """0003 renames the two `plans` columns and rewrites apply-kind run rows.
+
+    Builds a fresh DB through 0001+0002, plants a row with the legacy
+    column names + kind='apply', then runs `alembic upgrade head` and
+    checks the schema and data both reflect the new names.
+    """
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    plan_cols = {c["name"] for c in inspector.get_columns("plans")}
+    assert "deployed_at" in plan_cols
+    assert "deploy_run_id" in plan_cols
+    assert "applied_at" not in plan_cols
+    assert "apply_run_id" not in plan_cols
+
+
+def test_rename_apply_to_deploy_round_trip(project_dir: Path) -> None:
+    """Upgrade to head, downgrade -1, upgrade head again — schema is stable."""
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    cfg = _alembic_config(engine)
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.downgrade(cfg, "-1")
+
+    inspector = inspect(engine)
+    plan_cols = {c["name"] for c in inspector.get_columns("plans")}
+    # After downgrade, the legacy column names are restored.
+    assert "applied_at" in plan_cols
+    assert "apply_run_id" in plan_cols
+    assert "deployed_at" not in plan_cols
+    assert "deploy_run_id" not in plan_cols
+
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    plan_cols = {c["name"] for c in inspector.get_columns("plans")}
+    assert "deployed_at" in plan_cols
+    assert "deploy_run_id" in plan_cols
+
+
+def test_rename_apply_to_deploy_rewrites_apply_kind_runs(project_dir: Path) -> None:
+    """A pre-existing run with kind='apply' is rewritten to kind='deploy'.
+
+    Defensive: M1.1-06 reserved `kind='apply'` for the M1 stub but never
+    inserted such rows. Smoke-test DBs from earlier dev cycles may still
+    carry them; the migration normalizes them so future filters on
+    `kind='deploy'` cover the legacy data.
+    """
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    # Bring the DB up to 0002 (one before head) and seed an apply-kind row.
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+
+    cfg = _alembic_config(engine)
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "0002_pipeline_centric")
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO runs "
+                "(id, kind, target_id, owner_user_id, status, "
+                " tokens_input, tokens_output, cost_usd, created_at) "
+                "VALUES "
+                "(:id, :kind, :target_id, 1, 'queued', 0, 0, 0.0, :created_at)"
+            ),
+            {
+                "id": "run_legacy_apply",
+                "kind": "apply",
+                "target_id": "plan_x",
+                "created_at": now,
+            },
+        )
+
+    # Run 0003.
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    with engine.begin() as conn:
+        kind = conn.execute(
+            text("SELECT kind FROM runs WHERE id = 'run_legacy_apply'")
+        ).scalar_one()
+        assert kind == "deploy"

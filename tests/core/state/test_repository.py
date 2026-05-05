@@ -40,13 +40,13 @@ def repo(tmp_path: Path) -> Repository:
 
 
 def test_create_run_returns_id_and_persists(repo: Repository) -> None:
-    run_id = repo.create_run(kind="apply", target_id="plan-abc")
+    run_id = repo.create_run(kind="deploy", target_id="plan-abc")
     assert isinstance(run_id, str)
     assert len(run_id) == 32  # uuid4().hex
 
     run = repo.get_run(run_id)
     assert run is not None
-    assert run.kind == "apply"
+    assert run.kind == "deploy"
     assert run.target_id == "plan-abc"
     assert run.status == "queued"
     assert run.tokens_input == 0
@@ -70,7 +70,7 @@ def test_update_run_status_to_running_sets_started_at(repo: Repository) -> None:
 
 
 def test_update_run_status_terminal_sets_completed_and_duration(repo: Repository) -> None:
-    run_id = repo.create_run(kind="apply", target_id="plan-1")
+    run_id = repo.create_run(kind="deploy", target_id="plan-1")
     repo.update_run_status(run_id, "running")
     time.sleep(0.01)
     repo.update_run_status(run_id, "success")
@@ -84,7 +84,7 @@ def test_update_run_status_terminal_sets_completed_and_duration(repo: Repository
 
 
 def test_update_run_status_failed_records_error(repo: Repository) -> None:
-    run_id = repo.create_run(kind="apply", target_id="plan-1")
+    run_id = repo.create_run(kind="deploy", target_id="plan-1")
     repo.update_run_status(run_id, "running")
     repo.update_run_status(run_id, "failed", error="snowflake exploded")
 
@@ -226,15 +226,15 @@ def test_list_expired_plans_returns_only_old_unapplied(repo: Repository) -> None
     now = datetime.now(UTC)
     fresh = _make_plan("fresh", expires_at=now + timedelta(hours=1))
     expired = _make_plan("expired", expires_at=now - timedelta(hours=1))
-    applied = _make_plan(
-        "applied",
+    deployed = _make_plan(
+        "deployed",
         expires_at=now - timedelta(hours=1),
-        applied_at=now - timedelta(minutes=30),
-        apply_run_id=None,
+        deployed_at=now - timedelta(minutes=30),
+        deploy_run_id=None,
     )
     repo.save_plan(fresh)
     repo.save_plan(expired)
-    repo.save_plan(applied)
+    repo.save_plan(deployed)
 
     expired_list = repo.list_expired_plans(now=now)
     assert [p.id for p in expired_list] == ["expired"]
@@ -370,7 +370,7 @@ def test_record_pipeline_run_silently_noops_for_missing_pipeline(
     assert repo.get_pipeline("missing") is None
 
 
-def test_mark_plan_built_sets_phase_pipeline_and_apply_run(
+def test_mark_plan_built_sets_phase_pipeline_and_deploy_run(
     repo: Repository,
 ) -> None:
     repo.save_plan(_make_plan("plan-1"))
@@ -390,8 +390,8 @@ def test_mark_plan_built_sets_phase_pipeline_and_apply_run(
     assert plan is not None
     assert plan.phase == "built"
     assert plan.pipeline_name == "ingest"
-    assert plan.applied_at is not None
-    assert plan.apply_run_id == run_id
+    assert plan.deployed_at is not None
+    assert plan.deploy_run_id == run_id
 
 
 def test_mark_plan_built_raises_for_unknown_plan(repo: Repository) -> None:

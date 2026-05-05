@@ -2,7 +2,7 @@
 
 **Milestone:** 3 — Polish for adoption
 **Estimated effort:** 1.5 days
-**Dependencies:** M1-05 (single-step runner), M2-01 (plan/apply)
+**Dependencies:** M1-05 (single-step runner), M2-01 (plan/deploy)
 
 ## Purpose
 
@@ -181,7 +181,7 @@ Before running a pipeline:
 - Each step's config validates against its type's schema
 - All Jinja templates parse
 
-Validation runs at config-load time (at startup) and at apply time. Failures produce clear errors.
+Validation runs at config-load time (at startup) and at deploy time. Failures produce clear errors.
 
 ## Tests
 

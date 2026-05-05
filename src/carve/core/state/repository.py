@@ -10,6 +10,10 @@ For M1.1-06 the surface adds pipeline-centric helpers
 (`create_or_update_pipeline`, `get_pipeline`, `list_pipelines`,
 `get_pipeline_lineage`, `record_pipeline_run`) and renames
 `mark_plan_applied` -> `mark_plan_built` to fit the plan/build/run split.
+The columns previously named ``applied_at`` / ``apply_run_id`` are now
+``deployed_at`` / ``deploy_run_id`` (M1.1-06.1) — the verb was renamed
+from ``apply`` to ``deploy`` because the M2 use case is "ship to prod
+via PR", not Terraform-style immediate execution.
 """
 
 from __future__ import annotations
@@ -224,7 +228,7 @@ class Repository:
             return list(session.scalars(stmt).all())
 
     def list_expired_plans(self, now: datetime | None = None) -> list[Plan]:
-        """Return un-applied plans whose `expires_at` is in the past.
+        """Return un-deployed plans whose `expires_at` is in the past.
 
         `now` is injectable for tests; production callers pass `None` and
         get the current UTC time.
@@ -235,7 +239,7 @@ class Repository:
         stmt = (
             select(Plan)
             .where(Plan.expires_at < cutoff)
-            .where(Plan.applied_at.is_(None))
+            .where(Plan.deployed_at.is_(None))
             .order_by(Plan.created_at.asc())
         )
         with self._session_factory() as session:
@@ -251,8 +255,8 @@ class Repository:
         """Stamp a plan as ``phase='built'`` after a successful build.
 
         Records the pipeline name the build settled on plus the build's
-        run id (kept on `apply_run_id` for now — same column, new
-        semantics: "first run that materialized this plan"). `applied_at`
+        run id (kept on `deploy_run_id` for now — same column, new
+        semantics: "first run that materialized this plan"). `deployed_at`
         is also stamped to make plan history queryable without a JOIN.
         """
         with self._session_factory() as session:
@@ -261,12 +265,12 @@ class Repository:
                 raise KeyError(f"plan {plan_id!r} not found")
             plan.phase = "built"
             plan.pipeline_name = pipeline_name
-            plan.applied_at = datetime.now(UTC).replace(tzinfo=None)
-            plan.apply_run_id = build_run_id
+            plan.deployed_at = datetime.now(UTC).replace(tzinfo=None)
+            plan.deploy_run_id = build_run_id
             session.commit()
 
     def expire_old_plans(self, now: datetime | None = None) -> int:
-        """Convenience: count of currently-expired, un-applied plans."""
+        """Convenience: count of currently-expired, un-deployed plans."""
         return len(self.list_expired_plans(now=now))
 
     # -------------------------------------------------------------- Pipelines

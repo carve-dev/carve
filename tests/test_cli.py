@@ -23,7 +23,7 @@ EXPECTED_COMMANDS = [
     "init",
     "plan",
     "build",
-    "apply",
+    "deploy",
     "run",
     "runs",
     "logs",
@@ -78,9 +78,9 @@ def test_command_stub_exits_zero(runner: CliRunner, command: str, args: list[str
     assert result.exit_code == 0, result.output
 
 
-def test_apply_prints_m2_placeholder(runner: CliRunner) -> None:
-    """`carve apply` is a reserved-verb stub that prints a redirect to `carve run`."""
-    result = runner.invoke(app, ["apply", "my_pipeline"])
+def test_deploy_prints_m2_placeholder(runner: CliRunner) -> None:
+    """`carve deploy` is a reserved-verb stub that prints a redirect to `carve run`."""
+    result = runner.invoke(app, ["deploy", "my_pipeline"])
     assert result.exit_code == 0, result.output
     assert "M2" in result.output
     assert "carve run my_pipeline" in result.output

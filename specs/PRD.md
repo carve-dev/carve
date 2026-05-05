@@ -37,13 +37,13 @@ Carve is not designed for the long tail of enterprise platform requirements (mul
 Every interaction with Carve flows through this loop:
 
 ```
-Intent → Plan → Review → Apply → Execute → Observe
+Intent → Plan → Review → Deploy → Execute → Observe
 ```
 
 1. **Intent** — the user expresses a goal in natural language ("onboard Salesforce", "make `stg_orders` incremental", "add freshness checks to all marts")
 2. **Plan** — Carve's orchestration agent decomposes the goal into a task graph, picks the right specialist agents, gathers context, and produces a structured plan with cost estimates
 3. **Review** — the user reviews the plan, refines it, or rejects it
-4. **Apply** — Carve's agents generate code; changes land as a git pull request
+4. **Deploy** — Carve's agents generate code; changes land as a git pull request
 5. **Execute** — once merged, the code runs through Carve's execution engine on its configured schedule
 6. **Observe** — the web UI surfaces what's happening; the user intervenes when needed
 
@@ -57,7 +57,7 @@ The loop applies whether the user is building a new pipeline, modifying an exist
 - Authoring, modification, and refactoring of dbt models, tests, and documentation
 - Authoring of Snowflake DDL: schemas, tables, views, roles, warehouses, grants
 - Multi-step pipelines with Python, SQL, dbt, shell, and HTTP steps
-- A plan/apply workflow with persisted plans
+- A plan/deploy workflow with persisted plans
 - A scheduling layer that triggers pipelines based on cron expressions
 - A web UI with four screens: workbench, agent studio, pipeline monitor, dbt run view
 - A CLI with parity for every UI action
@@ -119,11 +119,11 @@ A pipeline is a sequence of steps. Each step has a type (`python`, `sql`, `dbt`,
 
 This generalizes the original "pipeline = Python script" model to handle the long tail of real data work — call a stored procedure after dbt, refresh a search-optimized table, post to Slack on completion.
 
-### 5.4 Plan/apply, not build-and-go
+### 5.4 Plan/deploy, not build-and-go
 
-Every change goes through a plan/apply lifecycle, modeled on `terraform plan`/`terraform apply`. The plan is a serializable artifact that includes the task graph, cost estimate, file diffs, and impact analysis. Plans can be saved, refined, diffed, and applied later.
+Every change goes through a plan/deploy lifecycle, modeled on `terraform plan`/`terraform apply`. The plan is a serializable artifact that includes the task graph, cost estimate, file diffs, and impact analysis. Plans can be saved, refined, diffed, and deployed later.
 
-`carve build` is a convenience that combines plan + interactive confirm + apply. The underlying primitive is always plan/apply.
+`carve build` is a convenience that combines plan + interactive confirm + deploy. The underlying primitive is always plan/deploy.
 
 ### 5.5 Code is the source of truth, UI is the editor
 
@@ -172,14 +172,14 @@ Apache 2.0 is the license the data ecosystem expects. A Developer Certificate of
 ### 6.2 Plan generation
 
 - `carve plan "<goal>"` produces a saved plan with task graph, cost estimate, expected file diffs, and impact analysis
-- Plans include a config hash to detect drift before apply
+- Plans include a config hash to detect drift before deploy
 - Plans expire after 24 hours by default (configurable)
 - `carve plan --refine <plan_id> "<adjustment>"` produces a refined plan with parent lineage
 
-### 6.3 Plan application
+### 6.3 Plan deployment
 
-- `carve apply <plan_id>` executes a saved plan
-- Apply checks the config hash and refuses to run against drifted config
+- `carve deploy <pipeline_name>` executes a saved plan
+- Deploy checks the config hash and refuses to run against drifted config
 - Generated artifacts are committed to a feature branch and opened as a pull request
 - The PR description includes the plan summary, file diffs, and impact analysis
 
@@ -250,7 +250,7 @@ Apache 2.0 is the license the data ecosystem expects. A Developer Certificate of
 
 - `carve init` completes in under 30 seconds for a greenfield project, under 5 minutes for a brownfield project with manifest analysis
 - `carve plan` for a typical modification goal completes in under 15 seconds (excluding LLM latency)
-- `carve apply` for a typical modification produces a PR within 60 seconds
+- `carve deploy` for a typical modification produces a PR within 60 seconds
 - Pipeline run startup overhead is under 10 seconds
 - Web UI feels live: status updates within 500ms of state changes
 
@@ -258,7 +258,7 @@ Apache 2.0 is the license the data ecosystem expects. A Developer Certificate of
 
 - Failed runs leave the state store in a consistent state
 - Crashed processes can be detected and runs marked as failed
-- Plan files include a hash of the config they were generated against; apply validates this hash
+- Plan files include a hash of the config they were generated against; deploy validates this hash
 
 ### 7.3 Security
 
@@ -293,7 +293,7 @@ These are the indicators that Carve has product-market fit at the OSS layer:
 
 ### 8.2 Engagement metrics
 
-- 50% of installations result in at least one successful `carve apply`
+- 50% of installations result in at least one successful `carve deploy`
 - Median time from `carve init` to first successful pipeline run: under 30 minutes
 - 30% of brownfield installations result in at least one merged PR within a week
 
@@ -301,7 +301,7 @@ These are the indicators that Carve has product-market fit at the OSS layer:
 
 - Generated dbt models pass `dbt parse` 99% of the time
 - Generated Python pipelines run successfully on first attempt 80% of the time
-- Plan/apply matches plan output 95% of the time (no surprise behavior at apply)
+- Plan/deploy matches plan output 95% of the time (no surprise behavior at deploy)
 
 ### 8.4 Community signals
 
@@ -315,7 +315,7 @@ These are the indicators that Carve has product-market fit at the OSS layer:
 
 This is the canonical AI-for-code risk. Mitigations:
 
-- The plan/apply workflow surfaces what will happen before it happens
+- The plan/deploy workflow surfaces what will happen before it happens
 - Generated code lands as PRs with CI checks (dbt parse, dbt test on dev, lint)
 - Convention inference grounds output in the team's existing patterns
 - Skills are deterministic where possible (catalog queries return facts, not LLM guesses)

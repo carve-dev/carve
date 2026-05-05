@@ -112,8 +112,8 @@ class Plan(Base):
     )
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(default=_default_plan_expiry)
-    applied_at: Mapped[datetime | None] = mapped_column(default=None)
-    apply_run_id: Mapped[str | None] = mapped_column(
+    deployed_at: Mapped[datetime | None] = mapped_column(default=None)
+    deploy_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id"),
         default=None,
     )

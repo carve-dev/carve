@@ -124,7 +124,7 @@ The `sql` step type allows write statements (it's the whole point — `MERGE`, `
 
 To avoid accidents:
 
-- Steps with mutating SQL must be reviewed in plan/apply (the SQL is part of the file diff)
+- Steps with mutating SQL must be reviewed in plan/deploy (the SQL is part of the file diff)
 - Pipelines that include `sql` steps with mutations are flagged in the plan summary: "Pipeline includes 2 SQL steps with INSERT/MERGE/DELETE statements"
 
 ## Long-running queries

@@ -58,10 +58,10 @@ Each milestone is a usable product. Demo it, get feedback, then start the next.
 **Day 5 — End-to-end wiring**
 - `carve init` command: scaffolds project layout
 - `carve plan "<goal>"` command: invokes agent, returns plan as JSON
-- `carve apply <plan_id>` command: executes the plan
+- `carve deploy <pipeline_name>` command: executes the plan
 - `carve run <pipeline>` command: runs a pipeline through the runner
 - Run history persists to state store
-- Demo target: `carve plan "ingest a CSV from a public URL into my dev Snowflake schema"` → plan → apply → data lands in Snowflake
+- Demo target: `carve plan "ingest a CSV from a public URL into my dev Snowflake schema"` → plan → deploy → data lands in Snowflake
 
 **Days 6-7 — Buffer**
 - Whatever broke. There will be something.
@@ -71,20 +71,20 @@ Each milestone is a usable product. Demo it, get feedback, then start the next.
 
 ### Acceptance criteria for M1
 
-A new user can clone the repo, run `carve init`, edit a config file with their Snowflake credentials, run `carve plan "<reasonable goal>"`, run `carve apply`, and end up with data in their warehouse. The whole flow takes under 10 minutes, all from the CLI.
+A new user can clone the repo, run `carve init`, edit a config file with their Snowflake credentials, run `carve plan "<reasonable goal>"`, run `carve deploy`, and end up with data in their warehouse. The whole flow takes under 10 minutes, all from the CLI.
 
 ## Milestone 2 — Real product (weeks 2-3)
 
-**Goal:** the version you'd publish to GitHub. Multiple agents, plan/apply workflow with PRs, dbt integration, basic web UI, brownfield onboarding.
+**Goal:** the version you'd publish to GitHub. Multiple agents, plan/deploy workflow with PRs, dbt integration, basic web UI, brownfield onboarding.
 
 ### Week 2
 
-**Day 8 — Plan/apply formalization**
+**Day 8 — Plan/deploy formalization**
 - Plan files written to `.carve/plans/<plan_id>.json`
 - Plan schema with task graph, cost estimates, file diffs, config hash, expiry
 - `carve plan show <plan_id>`, `carve plan list`, `carve plan diff`
-- Apply checks config hash before executing
-- Spec: [`milestone-2-real-product/01-plan-apply-workflow.md`](./milestone-2-real-product/01-plan-apply-workflow.md)
+- Deploy checks config hash before executing
+- Spec: [`milestone-2-real-product/01-plan-deploy-workflow.md`](./milestone-2-real-product/01-plan-deploy-workflow.md)
 
 **Day 9 — Orchestration agent**
 - Split the M1 "code" agent into orchestration + dbt + Snowflake
@@ -142,7 +142,7 @@ A new user can clone the repo, run `carve init`, edit a config file with their S
 - Spec: [`12-web-ui-pipeline-monitor.md`](./milestone-2-real-product/12-web-ui-pipeline-monitor.md)
 
 **Day 20 — GitHub PR integration**
-- After `carve apply`, generated artifacts are committed to a feature branch
+- After `carve deploy`, generated artifacts are committed to a feature branch
 - A PR is opened against the configured default branch
 - PR description includes the plan summary, file diffs, impact analysis
 - Spec: [`13-github-pr-integration.md`](./milestone-2-real-product/13-github-pr-integration.md)
@@ -158,7 +158,7 @@ A data engineer with an existing dbt project can:
 1. Run `carve init` in their repo
 2. Have Carve detect their dbt project and generate a conventions doc
 3. Run `carve plan "make stg_orders incremental"` and see a sensible plan
-4. Run `carve apply` and see a PR opened in their GitHub repo
+4. Run `carve deploy` and see a PR opened in their GitHub repo
 5. Watch the run live in the web UI's workbench
 6. See pipeline runs in the pipeline monitor
 
@@ -231,7 +231,7 @@ A data engineer with an existing dbt project can:
 
 **Days 38-39 — Documentation site**
 - mkdocs-material site under `docs/`
-- Concepts (steps, agents, plan-and-apply, schema-context)
+- Concepts (steps, agents, plan-and-deploy, schema-context)
 - Guides (first pipeline, brownfield setup, writing a custom skill)
 - Reference (CLI, config schema, glossary)
 - Auto-deploy via GitHub Actions
