@@ -1,8 +1,8 @@
-# P1-05 — Extract-load agent
+# P1-04 — Extract-load agent
 
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1 day
-**Dependencies:** M1-04 (agent loop), M1-06 (Snowflake connector), P1-01 (target system), P1-02 (plan/build lifecycle), P1-06 (schema retrieval)
+**Dependencies:** M1-04 (agent loop), M1-06 (Snowflake connector), P1-01 (target system), P1-02 (plan/build lifecycle), P1-05 (schema retrieval)
 **Lineage:** Carries content from **accepted M2-03** ([`specs/milestone-2-real-product/03-extract-load-agent.md`](../milestone-2-real-product/03-extract-load-agent.md)) almost verbatim. The system prompt structure, tool set, both skills (`data_engineering.md`, `snowflake_destination.md`), the hard rules from **M1.1-05** (no `os.environ.get` defaults; pass `role=` explicitly; idempotency), and the regression test for the Iowa-liquor `dict`-binding bug all carry forward. The only delta is the output path: writes to `targets/<active_target>/el/<artifact_name>/` instead of `pipelines/<name>/`. `m1_plan_agent.md`'s contract is unchanged.
 **Status:** Stub. Full spec to be drafted.
 

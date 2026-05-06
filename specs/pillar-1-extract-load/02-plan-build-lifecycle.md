@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Adapt M1.1-06's plan / build / run / deploy lifecycle to the per-target folder model from P1-01, and introduce **Build** as the durable, deployable unit. In Pillar 1 the lifecycle has one specialist (the extract-load agent, P1-05), so the multi-task task graph and build-coordinator pattern from accepted M2-01 are deferred — Pillar 1's build flow invokes the extract-load specialist directly.
+Adapt M1.1-06's plan / build / run / deploy lifecycle to the per-target folder model from P1-01, and introduce **Build** as the durable, deployable unit. In Pillar 1 the lifecycle has one specialist (the extract-load agent, P1-04), so the multi-task task graph and build-coordinator pattern from accepted M2-01 are deferred — Pillar 1's build flow invokes the extract-load specialist directly.
 
 ## What this introduces
 
@@ -30,7 +30,7 @@ The deployable artifact. Every successful `carve build` produces one row.
 | `plan_id` | TEXT NOT NULL | FK to `plans.id`. Biographical reference to the plan that produced this build. |
 | `target` | TEXT NOT NULL | The target the build was generated against (`dev`, `prod`, etc.). Set from the active target at build time. |
 | `created_at` | DATETIME | When the build run completed successfully. |
-| `manifest_json` | TEXT | JSON listing the files this build wrote (relative paths under `targets/<target>/`). Consumed by `carve el deploy` (P1-09). Example: `{"files": ["el/iowa_liquor/main.py", "el/iowa_liquor/requirements.txt", "snowflake/iowa_liquor.sql"]}`. |
+| `manifest_json` | TEXT | JSON listing the files this build wrote (relative paths under `targets/<target>/`). Consumed by `carve el deploy` (P1-08). Example: `{"files": ["el/iowa_liquor/main.py", "el/iowa_liquor/requirements.txt", "snowflake/iowa_liquor.sql"]}`. |
 | `commit_sha` | TEXT NULL | Set by `carve el deploy` Phase 2 — the git sha the deploy commit landed on. |
 | `pr_url` | TEXT NULL | Set by `carve el deploy` — PR url for the deploy. |
 | `deployed_at` | DATETIME NULL | Set on successful `carve el deploy verify` post-merge. |
@@ -94,7 +94,7 @@ The `pipelines` table in M1.1-06 was named when "pipeline" meant "the user's nam
 `carve plan "<goal>" [--target X]` keeps the M1.1-06 flow:
 
 1. Resolve active target (P1-01: `--target` → `CARVE_TARGET` → `default_target` → `"dev"`).
-2. Load connection context for the active target (`targets/<active>/connections.toml` + `.env` via P1-04).
+2. Load connection context for the active target (`carve/connections.toml`'s `[snowflake.<active>]` section + root `.env` via M1.1-03's existing autoload).
 3. Run the plan agent (`src/carve/core/agents/prompts/m1_plan_agent.md`) with tools `read_file`, `run_snowflake_query` (read-only against the active target), `submit_plan(design)`.
 4. Plan agent calls `submit_plan(design)`; loop terminates.
 5. Persist Plan row with `phase="drafted"`, `pipeline_name=design.pipeline_name`, `task_graph_json=<design as JSON>`, `parent_plan_id=<refine parent or NULL>`. **Target is NOT persisted on the Plan row.**
@@ -114,8 +114,8 @@ The `pipelines` table in M1.1-06 was named when "pipeline" meant "the user's nam
 4. Determine `pipeline_name` from `design.pipeline_name`. Validate the naming regex (`^[a-z][a-z0-9_]*$`).
 5. Resolve `pipeline_dir` to `targets/<active_target>/el/<pipeline_name>`. Ensure parent directories exist.
 6. Create build-run row (`kind="build"`, `target_id=plan_id`, `pipeline_name=pipeline_name`, `target=<active_target>`).
-7. **Run the extract-load specialist (P1-05) directly.** No coordinator wrapper in Pillar 1 — the extract-load agent is invoked with the design as preamble, scoped to write into `pipeline_dir`. Tools: `read_file`, `write_file` scoped to `pipeline_dir`, `lookup_skill`, `run_snowflake_query` (read-only against the active target), `submit_step(file_list, summary)` (terminator).
-8. The specialist writes the files; calls `submit_step` with the list. Files include `main.py`, `requirements.txt`, and (per P1-07) `targets/<active_target>/snowflake/<pipeline_name>.sql`.
+7. **Run the extract-load specialist (P1-04) directly.** No coordinator wrapper in Pillar 1 — the extract-load agent is invoked with the design as preamble, scoped to write into `pipeline_dir`. Tools: `read_file`, `write_file` scoped to `pipeline_dir`, `lookup_skill`, `run_snowflake_query` (read-only against the active target), `submit_step(file_list, summary)` (terminator).
+8. The specialist writes the files; calls `submit_step` with the list. Files include `main.py`, `requirements.txt`, and (per P1-06) `targets/<active_target>/snowflake/<pipeline_name>.sql`.
 9. Snapshot/diff `pipeline_dir`; refuse build success if no `main.py` was written (regression guard from M1.1-06).
 10. Upsert `Pipeline` row (insert if new, update `pipeline_dir`, `updated_at` if existing).
 11. **Create `Build` row** (`id=build_<hex>`, `pipeline_name`, `plan_id`, `target=<active_target>`, `created_at=now`, `manifest_json=<file list>`).
@@ -125,7 +125,7 @@ The `pipelines` table in M1.1-06 was named when "pipeline" meant "the user's nam
 
 **No coordinator, no specialist dispatch.** Pillar 1 has one specialist; the build flow calls it directly. When Pillar 2 lands, this spec gets a follow-up that swaps the direct call for the coordinator's `invoke_specialist(agent_name, task)` dispatch.
 
-**`--target` on `carve build`.** Allowed; lands the build in `targets/<X>/el/<name>/`. There's no plan-vs-build target conflict check — Plans aren't bound to a target (see "Why no `plans.target` column" above). A user who plans against `dev`'s schema and then builds against `prod` is responsible for ensuring the plan's design fits prod's schema; if it doesn't, the recovery agent (P1-10) catches the mismatch at run time and offers to refine the plan.
+**`--target` on `carve build`.** Allowed; lands the build in `targets/<X>/el/<name>/`. There's no plan-vs-build target conflict check — Plans aren't bound to a target (see "Why no `plans.target` column" above). A user who plans against `dev`'s schema and then builds against `prod` is responsible for ensuring the plan's design fits prod's schema; if it doesn't, the recovery agent (P1-09) catches the mismatch at run time and offers to refine the plan.
 
 ## What stays from M1.1-06 unchanged
 
@@ -145,7 +145,7 @@ The `pipelines` table in M1.1-06 was named when "pipeline" meant "the user's nam
 | Pipeline reference | `Pipeline.current_plan_id` | `Pipeline.current_build_id` |
 | First-build-time tracking | `Plan.deployed_at`, `Plan.deploy_run_id` | `Build.created_at`, `Build.plan_id` reverse |
 | Estimates | `Plan.estimates_json` (dropped) | Deferred entirely |
-| Build → File write | Build agent writes inline | Build flow calls extract-load specialist (P1-05); coordinator is deferred |
+| Build → File write | Build agent writes inline | Build flow calls extract-load specialist (P1-04); coordinator is deferred |
 | Plan target | Implicit (active target at plan time) | Explicit at *build* time via `--target`; not persisted on Plan |
 
 ## Implementation
@@ -188,7 +188,7 @@ Removed:
 ## Acceptance criteria
 
 - `carve plan "<goal>" [--target X]` returns a design summary and a plan id; **no files** under `targets/`.
-- `carve build <plan_id> [--target X]` writes `targets/<active_target>/el/<name>/{main.py, requirements.txt, ...}` plus the per-EL DDL file from P1-07. Creates a `Build` row. Updates `Pipeline.current_build_id`.
+- `carve build <plan_id> [--target X]` writes `targets/<active_target>/el/<name>/{main.py, requirements.txt, ...}` plus the per-EL DDL file from P1-06. Creates a `Build` row. Updates `Pipeline.current_build_id`.
 - `Pipeline.current_plan_id` is gone; lookup goes through `Build.plan_id`.
 - `Plan.estimates_json`, `Plan.deployed_at`, `Plan.deploy_run_id` are gone from the schema.
 - A second build against a different target produces a second Build row without disturbing the first.
@@ -210,10 +210,10 @@ Modified: `planner.py`, `builder.py`, `plan.py`, `build.py` (CLI), `models.py`, 
 - **Cost / duration / Snowflake-credit estimates.** Confirmed dropped in the accepted M2-01 review.
 - **Guardrail check, plan expiry enforcement, file-diff previews, config-hash validation at deploy.** All confirmed deferred in the accepted M2-01 review.
 - **Renaming the `pipelines` table** to a less-misleading name. Defer to Pillar 3 when actual pipeline definitions arrive.
-- **`carve build --target X` rejecting a target that "differs from the plan's target."** Plans don't have a target; the user is trusted at build time. The recovery agent (P1-10) catches schema mismatches at run time.
+- **`carve build --target X` rejecting a target that "differs from the plan's target."** Plans don't have a target; the user is trusted at build time. The recovery agent (P1-09) catches schema mismatches at run time.
 
 ## What this enables
 
-- **`carve el run` and `carve el deploy`** (P1-08, P1-09) have a clean Build row to anchor on. Run reads the build's path; deploy ships the build's manifest.
+- **`carve el run` and `carve el deploy`** (P1-07, P1-08) have a clean Build row to anchor on. Run reads the build's path; deploy ships the build's manifest.
 - **The first credible Build entity in the codebase.** Future pillars can produce non-EL Builds (dbt builds, pipeline-definition builds, schedule builds) via the same shape.
 - **Per-target dev/prod state** is reachable without a separate registry — the filesystem under `targets/<target>/el/` answers "what's currently in this target," and the `builds` table answers "what built it and when."

@@ -1,8 +1,8 @@
-# P1-10 — Recovery agent
+# P1-09 — Recovery agent
 
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1.5 days
-**Dependencies:** M1.1-04 (progress observer), P1-02 (plan/build lifecycle), P1-05 (extract-load agent), P1-08 (`carve el run`), P1-09 (`carve el deploy`)
+**Dependencies:** M1.1-04 (progress observer), P1-02 (plan/build lifecycle), P1-04 (extract-load agent), P1-07 (`carve el run`), P1-08 (`carve el deploy`)
 **Lineage:** Carries forward from **M2-15** ([`specs/milestone-2-real-product/15-recovery-agent.md`](../milestone-2-real-product/15-recovery-agent.md)) which evolved continuously during M2 review (see the "Two trigger contexts" section added during the SDLC discussion). The system prompt, do-not-auto-fix categories, bounded-budget config, `parent_run_id` linking, and `AgentObserver` integration from M1.1-04 all carry forward unchanged. Scope **narrows** to Pillar 1's trigger contexts: `carve el run` failures and `carve el deploy` Phase 1 failures. The `delegate_to_specialist` tool in Pillar 1 has only one specialist target (extract-load); it expands to multiple in Pillar 2+.
 **Status:** Stub. Full spec to be drafted.
 

@@ -1,18 +1,18 @@
-# P1-07 — Snowflake DDL generation for EL destinations
+# P1-06 — Snowflake DDL generation for EL destinations
 
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 0.5 day
-**Dependencies:** M1-06 (Snowflake connector), P1-02 (plan/build lifecycle), P1-05 (extract-load agent)
+**Dependencies:** M1-06 (Snowflake connector), P1-02 (plan/build lifecycle), P1-04 (extract-load agent)
 **Lineage:** Narrow subset of **M2-05** ([`specs/milestone-2-real-product/05-snowflake-agent.md`](../milestone-2-real-product/05-snowflake-agent.md)). Pillar 1 ships only the per-EL DDL emission portion (the "Per-pipeline output" section added during the SDLC discussion). The full Snowflake agent's broader scope — warehouse creation/sizing, role hierarchies, account-level RBAC, dynamic tables, streams, tasks — defers to **Pillar 2** or later.
 **Status:** Stub. Full spec to be drafted.
 
 ## Purpose
 
-Generate the per-EL DDL that the deploy phase applies in the target's Snowflake account. For Pillar 1 this is narrow: the destination table for the EL artifact, the runtime-role grants needed to write to it, and any stage / file-format objects the script consumes. Lives at `targets/<target>/snowflake/<el-name>.sql` — committed to the repo, applied by `carve el provision` (P1-09).
+Generate the per-EL DDL that the deploy phase applies in the target's Snowflake account. For Pillar 1 this is narrow: the destination table for the EL artifact, the runtime-role grants needed to write to it, and any stage / file-format objects the script consumes. Lives at `targets/<target>/snowflake/<el-name>.sql` — committed to the repo, applied by `carve el provision` (P1-08).
 
 ## What this introduces
 
-- **DDL emitter** invoked at build time alongside the EL Python authoring. The extract-load agent (P1-05) consults the catalog skill (P1-06) and emits a companion `<target>/snowflake/<el-name>.sql` covering:
+- **DDL emitter** invoked at build time alongside the EL Python authoring. The extract-load agent (P1-04) consults the catalog skill (P1-05) and emits a companion `<target>/snowflake/<el-name>.sql` covering:
   - `CREATE SCHEMA IF NOT EXISTS` for the destination schema (if Carve owns it).
   - `CREATE TABLE IF NOT EXISTS` for the destination table, with columns matching the script's writes.
   - `GRANT SELECT, INSERT, UPDATE, DELETE` on the destination to the runtime role.

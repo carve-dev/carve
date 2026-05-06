@@ -1,8 +1,8 @@
-# P1-09 — `carve el deploy` (lean, OSS-flexible)
+# P1-08 — `carve el deploy` (lean, OSS-flexible)
 
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1 day
-**Dependencies:** P1-01 (target system), P1-02 (plan/build lifecycle), P1-07 (Snowflake DDL for EL)
+**Dependencies:** P1-01 (target system), P1-02 (plan/build lifecycle), P1-06 (Snowflake DDL for EL)
 **Lineage:** Replaces the **parked M2-14 proposal** ([`specs/milestone-2-real-product/_spec_update_proposal_M2-14.md`](../milestone-2-real-product/_spec_update_proposal_M2-14.md), drafted but never accepted; see M2-14 review thread for context). The 5-phase ceremony and per-pipeline GHA workflow generation in that proposal are too prescriptive for OSS — they fight users on Airflow/GitLab/custom CI. This spec reframes deploy as **two phases** (local pre-flight + PR) plus **composable post-merge primitives** (`carve el provision`, `carve el verify`) the user wires into whatever CI/CD they already operate. Carries forward from the parked proposal: deploy-role / runtime-role separation pattern, branch naming `carve/<artifact>-<short_id>`, PR body template with deployment checklist, existing-PR detection + `--abandon-existing` flag, `Provider` abstraction.
 **Status:** Stub. Full spec to be drafted.
 
@@ -13,7 +13,7 @@ Promote an EL artifact from one target to another (`--from dev --to prod`) by co
 ## What this introduces
 
 - **`carve el deploy <name> --from <X> --to <Y>`** runs locally and:
-  1. **Pre-flight.** Resolves the source artifact (`targets/<X>/el/<name>/`) and the destination target (`targets/<Y>/`). Connects to target Y with the deploy role; verifies connectivity. Drift checks the destination schema against the build's expectations (recovery agent helps here, P1-10).
+  1. **Pre-flight.** Resolves the source artifact (`targets/<X>/el/<name>/`) and the destination target (`targets/<Y>/`). Connects to target Y with the deploy role; verifies connectivity. Drift checks the destination schema against the build's expectations (recovery agent helps here, P1-09).
   2. **Copy.** Copies `targets/<X>/el/<name>/` into `targets/<Y>/el/<name>/`. Updates the Build row to record the deploy.
   3. **PR.** Branches, commits the copied files + the DDL file (`targets/<Y>/snowflake/<name>.sql`), pushes, opens a PR. PR body includes a deployment checklist: which DDL needs applying, which role applies it, which secrets the runtime workflow expects.
 - **Composable post-merge primitives** (also runnable locally):

@@ -1,4 +1,4 @@
-# P1-06 — Schema retrieval (catalog skills)
+# P1-05 — Schema retrieval (catalog skills)
 
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 0.5 day

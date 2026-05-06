@@ -7,13 +7,13 @@
 
 A data engineer with a Snowflake account (no dbt project, no orchestrator, nothing else) can:
 
-1. Run `carve init` — gets `carve.toml`, `targets/dev/{el,connections.toml,.env.example}`, `.gitignore`
-2. Fill in `targets/dev/.env` and `connections.toml` for their dev Snowflake
+1. Run `carve init` — gets `carve.toml`, `carve/{connections.toml,runner.toml,models.toml}`, `targets/dev/el/`, `.env.example`, `.gitignore`
+2. Copy `.env.example` to `.env` and fill in the project-wide vars (`ANTHROPIC_API_KEY`) plus the dev target's `DEV_SNOWFLAKE_*` vars
 3. Run `carve plan "ingest the Iowa liquor sales feed"` — AI produces a design for an EL artifact
-4. Run `carve build <plan_id>` — AI authors `targets/dev/el/iowa_liquor/{main.py, requirements.txt}`
+4. Run `carve build <plan_id>` — AI authors `targets/dev/el/iowa_liquor/{main.py, requirements.txt}` plus `targets/dev/snowflake/iowa_liquor.sql`
 5. Run `carve el run iowa_liquor` — script runs against dev, lands rows in dev's Snowflake
-6. (When ready for prod) `carve target create prod` — scaffolds `targets/prod/`
-7. Fill in `targets/prod/.env` and `connections.toml` for prod
+6. (When ready for prod) `carve target create prod` — appends `[snowflake.prod]` to `carve/connections.toml`, appends `PROD_SNOWFLAKE_*` lines to `.env.example`, creates `targets/prod/el/`
+7. Add the `PROD_SNOWFLAKE_*` values to `.env`
 8. `carve el deploy iowa_liquor --from dev --to prod` — copies the artifact to `targets/prod/el/iowa_liquor/`, generates DDL, opens a PR; user wires the post-merge automation
 
 This is `v0.1.0` on GitHub — proves Pillar 1 in isolation. A user adopting only Pillar 1 has a complete, useful product without ever touching dbt, pipelines, or scheduling.
@@ -75,25 +75,26 @@ In recommended build order. Each spec carries an explicit **Lineage** field nami
 
 | # | Spec | Purpose | Lineage |
 |---|---|---|---|
-| 01 | [target-system](./01-target-system.md) | `targets/<name>/` layout, `carve target` subcommand, `default_target`, `--target` flag | **Net-new** (synthesized this session) |
+| 01 | [target-system](./01-target-system.md) | Centralized `carve/connections.toml` (multi-section) + per-target artifact dirs `targets/<name>/`, `carve target` subcommand, `default_target`, `--target` flag | **Net-new** (synthesized this session) |
 | 02 | [plan-build-lifecycle](./02-plan-build-lifecycle.md) | Plan + build + Build entity, per-target | Continues **M1.1-06** + reuses **accepted M2-01** |
-| 03 | [init-per-target-layout](./03-init-per-target-layout.md) | `carve init` scaffolds `targets/dev/` | Continues **M1.1-01** (templates preserved) |
-| 04 | [per-target-dotenv](./04-per-target-dotenv.md) | Load `targets/<active>/.env` based on resolved target | Continues **M1.1-03** (loader unchanged; path-resolution evolves) |
-| 05 | [extract-load-agent](./05-extract-load-agent.md) | AI specialist authoring EL scripts | Carries **accepted M2-03** verbatim (delta: output path) |
-| 06 | [schema-retrieval](./06-schema-retrieval.md) | Catalog skills only | Subset of **M2-09** (catalog layer only; manifest/lineage to Pillar 2) |
-| 07 | [snowflake-ddl-for-el](./07-snowflake-ddl-for-el.md) | Per-EL DDL emission | Subset of **M2-05** (per-pipeline output portion only) |
-| 08 | [el-run](./08-el-run.md) | `carve el run <name> [--target X]` | Continues **M1.1-06**'s `carve run`; CLI restructured under `el` subcommand |
-| 09 | [el-deploy](./09-el-deploy.md) | `carve el deploy --from X --to Y` + composable primitives | Replaces **parked M2-14 proposal** (drops generated workflow files; reframes as composable primitives) |
-| 10 | [recovery-agent](./10-recovery-agent.md) | Auto-fix loop for run + deploy-Phase-1 failures | Carries **M2-15** (scope narrows to Pillar 1 contexts) |
+| 03 | [init-per-target-layout](./03-init-per-target-layout.md) | `carve init` scaffolds the centralized layout + `targets/dev/` | Continues **M1.1-01** (templates preserved) |
+| 04 | [extract-load-agent](./04-extract-load-agent.md) | AI specialist authoring EL scripts | Carries **accepted M2-03** verbatim (delta: output path) |
+| 05 | [schema-retrieval](./05-schema-retrieval.md) | Catalog skills only | Subset of **M2-09** (catalog layer only; manifest/lineage to Pillar 2) |
+| 06 | [snowflake-ddl-for-el](./06-snowflake-ddl-for-el.md) | Per-EL DDL emission | Subset of **M2-05** (per-pipeline output portion only) |
+| 07 | [el-run](./07-el-run.md) | `carve el run <name> [--target X]` | Continues **M1.1-06**'s `carve run`; CLI restructured under `el` subcommand |
+| 08 | [el-deploy](./08-el-deploy.md) | `carve el deploy --from X --to Y` + composable primitives | Replaces **parked M2-14 proposal** (drops generated workflow files; reframes as composable primitives) |
+| 09 | [recovery-agent](./09-recovery-agent.md) | Auto-fix loop for run + deploy-Phase-1 failures | Carries **M2-15** (scope narrows to Pillar 1 contexts) |
+
+**Per-target dotenv loading was originally drafted as P1-04** but **dissolved** during spec review: the centralized `.env` model means a single root `.env` (loaded by M1.1-03's existing autoload) holds all targets' secrets via target-prefixed vars (`DEV_SNOWFLAKE_USER`, `PROD_SNOWFLAKE_USER`, etc.). No per-target dotenv switching needed. Subsequent specs renumbered down by one.
 
 **Key lineage notes:**
 - The accepted M2 specs we reviewed together (**M2-01** Plan/Build, **M2-02** Orchestration, **M2-03** Extract-load, **M2-07** Brownfield, **M2-10** FastAPI) all stay where they are at [`specs/milestone-2-real-product/`](../milestone-2-real-product/). M2-01 and M2-03 directly source pillar-1 specs; the others slot into later pillars (Pillar 2 for M2-07; UI milestone for M2-10) or get reframed (Pillar 2+ absorbs M2-02 when there are multiple specialists to orchestrate).
-- The **M2-14 proposal** is parked in place ([`_spec_update_proposal_M2-14.md`](../milestone-2-real-product/_spec_update_proposal_M2-14.md)) as historical context for the deploy discussion. It is explicitly *not* accepted; P1-09 supersedes it with a leaner OSS-flexible reframe.
+- The **M2-14 proposal** is parked in place ([`_spec_update_proposal_M2-14.md`](../milestone-2-real-product/_spec_update_proposal_M2-14.md)) as historical context for the deploy discussion. It is explicitly *not* accepted; P1-08 supersedes it with a leaner OSS-flexible reframe.
 - The unreviewed M2 specs (M2-04, M2-06, M2-08, M2-09, M2-11, M2-12, M2-13, M2-15 inline edits) stay in place; their content is current state and gets re-homed into pillars as we draft each pillar.
 
 ## Definition of done
 
-- All 10 specs implemented with tests
+- All 9 specs implemented with tests
 - Acceptance criteria above met end-to-end against a real Snowflake account
 - A 3-minute screen recording of the demo flow (init → plan → build → run → target create → deploy)
 - Internal tag `v0.1.0`
