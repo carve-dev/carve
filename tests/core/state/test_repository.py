@@ -20,7 +20,7 @@ from carve.core.state.database import (
     create_session_factory,
     initialize_database,
 )
-from carve.core.state.models import Pipeline, Plan
+from carve.core.state.models import Build, Pipeline, Plan
 
 
 @pytest.fixture
@@ -189,7 +189,6 @@ def _make_plan(plan_id: str = "plan-001", **overrides: object) -> Plan:
         "goal": "build the warehouse",
         "config_hash": "abc123",
         "carve_version": "0.0.1",
-        "estimates_json": '{"cost_usd": 1.23}',
         "task_graph_json": '{"nodes": []}',
         "file_path": f".carve/plans/{plan_id}.json",
     }
@@ -222,19 +221,16 @@ def test_list_plans_orders_newest_first(repo: Repository) -> None:
     assert [p.id for p in listed] == ["plan-3", "plan-2", "plan-1"]
 
 
-def test_list_expired_plans_returns_only_old_unapplied(repo: Repository) -> None:
+def test_list_expired_plans_returns_only_old_drafted(repo: Repository) -> None:
     now = datetime.now(UTC)
     fresh = _make_plan("fresh", expires_at=now + timedelta(hours=1))
     expired = _make_plan("expired", expires_at=now - timedelta(hours=1))
-    deployed = _make_plan(
-        "deployed",
-        expires_at=now - timedelta(hours=1),
-        deployed_at=now - timedelta(minutes=30),
-        deploy_run_id=None,
-    )
+    # P1-02 swapped the "skip" predicate from `deployed_at IS NOT NULL`
+    # to `phase = 'built'` — built plans are owned by their Build row.
+    built = _make_plan("built", expires_at=now - timedelta(hours=1), phase="built")
     repo.save_plan(fresh)
     repo.save_plan(expired)
-    repo.save_plan(deployed)
+    repo.save_plan(built)
 
     expired_list = repo.list_expired_plans(now=now)
     assert [p.id for p in expired_list] == ["expired"]
@@ -258,11 +254,12 @@ def test_create_or_update_pipeline_round_trip(repo: Repository) -> None:
     pipeline = repo.create_or_update_pipeline(
         name="iowa_liquor_sales",
         description="Daily ingest.",
-        pipeline_dir="pipelines/iowa_liquor_sales",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/iowa_liquor_sales",
     )
     assert pipeline.name == "iowa_liquor_sales"
-    assert pipeline.current_plan_id == "plan-1"
+    # current_build_id is left None until a Build is explicitly created
+    # and pinned via `set_pipeline_current_build`.
+    assert pipeline.current_build_id is None
     first_created = pipeline.created_at
 
     repo.save_plan(_make_plan("plan-2"))
@@ -270,11 +267,9 @@ def test_create_or_update_pipeline_round_trip(repo: Repository) -> None:
     updated = repo.create_or_update_pipeline(
         name="iowa_liquor_sales",
         description="Daily ingest, refined.",
-        pipeline_dir="pipelines/iowa_liquor_sales",
-        current_plan_id="plan-2",
+        pipeline_dir="targets/dev/el/iowa_liquor_sales",
     )
     assert updated.description == "Daily ingest, refined."
-    assert updated.current_plan_id == "plan-2"
     assert updated.created_at == first_created
     assert updated.updated_at > first_created
 
@@ -289,15 +284,13 @@ def test_list_pipelines_orders_recently_updated_first(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="alpha",
         description="",
-        pipeline_dir="pipelines/alpha",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/alpha",
     )
     time.sleep(0.01)
     repo.create_or_update_pipeline(
         name="beta",
         description="",
-        pipeline_dir="pipelines/beta",
-        current_plan_id="plan-2",
+        pipeline_dir="targets/dev/el/beta",
     )
     listed = repo.list_pipelines()
     assert [p.name for p in listed] == ["beta", "alpha"]
@@ -314,9 +307,15 @@ def test_get_pipeline_lineage_walks_parent_chain_and_children(
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-C",
+        pipeline_dir="targets/dev/el/ingest",
     )
+    # Lineage's `current_plan` resolves through the pinned Build now.
+    build = repo.create_build(
+        pipeline_name="ingest",
+        plan_id="plan-C",
+        target="dev",
+    )
+    repo.set_pipeline_current_build("ingest", build.id)
     lineage = repo.get_pipeline_lineage("ingest")
     assert lineage is not None
     assert lineage.pipeline.name == "ingest"
@@ -335,8 +334,7 @@ def test_record_pipeline_run_updates_denorms(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/ingest",
     )
     run_id = repo.create_run(
         kind="run",
@@ -370,37 +368,31 @@ def test_record_pipeline_run_silently_noops_for_missing_pipeline(
     assert repo.get_pipeline("missing") is None
 
 
-def test_mark_plan_built_sets_phase_pipeline_and_deploy_run(
+def test_mark_plan_built_sets_phase_and_pipeline(
     repo: Repository,
 ) -> None:
+    """P1-02: `mark_plan_built` only flips `phase` and stamps pipeline_name.
+
+    The deploy/build state previously kept on Plan
+    (`deployed_at`, `deploy_run_id`) is owned by the Build row now and
+    written separately via `create_build`.
+    """
     repo.save_plan(_make_plan("plan-1"))
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/ingest",
     )
-    run_id = repo.create_run(kind="build", target_id="plan-1")
-    repo.mark_plan_built(
-        plan_id="plan-1",
-        pipeline_name="ingest",
-        build_run_id=run_id,
-    )
+    repo.mark_plan_built(plan_id="plan-1", pipeline_name="ingest")
     plan = repo.get_plan("plan-1")
     assert plan is not None
     assert plan.phase == "built"
     assert plan.pipeline_name == "ingest"
-    assert plan.deployed_at is not None
-    assert plan.deploy_run_id == run_id
 
 
 def test_mark_plan_built_raises_for_unknown_plan(repo: Repository) -> None:
     with pytest.raises(KeyError):
-        repo.mark_plan_built(
-            plan_id="nope",
-            pipeline_name="ingest",
-            build_run_id="r",
-        )
+        repo.mark_plan_built(plan_id="nope", pipeline_name="ingest")
 
 
 def test_phase_check_constraint_rejects_invalid_value(repo: Repository) -> None:
@@ -410,7 +402,6 @@ def test_phase_check_constraint_rejects_invalid_value(repo: Repository) -> None:
         goal="g",
         config_hash="h",
         carve_version="v",
-        estimates_json="{}",
         task_graph_json="{}",
         file_path=".carve/plans/bad.json",
         phase="garbage",
@@ -427,8 +418,7 @@ def test_list_runs_filters_by_pipeline_name(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/ingest",
     )
     a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
     b = repo.create_run(kind="run", target_id="other", pipeline_name=None)
@@ -444,8 +434,7 @@ def test_pipeline_run_target_id_can_be_reused(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/ingest",
     )
     a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
     b = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
@@ -460,10 +449,110 @@ def test_pipeline_model_round_trip(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="iowa",
         description="d",
-        pipeline_dir="pipelines/iowa",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/iowa",
     )
     pipeline = repo.get_pipeline("iowa")
     assert isinstance(pipeline, Pipeline)
     assert pipeline.name == "iowa"
     assert pipeline.last_run_status is None
+    assert pipeline.current_build_id is None
+
+
+# ---------------------------------------------------------------------- Builds
+
+
+def test_create_build_returns_row_with_prefixed_id(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="targets/dev/el/ingest",
+    )
+    build = repo.create_build(
+        pipeline_name="ingest",
+        plan_id="plan-1",
+        target="dev",
+        manifest={"files": ["el/ingest/main.py"]},
+    )
+    assert isinstance(build, Build)
+    assert build.id.startswith("build_")
+    assert build.pipeline_name == "ingest"
+    assert build.plan_id == "plan-1"
+    assert build.target == "dev"
+    assert '"files"' in build.manifest_json
+    assert "el/ingest/main.py" in build.manifest_json
+
+
+def test_create_build_default_manifest_is_empty_files_list(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="targets/dev/el/ingest",
+    )
+    build = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
+    assert build.manifest_json == '{"files": []}'
+
+
+def test_get_build_returns_none_for_unknown(repo: Repository) -> None:
+    assert repo.get_build("build_does_not_exist") is None
+
+
+def test_set_pipeline_current_build_pins_fk(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="targets/dev/el/ingest",
+    )
+    build = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
+    repo.set_pipeline_current_build("ingest", build.id)
+    pipeline = repo.get_pipeline("ingest")
+    assert pipeline is not None
+    assert pipeline.current_build_id == build.id
+
+    # `get_pipeline_current_build` is the convenience accessor.
+    fetched = repo.get_pipeline_current_build("ingest")
+    assert fetched is not None
+    assert fetched.id == build.id
+
+
+def test_set_pipeline_current_build_unknown_pipeline_raises(repo: Repository) -> None:
+    with pytest.raises(KeyError):
+        repo.set_pipeline_current_build("nonesuch", "build_xyz")
+
+
+def test_get_pipeline_current_build_returns_none_when_unset(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="targets/dev/el/ingest",
+    )
+    assert repo.get_pipeline_current_build("ingest") is None
+    assert repo.get_pipeline_current_build("missing") is None
+
+
+def test_latest_build_for_returns_most_recent_per_target(repo: Repository) -> None:
+    repo.save_plan(_make_plan("plan-1"))
+    repo.create_or_update_pipeline(
+        name="ingest",
+        description="",
+        pipeline_dir="targets/dev/el/ingest",
+    )
+    older = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
+    time.sleep(0.005)
+    newer = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
+    other = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="prod")
+
+    latest_dev = repo.latest_build_for("ingest", "dev")
+    assert latest_dev is not None
+    assert latest_dev.id == newer.id
+    assert older.id != newer.id
+
+    latest_prod = repo.latest_build_for("ingest", "prod")
+    assert latest_prod is not None
+    assert latest_prod.id == other.id
+
+    assert repo.latest_build_for("ingest", "staging") is None
+    assert repo.latest_build_for("missing", "dev") is None

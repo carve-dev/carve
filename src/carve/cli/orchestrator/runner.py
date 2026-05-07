@@ -69,10 +69,13 @@ def run_pipeline_by_name(
         )
         return 2
 
+    current_build = repository.get_pipeline_current_build(pipeline_row.name)
+    plan_id = current_build.plan_id if current_build is not None else None
+
     return _run_pipeline_dir(
         pipeline_name=pipeline_row.name,
         pipeline_dir_rel=pipeline_row.pipeline_dir,
-        plan_id=pipeline_row.current_plan_id,
+        plan_id=plan_id,
         config=config,
         project_dir=project_dir,
         repository=repository,

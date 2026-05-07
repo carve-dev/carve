@@ -102,6 +102,8 @@ The `pipelines` table in M1.1-06 was named when "pipeline" meant "the user's nam
 
 `carve plan --refine` and `carve plan --pipeline` keep their M1.1-06 semantics. `--target` resolution applies the same way for all three forms.
 
+> **Updated during implementation (2026-05-07):** `carve plan --pipeline <name>` reads existing files from `targets/<active_target>/el/<name>/` first; if that directory is empty (e.g. a pipeline built before the per-target migration), it falls back to the legacy `pipelines/<name>/` layout so refines against pre-P1-02 pipelines still pick up the existing files. Transitional only — once everything has rebuilt under the new layout, the fallback can go.
+
 **Why no `plans.target` column.** A Plan is a *design*; the target it was inspected against affects the design's choices (column types, sample sizes) but doesn't bind the plan to a specific target. A single plan can drive builds against multiple targets (rare in practice for v0.1 but architecturally clean) — the Build row carries the target, not the Plan.
 
 ## Build flow (per-target)
@@ -171,6 +173,8 @@ Modified:
 Removed:
 
 - `Plan.estimates_json`, `Plan.deployed_at`, `Plan.deploy_run_id` (via migration). Repository's `mark_plan_built` no longer writes these columns; renames to `mark_plan_built_simple` or similar (or stays the same name and just doesn't touch dropped columns).
+
+> **Updated during implementation (2026-05-07):** `mark_plan_built` kept its original name — only its body was trimmed (no writes to dropped columns, and `build_run_id` removed from the signature since the Build row now owns that linkage). `create_or_update_pipeline` similarly lost its `current_plan_id` parameter; the FK is set via a separate `set_pipeline_current_build` call after the Build row commits. Pipeline listing now displays the column as "Current build" instead of "Current plan" (the detail view shows both).
 
 ## Tests
 

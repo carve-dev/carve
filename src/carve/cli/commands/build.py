@@ -88,6 +88,10 @@ def command(
         f"[bold]{_escape(artifact.pipeline_name)}[/bold]"
     )
     console.print(f"  Plan:           {_escape(artifact.plan_id)}")
+    console.print(f"  Target:         {_escape(artifact.target)}")
+    console.print(
+        f"  Build id:       {_escape(artifact.build_id) if artifact.build_id else '(none)'}"
+    )
     console.print(f"  Build run id:   {_escape(artifact.run_id)}")
     console.print("  Files written:")
     for path in artifact.files_written:
@@ -101,4 +105,7 @@ def command(
         console.print(artifact.summary.strip())
     console.print()
     console.print(f"Next:  carve run {artifact.pipeline_name}")
+    console.print(
+        f"       carve el deploy {artifact.pipeline_name} --to {artifact.target}"
+    )
     raise typer.Exit(code=0)

@@ -379,11 +379,7 @@ def test_refine_refuses_built_plan(
         repository=repository,
         client=client,
     )
-    repository.mark_plan_built(
-        plan_id=plan.id,
-        pipeline_name="csv_ingest",
-        build_run_id="r0",
-    )
+    repository.mark_plan_built(plan_id=plan.id, pipeline_name="csv_ingest")
 
     with pytest.raises(PlanGenerationError, match=r"already in phase"):
         generate_plan(
@@ -405,8 +401,10 @@ def test_pipeline_mode_includes_existing_files_in_context(
     """`--pipeline <name>` reads on-disk files and inlines them into context."""
     config = _config()
 
-    # Plant an existing pipeline directory and row.
-    pipeline_dir = project_dir / "pipelines" / "existing_pl"
+    # Plant an existing pipeline directory and row under the per-target
+    # layout. The planner inlines existing files from
+    # `targets/<active>/el/<name>/` first.
+    pipeline_dir = project_dir / "targets" / "dev" / "el" / "existing_pl"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "main.py").write_text("# previously generated\nprint('old')\n")
     (pipeline_dir / "requirements.txt").write_text("snowflake-connector-python\n")
@@ -414,8 +412,7 @@ def test_pipeline_mode_includes_existing_files_in_context(
     repository.create_or_update_pipeline(
         name="existing_pl",
         description="seed",
-        pipeline_dir="pipelines/existing_pl",
-        current_plan_id="plan_seed",
+        pipeline_dir="targets/dev/el/existing_pl",
     )
 
     client = _client_returning(
@@ -474,15 +471,14 @@ def test_pipeline_mode_locks_pipeline_name_in_design(
     """When --pipeline is set, the design's pipeline_name must match."""
     config = _config()
 
-    pipeline_dir = project_dir / "pipelines" / "existing_pl"
+    pipeline_dir = project_dir / "targets" / "dev" / "el" / "existing_pl"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "main.py").write_text("print('x')")
     repository.save_plan(_dummy_plan_row("plan_seed"))
     repository.create_or_update_pipeline(
         name="existing_pl",
         description="",
-        pipeline_dir="pipelines/existing_pl",
-        current_plan_id="plan_seed",
+        pipeline_dir="targets/dev/el/existing_pl",
     )
 
     client = _client_returning(
@@ -634,7 +630,6 @@ def _dummy_plan_row(plan_id: str) -> Any:
         goal="seed",
         config_hash="h",
         carve_version="0.0.1",
-        estimates_json="{}",
         task_graph_json="{}",
         file_path=f".carve/plans/{plan_id}.json",
     )

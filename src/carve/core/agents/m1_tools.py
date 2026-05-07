@@ -268,7 +268,7 @@ SUBMIT_PLAN_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "snake_case name for the pipeline. The build agent writes "
-                "files to pipelines/<pipeline_name>/."
+                "files to targets/<active_target>/el/<pipeline_name>/."
             ),
         },
         "description": {

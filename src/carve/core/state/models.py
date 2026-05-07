@@ -1,8 +1,9 @@
 """SQLAlchemy 2.0 declarative models for the Carve state store.
 
-Four tables: `runs`, `logs`, `plans`, `pipelines`. The schema is managed
-by Alembic — see ``migrations/`` — but the ORM models are still the
-canonical Python representation that repository methods return.
+Five tables: `runs`, `logs`, `plans`, `pipelines`, `builds`. The schema
+is managed by Alembic — see ``migrations/`` — but the ORM models are
+still the canonical Python representation that repository methods
+return.
 
 Defaults that need server-side semantics (timestamps, autoincrement keys)
 use SQLAlchemy's column defaults rather than Python-side mutation, so the
@@ -14,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -79,7 +81,13 @@ class Log(Base):
 class Plan(Base):
     """Index row for a plan stored on disk at ``.carve/plans/<id>.json``.
 
-    M1.1-06 adds two columns:
+    Plan is now strictly a *design* artifact: it captures what the user
+    asked for and what the planner agreed to build, but it carries no
+    deploy/build state. P1-02 dropped ``estimates_json``, ``deployed_at``,
+    and ``deploy_run_id`` — the corresponding state moved to the new
+    `Build` table (which also owns the per-target binding).
+
+    Two columns added in M1.1-06 remain:
 
     * ``phase`` — ``drafted`` (default) or ``built``. CHECK constraint
       enforces those two values; transitions are driven by the build
@@ -102,7 +110,6 @@ class Plan(Base):
     goal: Mapped[str]
     config_hash: Mapped[str]
     carve_version: Mapped[str]
-    estimates_json: Mapped[str]
     task_graph_json: Mapped[str]
     file_path: Mapped[str]
     phase: Mapped[str] = mapped_column(default="drafted")
@@ -112,23 +119,23 @@ class Plan(Base):
     )
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(default=_default_plan_expiry)
-    deployed_at: Mapped[datetime | None] = mapped_column(default=None)
-    deploy_run_id: Mapped[str | None] = mapped_column(
-        ForeignKey("runs.id"),
-        default=None,
-    )
 
 
 class Pipeline(Base):
     """A first-class pipeline asset.
 
-    The directory under ``pipelines/<name>/`` is the source of truth for
-    code; this row exists so the CLI/UI can list pipelines, filter their
-    runs, and walk plan lineage without re-reading every file.
+    The directory under ``targets/<active_target>/el/<name>/`` is the
+    source of truth for code; this row exists so the CLI/UI can list
+    pipelines, filter their runs, and walk plan/build lineage without
+    re-reading every file.
 
     The ``last_run_*`` columns are denormalised from `runs` so that
     ``carve pipelines`` doesn't need a per-row JOIN. They are updated by
     `Repository.record_pipeline_run` when a run reaches a terminal state.
+
+    P1-02 replaced ``current_plan_id`` with ``current_build_id`` — the
+    deployable artifact is now Build, and Plan is reachable via
+    ``Build.plan_id``.
     """
 
     __tablename__ = "pipelines"
@@ -136,8 +143,8 @@ class Pipeline(Base):
     name: Mapped[str] = mapped_column(primary_key=True)
     description: Mapped[str] = mapped_column(default="")
     pipeline_dir: Mapped[str]
-    current_plan_id: Mapped[str | None] = mapped_column(
-        ForeignKey("plans.id"),
+    current_build_id: Mapped[str | None] = mapped_column(
+        ForeignKey("builds.id"),
         default=None,
     )
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
@@ -150,4 +157,37 @@ class Pipeline(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
-__all__: list[Any] = ["Base", "Log", "Pipeline", "Plan", "Run"]
+class Build(Base):
+    """A deployable artifact produced by ``carve build``.
+
+    Every successful build creates one row. The build binds a Plan
+    (the *design*) to a target (``dev``, ``prod``, etc.) and a manifest
+    of files written. ``carve el deploy`` consumes the manifest to ship
+    the build to its target.
+
+    Indexed on ``(pipeline_name, target, created_at DESC)`` so
+    "latest build of <name> for <target>" stays a cheap lookup.
+    """
+
+    __tablename__ = "builds"
+    __table_args__ = (
+        Index(
+            "ix_builds_pipeline_target_created_at",
+            "pipeline_name",
+            "target",
+            sa.text("created_at DESC"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    pipeline_name: Mapped[str] = mapped_column(ForeignKey("pipelines.name"))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    target: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    manifest_json: Mapped[str] = mapped_column(default='{"files": []}')
+    commit_sha: Mapped[str | None] = mapped_column(default=None)
+    pr_url: Mapped[str | None] = mapped_column(default=None)
+    deployed_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+__all__: list[Any] = ["Base", "Build", "Log", "Pipeline", "Plan", "Run"]

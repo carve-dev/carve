@@ -157,10 +157,11 @@ def _install_sqlite_pragmas(engine: Engine) -> None:
         try:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
-            # SQLite ships with FK enforcement off by default; the new
-            # M1.1-06 schema has real foreign keys (Pipeline.current_plan_id
-            # → Plan, Plan.pipeline_name → Pipeline, Run.pipeline_name →
-            # Pipeline) that need to be enforced or they're advisory only.
+            # SQLite ships with FK enforcement off by default; the schema
+            # has real foreign keys (Pipeline.current_build_id → Build,
+            # Build.plan_id → Plan, Plan.pipeline_name → Pipeline,
+            # Run.pipeline_name → Pipeline) that need to be enforced or
+            # they're advisory only.
             cursor.execute("PRAGMA foreign_keys=ON")
         finally:
             cursor.close()

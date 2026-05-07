@@ -16,11 +16,12 @@ from carve.core.state.database import (
     create_session_factory,
     initialize_database,
 )
-from carve.core.state.models import Base, Log, Pipeline, Plan, Run
+from carve.core.state.models import Base, Build, Log, Pipeline, Plan, Run
 from carve.core.state.repository import Repository
 
 __all__ = [
     "Base",
+    "Build",
     "Log",
     "Pipeline",
     "Plan",

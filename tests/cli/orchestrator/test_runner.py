@@ -12,7 +12,7 @@ re-runs are first-class.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,12 +100,10 @@ def _plant_pipeline(
             goal="seed",
             config_hash="cafef00dbeefcafe",
             carve_version="0.0.1",
-            estimates_json="{}",
             task_graph_json="{}",
             file_path=f".carve/plans/{plan_id}.json",
             phase="built",
             pipeline_name=pipeline_name,
-            deployed_at=datetime.now(UTC).replace(tzinfo=None),
         )
         repository.save_plan(plan)
 
@@ -113,8 +111,15 @@ def _plant_pipeline(
         name=pipeline_name,
         description="",
         pipeline_dir=f"pipelines/{pipeline_name}",
-        current_plan_id=plan_id,
     )
+    if plan_id is not None:
+        # Pin a Build so lookups via current_build_id work.
+        build = repository.create_build(
+            pipeline_name=pipeline_name,
+            plan_id=plan_id,
+            target="dev",
+        )
+        repository.set_pipeline_current_build(pipeline_name, build.id)
     return pipeline_name
 
 
@@ -258,7 +263,6 @@ def test_run_by_plan_resolves_to_pipeline(
         name="from_plan",
         description="",
         pipeline_dir="pipelines/from_plan",
-        current_plan_id=plan_id,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_plan(
@@ -322,7 +326,6 @@ def test_run_by_plan_drafted_plan_exits_2(
         goal="g",
         config_hash="h",
         carve_version="0.0.1",
-        estimates_json="{}",
         task_graph_json="{}",
         file_path=".carve/plans/x.json",
         phase="drafted",
@@ -352,7 +355,6 @@ def test_run_by_name_missing_main_py_exits_1(
         name="orphan",
         description="",
         pipeline_dir="pipelines/orphan",
-        current_plan_id=None,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -384,7 +386,6 @@ def test_run_by_name_pipeline_dir_escapes_project_root_exits_1(
         name="escapee",
         description="",
         pipeline_dir="../escape",
-        current_plan_id=None,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(

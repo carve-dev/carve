@@ -20,6 +20,10 @@ import os
 from collections.abc import Mapping
 
 from carve.core.config import Config
+from carve.core.targets.registry import (
+    InvalidTargetNameError,
+    validate_target_name,
+)
 
 
 class TargetResolutionError(Exception):
@@ -40,16 +44,32 @@ def resolve_active_target(
 
     Returns:
         The resolved target name. Never empty.
+
+    Raises:
+        TargetResolutionError: If the resolved value (from any source) fails
+            the target-name regex. This protects downstream filesystem and
+            configuration callers from path-traversal-shaped or otherwise
+            malformed values supplied via flag, env, or hand-edited config.
     """
     env_map = env if env is not None else os.environ
     if cli_flag:
-        return cli_flag
-    env_value = env_map.get("CARVE_TARGET")
-    if env_value:
-        return env_value
-    if config is not None and config.project.default_target:
-        return config.project.default_target
-    return "dev"
+        resolved, source = cli_flag, "--target"
+    else:
+        env_value = env_map.get("CARVE_TARGET")
+        if env_value:
+            resolved, source = env_value, "CARVE_TARGET"
+        elif config is not None and config.project.default_target:
+            resolved, source = config.project.default_target, "carve.toml default_target"
+        else:
+            resolved, source = "dev", "fallback"
+
+    try:
+        validate_target_name(resolved)
+    except InvalidTargetNameError as exc:
+        raise TargetResolutionError(
+            f"Invalid target name {resolved!r} from {source}: {exc}"
+        ) from exc
+    return resolved
 
 
 def require_target(

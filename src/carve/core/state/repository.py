@@ -10,14 +10,17 @@ For M1.1-06 the surface adds pipeline-centric helpers
 (`create_or_update_pipeline`, `get_pipeline`, `list_pipelines`,
 `get_pipeline_lineage`, `record_pipeline_run`) and renames
 `mark_plan_applied` -> `mark_plan_built` to fit the plan/build/run split.
-The columns previously named ``applied_at`` / ``apply_run_id`` are now
-``deployed_at`` / ``deploy_run_id`` (M1.1-06.1) — the verb was renamed
-from ``apply`` to ``deploy`` because the M2 use case is "ship to prod
-via PR", not Terraform-style immediate execution.
+
+P1-02 introduces the `Build` entity and the corresponding helpers
+(`create_build`, `get_build`, `latest_build_for`, plus the
+``current_build_id`` accessors on `Pipeline`). The dropped Plan columns
+(``estimates_json``, ``deployed_at``, ``deploy_run_id``) are no longer
+written from `mark_plan_built`; the build row carries that state now.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from carve.core.state.models import Log, Pipeline, Plan, Run
+from carve.core.state.models import Build, Log, Pipeline, Plan, Run
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -228,10 +231,14 @@ class Repository:
             return list(session.scalars(stmt).all())
 
     def list_expired_plans(self, now: datetime | None = None) -> list[Plan]:
-        """Return un-deployed plans whose `expires_at` is in the past.
+        """Return drafted plans whose `expires_at` is in the past.
 
         `now` is injectable for tests; production callers pass `None` and
         get the current UTC time.
+
+        P1-02 dropped ``Plan.deployed_at``; "drafted" is now identified
+        by ``phase == "drafted"`` (built plans are skipped because they
+        have a corresponding Build that owns the deploy state).
         """
         cutoff = now if now is not None else datetime.now(UTC).replace(tzinfo=None)
         if cutoff.tzinfo is not None:
@@ -239,7 +246,7 @@ class Repository:
         stmt = (
             select(Plan)
             .where(Plan.expires_at < cutoff)
-            .where(Plan.deployed_at.is_(None))
+            .where(Plan.phase == "drafted")
             .order_by(Plan.created_at.asc())
         )
         with self._session_factory() as session:
@@ -250,14 +257,13 @@ class Repository:
         plan_id: str,
         *,
         pipeline_name: str,
-        build_run_id: str,
     ) -> None:
         """Stamp a plan as ``phase='built'`` after a successful build.
 
-        Records the pipeline name the build settled on plus the build's
-        run id (kept on `deploy_run_id` for now — same column, new
-        semantics: "first run that materialized this plan"). `deployed_at`
-        is also stamped to make plan history queryable without a JOIN.
+        Records the pipeline name the build settled on. P1-02 trimmed
+        the body: ``deployed_at``, ``deploy_run_id``, and
+        ``estimates_json`` are gone — that state is owned by the
+        `Build` row created alongside this transition.
         """
         with self._session_factory() as session:
             plan = session.get(Plan, plan_id)
@@ -265,12 +271,10 @@ class Repository:
                 raise KeyError(f"plan {plan_id!r} not found")
             plan.phase = "built"
             plan.pipeline_name = pipeline_name
-            plan.deployed_at = datetime.now(UTC).replace(tzinfo=None)
-            plan.deploy_run_id = build_run_id
             session.commit()
 
     def expire_old_plans(self, now: datetime | None = None) -> int:
-        """Convenience: count of currently-expired, un-deployed plans."""
+        """Convenience: count of currently-expired, drafted plans."""
         return len(self.list_expired_plans(now=now))
 
     # -------------------------------------------------------------- Pipelines
@@ -281,15 +285,18 @@ class Repository:
         name: str,
         description: str,
         pipeline_dir: str,
-        current_plan_id: str | None,
     ) -> Pipeline:
         """Insert or update a pipeline row keyed by ``name``.
 
         The first call for a given name sets ``created_at`` and returns
-        a fresh row. Subsequent calls update ``description``,
-        ``pipeline_dir``, ``current_plan_id``, and ``updated_at``,
-        leaving ``created_at`` and the ``last_run_*`` denorms alone —
-        rebuilds shouldn't reset the run history.
+        a fresh row with ``current_build_id=None``. Subsequent calls
+        update ``description``, ``pipeline_dir``, and ``updated_at``,
+        leaving ``created_at``, ``current_build_id``, and the
+        ``last_run_*`` denorms alone — rebuilds shouldn't reset the
+        run history.
+
+        ``current_build_id`` is set separately by `create_build` (which
+        atomically inserts the Build row and stamps the FK).
         """
         now = datetime.now(UTC).replace(tzinfo=None)
         with self._session_factory() as session:
@@ -299,7 +306,7 @@ class Repository:
                     name=name,
                     description=description,
                     pipeline_dir=pipeline_dir,
-                    current_plan_id=current_plan_id,
+                    current_build_id=None,
                     created_at=now,
                     updated_at=now,
                 )
@@ -307,7 +314,6 @@ class Repository:
             else:
                 pipeline.description = description
                 pipeline.pipeline_dir = pipeline_dir
-                pipeline.current_plan_id = current_plan_id
                 pipeline.updated_at = now
             session.commit()
             session.refresh(pipeline)
@@ -345,8 +351,10 @@ class Repository:
                 return None
 
             current_plan: Plan | None = None
-            if pipeline.current_plan_id is not None:
-                current_plan = session.get(Plan, pipeline.current_plan_id)
+            if pipeline.current_build_id is not None:
+                current_build = session.get(Build, pipeline.current_build_id)
+                if current_build is not None:
+                    current_plan = session.get(Plan, current_build.plan_id)
 
             parent_chain: list[Plan] = []
             cursor = current_plan
@@ -407,3 +415,87 @@ class Repository:
             pipeline.last_run_status = status
             pipeline.last_run_at = timestamp
             session.commit()
+
+    # ----------------------------------------------------------------- Builds
+
+    def create_build(
+        self,
+        *,
+        pipeline_name: str,
+        plan_id: str,
+        target: str,
+        manifest: dict[str, list[str]] | None = None,
+    ) -> Build:
+        """Insert a new Build row and return it.
+
+        The id is generated as ``build_<uuid4().hex>`` so the build is
+        addressable from the moment it lands. ``manifest`` is serialized
+        into ``manifest_json`` (default: ``{"files": []}`` for the empty
+        case). The Pipeline FK on ``current_build_id`` is *not* updated
+        here — call ``set_pipeline_current_build`` after the insert
+        commits so a failed FK update doesn't roll back the build row.
+        """
+        build_id = "build_" + uuid.uuid4().hex
+        manifest_payload = manifest if manifest is not None else {"files": []}
+        now = datetime.now(UTC).replace(tzinfo=None)
+        build = Build(
+            id=build_id,
+            pipeline_name=pipeline_name,
+            plan_id=plan_id,
+            target=target,
+            created_at=now,
+            manifest_json=json.dumps(manifest_payload, sort_keys=True),
+        )
+        with self._session_factory() as session:
+            session.add(build)
+            session.commit()
+            session.refresh(build)
+            return build
+
+    def get_build(self, build_id: str) -> Build | None:
+        """Fetch a build by id, or `None` if not found."""
+        with self._session_factory() as session:
+            return session.get(Build, build_id)
+
+    def get_pipeline_current_build(self, name: str) -> Build | None:
+        """Return the Build pointed at by ``Pipeline.current_build_id``.
+
+        Returns `None` if the pipeline doesn't exist or hasn't built yet.
+        """
+        with self._session_factory() as session:
+            pipeline = session.get(Pipeline, name)
+            if pipeline is None or pipeline.current_build_id is None:
+                return None
+            return session.get(Build, pipeline.current_build_id)
+
+    def set_pipeline_current_build(self, name: str, build_id: str) -> None:
+        """Atomically point a Pipeline at a Build via its FK.
+
+        Raises `KeyError` if the pipeline doesn't exist; the build is
+        assumed to exist (callers create it via ``create_build`` before
+        calling this).
+        """
+        with self._session_factory() as session:
+            pipeline = session.get(Pipeline, name)
+            if pipeline is None:
+                raise KeyError(f"pipeline {name!r} not found")
+            pipeline.current_build_id = build_id
+            pipeline.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            session.commit()
+
+    def latest_build_for(self, name: str, target: str) -> Build | None:
+        """Return the most recent Build for ``(pipeline_name, target)``.
+
+        Backed by the ``ix_builds_pipeline_target_created_at`` index;
+        used by ``carve el deploy`` and ``carve el run`` to resolve the
+        artifact to ship for a given target.
+        """
+        stmt = (
+            select(Build)
+            .where(Build.pipeline_name == name)
+            .where(Build.target == target)
+            .order_by(Build.created_at.desc())
+            .limit(1)
+        )
+        with self._session_factory() as session:
+            return session.scalars(stmt).first()

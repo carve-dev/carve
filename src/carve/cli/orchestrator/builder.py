@@ -2,11 +2,14 @@
 
 Consumes a saved `Plan` (produced by `generate_plan` with
 ``phase='drafted'``) and runs the build agent to materialise
-``pipelines/<name>/main.py`` and ``requirements.txt``. On success:
+``targets/<active_target>/el/<name>/main.py`` and ``requirements.txt``.
+On success:
 
 * Inserts/updates the `Pipeline` row keyed by name.
+* Creates a `Build` row binding the plan to the active target.
+* Sets ``Pipeline.current_build_id`` to the new build.
 * Marks the plan ``phase='built'``, links it to the pipeline.
-* Returns a `BuildArtifact` with the run id and file list.
+* Returns a `BuildArtifact` with the run id, build id, and file list.
 
 The build agent is narrower than the plan agent: only `read_file` and
 `write_file`. It receives the design as a markdown preamble in the
@@ -19,7 +22,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,16 +49,19 @@ class BuildArtifact:
     Captures what the build run produced for the CLI's summary block.
     `success` is False when the build agent finished but didn't write a
     `main.py`; the build run row is marked failed in that case and the
-    plan stays drafted.
+    plan stays drafted. ``build_id`` is None on failure (no Build row
+    is created) and the build's id otherwise.
     """
 
     plan_id: str
     pipeline_name: str
     pipeline_dir: str
+    target: str
     files_written: list[str]
     summary: str
     run_id: str
     success: bool
+    build_id: str | None
     tokens_input: int
     tokens_output: int
     cost_usd: float
@@ -77,6 +82,7 @@ def build_plan(
     project_dir: Path,
     *,
     repository: Repository,
+    target: str | None = None,
     client: Any | None = None,
     max_turns: int = 30,
     observer: AgentObserver | None = None,
@@ -89,6 +95,11 @@ def build_plan(
         config: Fully-loaded `Config`.
         project_dir: Resolved project root.
         repository: State-store repository.
+        target: Optional target override. When None, falls through to
+            ``CARVE_TARGET`` then ``config.project.default_target``
+            (per `resolve_active_target`). The resolved value lands the
+            build files under ``targets/<target>/el/<name>/`` and is
+            persisted on the Build row.
         client: Optional pre-built Anthropic client (used in tests).
         max_turns: Cap on agent turns.
         observer: Optional progress observer.
@@ -101,6 +112,11 @@ def build_plan(
             ``--force``.
         ConfigError: Anthropic API key missing.
     """
+    # Local import to avoid a circular dependency: `carve.cli.main`
+    # imports the command modules, which import this module.
+    from carve.cli.main import ACTIVE_TARGET_FLAG
+    from carve.core.targets.resolution import resolve_active_target
+
     project_dir = project_dir.resolve()
 
     plan_row = repository.get_plan(plan_id)
@@ -116,9 +132,12 @@ def build_plan(
     design = _load_plan_design(plan_row)
     pipeline_name = _pipeline_name_from(plan_row, design)
 
+    cli_flag = target if target is not None else ACTIVE_TARGET_FLAG
+    active_target = resolve_active_target(cli_flag, config)
+
     anthropic_client = _build_client(config, client)
 
-    pipeline_dir_rel = f"pipelines/{pipeline_name}"
+    pipeline_dir_rel = f"targets/{active_target}/el/{pipeline_name}"
     pipeline_dir_abs = project_dir / pipeline_dir_rel
     snapshot = _snapshot_pipeline_dir(pipeline_dir_abs)
 
@@ -126,7 +145,7 @@ def build_plan(
     # doesn't exist yet at create_run time. Pass pipeline_name=None to keep
     # the runs.pipeline_name FK happy (the column is nullable specifically
     # for this case — see M1.1-06 spec, "runs table changes"). After the
-    # pipeline lands we backfill via _attach_pipeline_to_run below.
+    # pipeline lands we backfill via attach_pipeline_to_run below.
     run_id = repository.create_run(
         kind="build",
         target_id=plan_id,
@@ -141,6 +160,7 @@ def build_plan(
         design=design,
         pipeline_name=pipeline_name,
         target_pipeline=plan_row.pipeline_name,
+        active_target=active_target,
     )
 
     loop = AgentLoop(
@@ -154,8 +174,8 @@ def build_plan(
     )
 
     initial_message = (
-        f"Build the pipeline `{pipeline_name}`. Write `pipelines/"
-        f"{pipeline_name}/main.py` and `pipelines/{pipeline_name}/"
+        f"Build the pipeline `{pipeline_name}`. Write "
+        f"`{pipeline_dir_rel}/main.py` and `{pipeline_dir_rel}/"
         f"requirements.txt` per the design preamble."
     )
 
@@ -182,10 +202,12 @@ def build_plan(
             plan_id=plan_id,
             pipeline_name=pipeline_name,
             pipeline_dir=pipeline_dir_rel,
+            target=active_target,
             files_written=sorted(p.relative_to(project_dir).as_posix() for p in written_files),
             summary=agent_result.text,
             run_id=run_id,
             success=False,
+            build_id=None,
             tokens_input=agent_result.token_usage.input_tokens,
             tokens_output=agent_result.token_usage.output_tokens,
             cost_usd=agent_result.token_usage.cost_usd(config.models.default_model),
@@ -205,33 +227,44 @@ def build_plan(
             synthesised,
         )
 
+    files_written_rel = sorted(
+        p.relative_to(project_dir).as_posix() for p in written_files
+    )
+
     repository.create_or_update_pipeline(
         name=pipeline_name,
         description=_design_description(design),
         pipeline_dir=pipeline_dir_rel,
-        current_plan_id=plan_id,
     )
     # Pipeline now exists; safe to backfill the build run's FK so this
     # build shows up in `runs --pipeline <name>` filters.
     repository.attach_pipeline_to_run(run_id, pipeline_name)
+
+    # Create the Build row and point the Pipeline at it.
+    build = repository.create_build(
+        pipeline_name=pipeline_name,
+        plan_id=plan_id,
+        target=active_target,
+        manifest={"files": files_written_rel},
+    )
+    repository.set_pipeline_current_build(pipeline_name, build.id)
+
     repository.mark_plan_built(
         plan_id=plan_id,
         pipeline_name=pipeline_name,
-        build_run_id=run_id,
     )
     repository.update_run_status(run_id, "success")
 
-    files_written_rel = sorted(
-        p.relative_to(project_dir).as_posix() for p in written_files
-    )
     return BuildArtifact(
         plan_id=plan_id,
         pipeline_name=pipeline_name,
         pipeline_dir=pipeline_dir_rel,
+        target=active_target,
         files_written=files_written_rel,
         summary=agent_result.text,
         run_id=run_id,
         success=True,
+        build_id=build.id,
         tokens_input=agent_result.token_usage.input_tokens,
         tokens_output=agent_result.token_usage.output_tokens,
         cost_usd=agent_result.token_usage.cost_usd(config.models.default_model),
@@ -307,24 +340,45 @@ def _compose_build_system_prompt(
     design: dict[str, Any],
     pipeline_name: str,
     target_pipeline: str | None,
+    active_target: str,
 ) -> str:
     """Base prompt + connection context + design block + (optional) existing files."""
     sections: list[str] = [load_m1_build_agent_prompt()]
-    sections.append(_render_connection_context(config))
+    sections.append(_render_connection_context(config, active_target))
+    sections.append(_render_output_path_block(active_target, pipeline_name))
     sections.append(_render_design_preamble(design))
     if target_pipeline is not None:
-        existing = _render_existing_pipeline_section(project_dir, pipeline_name)
+        existing = _render_existing_pipeline_section(
+            project_dir,
+            pipeline_name,
+            active_target=active_target,
+        )
         if existing is not None:
             sections.append(existing)
     return "\n\n".join(sections)
 
 
-def _render_connection_context(config: Config) -> str:
-    target = config.project.default_target
-    snowflake = config.connections.snowflake.get(target)
+def _render_output_path_block(active_target: str, pipeline_name: str) -> str:
+    """Pin the build agent to the per-target output directory.
+
+    The base prompt still refers to ``pipelines/<name>/``, but P1-02
+    moved the build output under ``targets/<target>/el/<name>/``. This
+    appended section tells the agent the canonical paths so it doesn't
+    fall back to the prompt's older guidance.
+    """
+    base = f"targets/{active_target}/el/{pipeline_name}"
+    return (
+        "## Output paths\n"
+        f"- Write `{base}/main.py` and `{base}/requirements.txt`. "
+        "Do not write to any other location."
+    )
+
+
+def _render_connection_context(config: Config, active_target: str) -> str:
+    snowflake = config.connections.snowflake.get(active_target)
     lines = [
         "## Connection context",
-        f"- **Active target:** `{target}`",
+        f"- **Active target:** `{active_target}`",
     ]
     if snowflake is None:
         lines.append("- **Snowflake connection:** _(none configured)_")
@@ -417,8 +471,11 @@ def _render_design_preamble(design: dict[str, Any]) -> str:
 def _render_existing_pipeline_section(
     project_dir: Path,
     pipeline_name: str,
+    *,
+    active_target: str,
 ) -> str | None:
-    pipeline_dir = project_dir / "pipelines" / pipeline_name
+    rel_dir = f"targets/{active_target}/el/{pipeline_name}"
+    pipeline_dir = project_dir / rel_dir
     main_py = pipeline_dir / "main.py"
     requirements = pipeline_dir / "requirements.txt"
     if not main_py.is_file():
@@ -428,7 +485,7 @@ def _render_existing_pipeline_section(
         "Use this for reference; the design above is authoritative for "
         "the new state.",
         "",
-        f"### `pipelines/{pipeline_name}/main.py`",
+        f"### `{rel_dir}/main.py`",
         "```python",
         main_py.read_text(encoding="utf-8").rstrip("\n"),
         "```",
@@ -436,7 +493,7 @@ def _render_existing_pipeline_section(
     if requirements.is_file():
         parts += [
             "",
-            f"### `pipelines/{pipeline_name}/requirements.txt`",
+            f"### `{rel_dir}/requirements.txt`",
             "```",
             requirements.read_text(encoding="utf-8").rstrip("\n"),
             "```",
@@ -514,15 +571,6 @@ def _changed_files(
         if prev_mtime is None or cur_mtime > prev_mtime:
             changed.append(resolved)
     return changed
-
-
-# ---------------------------------------------------------------------------
-# Time helpers
-# ---------------------------------------------------------------------------
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 __all__ = ["BuildArtifact", "BuildError", "build_plan"]

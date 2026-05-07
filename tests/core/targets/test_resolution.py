@@ -59,6 +59,26 @@ def test_resolution_blank_cli_flag_falls_through() -> None:
     assert resolve_active_target("", config, env=env) == "from_env"
 
 
+@pytest.mark.parametrize(
+    ("source", "value"),
+    [
+        ("cli_flag", "../escape"),
+        ("env", "Bad-Name"),
+        ("default", "with space"),
+    ],
+)
+def test_resolution_rejects_unsafe_target_names(
+    source: str, value: str
+) -> None:
+    """Path-traversal-shaped or otherwise malformed target names are refused."""
+    cli = value if source == "cli_flag" else None
+    env = {"CARVE_TARGET": value} if source == "env" else {}
+    config = _make_config(default=value if source == "default" else "dev")
+    with pytest.raises(TargetResolutionError) as excinfo:
+        resolve_active_target(cli, config, env=env)
+    assert value in str(excinfo.value)
+
+
 def test_require_target_raises_on_missing() -> None:
     """Missing target raises with the listing-of-existing-targets message."""
     with pytest.raises(TargetResolutionError) as excinfo:

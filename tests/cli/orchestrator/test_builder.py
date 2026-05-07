@@ -2,10 +2,11 @@
 
 The Anthropic client is fully mocked; the build agent's `write_file`
 tool is the real one, so each tool_use ends up writing a file under
-`tmp_path/pipelines/<name>/`. The test then verifies that:
+`tmp_path/targets/<target>/el/<name>/`. The test then verifies that:
 
 * `Pipeline` row is upserted.
 * The plan's `phase` flips to "built".
+* A `Build` row is created and `Pipeline.current_build_id` points at it.
 * The build run row is marked success/failed appropriately.
 """
 
@@ -103,7 +104,7 @@ def _config(state_db: str) -> Config:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
 
@@ -149,7 +150,6 @@ def _plant_drafted_plan(
         goal="ingest",
         config_hash="0123456789abcdef",
         carve_version="0.0.1",
-        estimates_json="{}",
         task_graph_json=json.dumps({"design": design, "pipeline_name": pipeline_name}),
         file_path=f"/tmp/{plan_id}.json",
         phase="drafted",
@@ -159,15 +159,20 @@ def _plant_drafted_plan(
     return plan
 
 
-def _success_responses(*, pipeline_name: str = "csv_ingest") -> tuple[Any, ...]:
-    """Two write_file calls + an end_turn summary."""
+def _success_responses(
+    *,
+    pipeline_name: str = "csv_ingest",
+    target: str = "dev",
+) -> tuple[Any, ...]:
+    """Two write_file calls + an end_turn summary, scoped to the per-target dir."""
+    base = f"targets/{target}/el/{pipeline_name}"
     return (
         _response(
             content=[
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": f"pipelines/{pipeline_name}/main.py",
+                        "path": f"{base}/main.py",
                         "content": (
                             "# generated\n"
                             "import os\n"
@@ -186,7 +191,7 @@ def _success_responses(*, pipeline_name: str = "csv_ingest") -> tuple[Any, ...]:
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": f"pipelines/{pipeline_name}/requirements.txt",
+                        "path": f"{base}/requirements.txt",
                         "content": "snowflake-connector-python\nrequests\n",
                     },
                     tool_id="tu_2",
@@ -207,7 +212,7 @@ def _success_responses(*, pipeline_name: str = "csv_ingest") -> tuple[Any, ...]:
 def test_build_writes_files_and_marks_plan_built(
     project_dir: Path, repository: Repository
 ) -> None:
-    """Build agent writes both files → Pipeline row created, plan marked built."""
+    """Build agent writes both files → Pipeline + Build rows created, plan built."""
     config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_aaaaaa")
 
@@ -223,14 +228,30 @@ def test_build_writes_files_and_marks_plan_built(
     assert isinstance(artifact, BuildArtifact)
     assert artifact.success is True
     assert artifact.pipeline_name == "csv_ingest"
-    assert (project_dir / "pipelines" / "csv_ingest" / "main.py").is_file()
-    assert (project_dir / "pipelines" / "csv_ingest" / "requirements.txt").is_file()
+    assert artifact.target == "dev"
+    assert artifact.pipeline_dir == "targets/dev/el/csv_ingest"
+    assert (project_dir / "targets/dev/el/csv_ingest" / "main.py").is_file()
+    assert (project_dir / "targets/dev/el/csv_ingest" / "requirements.txt").is_file()
 
-    # Pipeline row.
+    # Build artifact carries the new build id.
+    assert artifact.build_id is not None
+    assert artifact.build_id.startswith("build_")
+
+    # Pipeline row points at the new Build via current_build_id.
     pipeline = repository.get_pipeline("csv_ingest")
     assert pipeline is not None
-    assert pipeline.current_plan_id == plan.id
+    assert pipeline.current_build_id == artifact.build_id
     assert pipeline.description == "Daily ingest."
+    assert pipeline.pipeline_dir == "targets/dev/el/csv_ingest"
+
+    # Build row carries the plan + target binding and the manifest.
+    build = repository.get_build(artifact.build_id)
+    assert build is not None
+    assert build.pipeline_name == "csv_ingest"
+    assert build.plan_id == plan.id
+    assert build.target == "dev"
+    assert "main.py" in build.manifest_json
+    assert "requirements.txt" in build.manifest_json
 
     # Plan flipped to built.
     plan_row = repository.get_plan(plan.id)
@@ -283,7 +304,7 @@ def test_build_marks_failed_when_main_py_not_written(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "pipelines/csv_ingest/requirements.txt",
+                        "path": "targets/dev/el/csv_ingest/requirements.txt",
                         "content": "snowflake-connector-python\n",
                     },
                     tool_id="tu_1",
@@ -302,6 +323,8 @@ def test_build_marks_failed_when_main_py_not_written(
     )
 
     assert artifact.success is False
+    # No Build row should exist when the build agent returned without a main.py.
+    assert artifact.build_id is None
 
     plan_row = repository.get_plan(plan.id)
     assert plan_row is not None
@@ -355,7 +378,7 @@ def test_build_force_rebuilds_a_built_plan(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "pipelines/csv_ingest/main.py",
+                        "path": "targets/dev/el/csv_ingest/main.py",
                         "content": "# rebuilt\nprint('rebuild')\n",
                     },
                     tool_id="tu_1",
@@ -368,7 +391,7 @@ def test_build_force_rebuilds_a_built_plan(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "pipelines/csv_ingest/requirements.txt",
+                        "path": "targets/dev/el/csv_ingest/requirements.txt",
                         "content": "snowflake-connector-python\n",
                     },
                     tool_id="tu_2",
@@ -387,7 +410,7 @@ def test_build_force_rebuilds_a_built_plan(
         force=True,
     )
     assert artifact.success is True
-    rebuilt_main = (project_dir / "pipelines" / "csv_ingest" / "main.py").read_text()
+    rebuilt_main = (project_dir / "targets/dev/el/csv_ingest" / "main.py").read_text()
     assert "rebuild" in rebuilt_main
 
 
@@ -400,23 +423,24 @@ def test_build_for_existing_pipeline_replaces_files(
     """Building a plan that targets an existing pipeline overwrites the files."""
     config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
 
-    # Plant the existing pipeline files + row.
-    pipeline_dir = project_dir / "pipelines" / "csv_ingest"
+    # Plant the existing pipeline files + row under the per-target layout.
+    pipeline_dir = project_dir / "targets" / "dev" / "el" / "csv_ingest"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "main.py").write_text("# old version\n")
     (pipeline_dir / "requirements.txt").write_text("snowflake-connector-python\n")
     seed_plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_seed00")
-    repository.mark_plan_built(
-        plan_id=seed_plan.id,
-        pipeline_name="csv_ingest",
-        build_run_id="seed_build",
-    )
+    repository.mark_plan_built(plan_id=seed_plan.id, pipeline_name="csv_ingest")
     repository.create_or_update_pipeline(
         name="csv_ingest",
         description="seed",
-        pipeline_dir="pipelines/csv_ingest",
-        current_plan_id=seed_plan.id,
+        pipeline_dir="targets/dev/el/csv_ingest",
     )
+    seed_build = repository.create_build(
+        pipeline_name="csv_ingest",
+        plan_id=seed_plan.id,
+        target="dev",
+    )
+    repository.set_pipeline_current_build("csv_ingest", seed_build.id)
 
     # Plant the modification plan, with `pipeline_name` already locked.
     new_plan = _plant_drafted_plan(
@@ -438,7 +462,8 @@ def test_build_for_existing_pipeline_replaces_files(
 
     pipeline = repository.get_pipeline("csv_ingest")
     assert pipeline is not None
-    assert pipeline.current_plan_id == new_plan.id
+    assert pipeline.current_build_id == artifact.build_id
+    assert pipeline.current_build_id != seed_build.id  # bumped to the new build
 
     main_content = (pipeline_dir / "main.py").read_text()
     # Should be the new content from `_success_responses()`.
@@ -455,3 +480,163 @@ def test_build_unknown_plan_raises(project_dir: Path, repository: Repository) ->
             repository=repository,
             client=_client_returning(),
         )
+
+
+# ---------------------------------------------------------------- per-target
+
+
+def test_build_writes_to_active_target_path(
+    project_dir: Path, repository: Repository
+) -> None:
+    """`carve build <id> --target staging` lands files under the staging dir."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000010_aaaaaa")
+
+    client = _client_returning(*_success_responses(target="staging"))
+    artifact = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        target="staging",
+    )
+    assert artifact.success is True
+    assert artifact.target == "staging"
+    assert artifact.pipeline_dir == "targets/staging/el/csv_ingest"
+    assert (project_dir / "targets/staging/el/csv_ingest/main.py").is_file()
+    # Default `dev` target directory is untouched.
+    assert not (project_dir / "targets/dev/el/csv_ingest/main.py").is_file()
+
+
+def test_build_creates_build_row_with_correct_fields(
+    project_dir: Path, repository: Repository
+) -> None:
+    """The Build row carries pipeline_name, plan_id, target, and a populated manifest."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000011_aaaaaa")
+
+    client = _client_returning(*_success_responses())
+    artifact = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+    assert artifact.build_id is not None
+    build = repository.get_build(artifact.build_id)
+    assert build is not None
+    assert build.pipeline_name == "csv_ingest"
+    assert build.plan_id == plan.id
+    assert build.target == "dev"
+    # Manifest references the per-target paths the build wrote.
+    assert "targets/dev/el/csv_ingest/main.py" in build.manifest_json
+    assert "targets/dev/el/csv_ingest/requirements.txt" in build.manifest_json
+
+
+def test_build_sets_current_build_id_on_pipeline(
+    project_dir: Path, repository: Repository
+) -> None:
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000012_aaaaaa")
+
+    client = _client_returning(*_success_responses())
+    artifact = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+    pipeline = repository.get_pipeline("csv_ingest")
+    assert pipeline is not None
+    assert pipeline.current_build_id == artifact.build_id
+
+
+def test_build_default_target_falls_through_to_config(
+    project_dir: Path, repository: Repository
+) -> None:
+    """No --target → resolves to ``config.project.default_target``."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config.project.default_target = "production"
+
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000013_aaaaaa")
+    client = _client_returning(*_success_responses(target="production"))
+    artifact = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+    assert artifact.success is True
+    assert artifact.target == "production"
+    assert (project_dir / "targets/production/el/csv_ingest/main.py").is_file()
+
+
+def test_build_invalid_pipeline_name_rejected(
+    project_dir: Path, repository: Repository
+) -> None:
+    """A design with a non-snake_case pipeline_name → BuildError before any IO."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(
+        repository,
+        plan_id="plan_20260101_000014_aaaaaa",
+        pipeline_name="Bad-Name",
+    )
+    with pytest.raises(BuildError, match=r"valid pipeline name"):
+        build_plan(
+            plan_id=plan.id,
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=_client_returning(),
+        )
+
+
+def test_two_builds_against_different_targets(
+    project_dir: Path, repository: Repository
+) -> None:
+    """Two builds against dev/prod produce two Build rows; current_build_id ends at the latest."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000015_aaaaaa")
+
+    artifact_dev = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=_client_returning(*_success_responses(target="dev")),
+        target="dev",
+    )
+    assert artifact_dev.success is True
+
+    # Second build against prod requires `--force` because the plan is
+    # already in phase=built after the first build.
+    artifact_prod = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=_client_returning(*_success_responses(target="prod")),
+        target="prod",
+        force=True,
+    )
+    assert artifact_prod.success is True
+    assert artifact_dev.build_id != artifact_prod.build_id
+
+    # Both build rows are reachable by (name, target) lookup.
+    dev_build = repository.latest_build_for("csv_ingest", "dev")
+    prod_build = repository.latest_build_for("csv_ingest", "prod")
+    assert dev_build is not None and dev_build.id == artifact_dev.build_id
+    assert prod_build is not None and prod_build.id == artifact_prod.build_id
+
+    # Pipeline.current_build_id ends pointing at the most recent build.
+    pipeline = repository.get_pipeline("csv_ingest")
+    assert pipeline is not None
+    assert pipeline.current_build_id == artifact_prod.build_id
+
+    # Each target's directory got its own files.
+    assert (project_dir / "targets/dev/el/csv_ingest/main.py").is_file()
+    assert (project_dir / "targets/prod/el/csv_ingest/main.py").is_file()

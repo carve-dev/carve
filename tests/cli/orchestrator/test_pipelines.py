@@ -43,7 +43,6 @@ def _seed_plan(repository: Repository, plan_id: str, **overrides: object) -> Pla
         "goal": f"goal for {plan_id}",
         "config_hash": "h",
         "carve_version": "0.0.1",
-        "estimates_json": "{}",
         "task_graph_json": "{}",
         "file_path": f".carve/plans/{plan_id}.json",
     }
@@ -71,14 +70,12 @@ def test_render_pipelines_table_shows_each_row(repository: Repository) -> None:
     repository.create_or_update_pipeline(
         name="alpha",
         description="Alpha pipeline.",
-        pipeline_dir="pipelines/alpha",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/alpha",
     )
     repository.create_or_update_pipeline(
         name="beta",
         description="Beta pipeline.",
-        pipeline_dir="pipelines/beta",
-        current_plan_id="plan-2",
+        pipeline_dir="targets/dev/el/beta",
     )
     renderable = render_pipelines_table(repository)
     console = Console(record=True, width=120)
@@ -114,9 +111,15 @@ def test_render_pipeline_detail_shows_lineage_and_runs(
     repository.create_or_update_pipeline(
         name="ingest",
         description="Daily ingest.",
-        pipeline_dir="pipelines/ingest",
-        current_plan_id="plan-C",
+        pipeline_dir="targets/dev/el/ingest",
     )
+    # The lineage view resolves "current_plan" through the pinned Build.
+    build = repository.create_build(
+        pipeline_name="ingest",
+        plan_id="plan-C",
+        target="dev",
+    )
+    repository.set_pipeline_current_build("ingest", build.id)
     # A few runs.
     run_id = repository.create_run(
         kind="run",
@@ -151,8 +154,7 @@ def test_render_pipeline_detail_no_runs_yet(repository: Repository) -> None:
     repository.create_or_update_pipeline(
         name="fresh",
         description="",
-        pipeline_dir="pipelines/fresh",
-        current_plan_id="plan-1",
+        pipeline_dir="targets/dev/el/fresh",
     )
     renderable, exit_code = render_pipeline_detail(repository, "fresh")
     assert exit_code == 0

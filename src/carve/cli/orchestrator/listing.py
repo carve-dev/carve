@@ -107,7 +107,7 @@ def render_pipelines_table(
     table = Table(title=f"Pipelines (showing {len(pipelines)})")
     table.add_column("Name", style="bold cyan", no_wrap=True)
     table.add_column("Description")
-    table.add_column("Current plan", style="dim")
+    table.add_column("Current build", style="dim")
     table.add_column("Last run")
     table.add_column("Last run at")
     table.add_column("Updated")
@@ -119,7 +119,7 @@ def render_pipelines_table(
         table.add_row(
             _escape(pipeline.name),
             _escape(pipeline.description) if pipeline.description else "-",
-            _short_id(pipeline.current_plan_id) if pipeline.current_plan_id else "-",
+            _short_id(pipeline.current_build_id) if pipeline.current_build_id else "-",
             _status_cell(pipeline.last_run_status) if pipeline.last_run_status else "-",
             _format_datetime(pipeline.last_run_at),
             _format_datetime(pipeline.updated_at),
@@ -156,9 +156,11 @@ def render_pipeline_detail(
     summary.add_row("Directory", _escape(pipeline.pipeline_dir))
     summary.add_row("Description", _escape(pipeline.description) if pipeline.description else "-")
     summary.add_row(
-        "Current plan",
-        _escape(pipeline.current_plan_id) if pipeline.current_plan_id else "-",
+        "Current build",
+        _escape(pipeline.current_build_id) if pipeline.current_build_id else "-",
     )
+    if lineage.current_plan is not None:
+        summary.add_row("Current plan", _escape(lineage.current_plan.id))
     summary.add_row("Created", _format_datetime(pipeline.created_at))
     summary.add_row("Updated", _format_datetime(pipeline.updated_at))
     summary.add_row(

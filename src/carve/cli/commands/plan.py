@@ -93,6 +93,9 @@ def command(
                 parent_plan_id=refine,
                 pipeline_name=pipeline,
             )
+            # `--target` is read inside `generate_plan` via the module-level
+            # `ACTIVE_TARGET_FLAG` slot wired by `_main_callback`; nothing
+            # to forward here.
         finally:
             observer.close()
     except PlanGenerationError as exc:

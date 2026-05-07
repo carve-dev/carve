@@ -11,7 +11,7 @@ M1.1-06 split the original "plan = design + code" agent into two:
 - `generate_plan` (this module) — runs the plan agent. Tools:
   `read_file`, `run_snowflake_query`, `submit_plan`. Produces a Plan
   row with `phase="drafted"`. **No files are written under
-  ``pipelines/``.**
+  ``targets/<target>/el/`` (or any other artifact path).**
 - `build_plan` (`builder.py`) — runs the build agent against a saved
   draft plan to materialise the pipeline directory.
 
@@ -21,8 +21,10 @@ The planner also handles two refinement modes triggered from the CLI:
   goal + design as agent context; the new user message is the user's
   feedback. The new plan is persisted with ``parent_plan_id``.
 - ``pipeline_name`` (without ``parent_plan_id``) loads existing
-  ``pipelines/<name>/main.py`` and ``requirements.txt`` into the agent
-  context so the design proposes a delta consistent with the live code.
+  ``targets/<active>/el/<name>/main.py`` and ``requirements.txt`` into
+  the agent context so the design proposes a delta consistent with the
+  live code (with a transitional fallback to legacy ``pipelines/<name>/``
+  for builds produced before P1-02).
 """
 
 from __future__ import annotations
@@ -135,6 +137,7 @@ def generate_plan(
     project_dir: Path,
     *,
     repository: Repository,
+    target: str | None = None,
     client: Any | None = None,
     max_turns: int = 30,
     observer: AgentObserver | None = None,
@@ -166,10 +169,17 @@ def generate_plan(
         ConfigError: The Anthropic API key is missing (load-time-optional,
             use-time-required).
     """
+    # Local imports to avoid a circular dependency with `carve.cli.main`.
+    from carve.cli.main import ACTIVE_TARGET_FLAG
+    from carve.core.targets.resolution import resolve_active_target
+
     project_dir = project_dir.resolve()
     plan_id = _new_plan_id()
     model = config.models.default_model
     anthropic_client = _build_client(config, client)
+
+    cli_flag = target if target is not None else ACTIVE_TARGET_FLAG
+    active_target = resolve_active_target(cli_flag, config)
 
     parent_plan_row: Plan | None = None
     if parent_plan_id is not None:
@@ -197,12 +207,13 @@ def generate_plan(
             )
 
     capture = SubmitPlanCapture()
-    tools = _build_tools(config, project_dir, capture)
+    tools = _build_tools(config, project_dir, capture, active_target=active_target)
     system_prompt = _compose_plan_system_prompt(
         config=config,
         project_dir=project_dir,
         parent_plan_row=parent_plan_row,
         target_pipeline=target_pipeline,
+        active_target=active_target,
     )
 
     loop = AgentLoop(
@@ -273,6 +284,7 @@ def _compose_plan_system_prompt(
     project_dir: Path,
     parent_plan_row: Plan | None,
     target_pipeline: str | None,
+    active_target: str,
 ) -> str:
     """Assemble the plan agent's system prompt: base + connection + pipeline.
 
@@ -283,10 +295,14 @@ def _compose_plan_system_prompt(
     """
     sections: list[str] = [load_m1_plan_agent_prompt()]
 
-    sections.append(_render_connection_context(config))
+    sections.append(_render_connection_context(config, active_target))
 
     if target_pipeline is not None:
-        existing = _render_existing_pipeline_section(project_dir, target_pipeline)
+        existing = _render_existing_pipeline_section(
+            project_dir,
+            target_pipeline,
+            active_target=active_target,
+        )
         if existing is not None:
             sections.append(existing)
 
@@ -296,18 +312,17 @@ def _compose_plan_system_prompt(
     return "\n\n".join(sections)
 
 
-def _render_connection_context(config: Config) -> str:
+def _render_connection_context(config: Config, active_target: str) -> str:
     """Render the active target's connection context as a markdown block.
 
     The agent uses these as defaults for `destination.database` and
     `destination.schema`. Missing targets render as ``(none configured)``
     so the agent flags the gap in `open_questions`.
     """
-    target = config.project.default_target
-    snowflake = config.connections.snowflake.get(target)
+    snowflake = config.connections.snowflake.get(active_target)
     lines = [
         "## Connection context",
-        f"- **Active target:** `{target}`",
+        f"- **Active target:** `{active_target}`",
     ]
     if snowflake is None:
         lines.append("- **Snowflake connection:** _(none configured)_")
@@ -324,18 +339,43 @@ def _render_connection_context(config: Config) -> str:
 def _render_existing_pipeline_section(
     project_dir: Path,
     pipeline_name: str,
+    *,
+    active_target: str,
 ) -> str | None:
-    """Inline existing ``main.py`` / ``requirements.txt`` for delta mode."""
-    pipeline_dir = project_dir / "pipelines" / pipeline_name
+    """Inline existing ``main.py`` / ``requirements.txt`` for delta mode.
+
+    Reads from ``targets/<active_target>/el/<name>/`` per P1-02. Falls
+    back to the legacy ``pipelines/<name>/`` layout when the target
+    directory has nothing yet, so refines initiated against a pipeline
+    built before the per-target migration still pick up the existing
+    files.
+    """
+    rel_dir = f"targets/{active_target}/el/{pipeline_name}"
+    pipeline_dir = project_dir / rel_dir
     main_py = pipeline_dir / "main.py"
     requirements = pipeline_dir / "requirements.txt"
     if not main_py.is_file():
-        return None
+        legacy_dir = project_dir / "pipelines" / pipeline_name
+        legacy_main = legacy_dir / "main.py"
+        if not legacy_main.is_file():
+            return None
+        logger.warning(
+            "Pipeline %r has no files under %s; falling back to legacy "
+            "pipelines/%s/. Rebuild with `carve build` to land it under the "
+            "active target.",
+            pipeline_name,
+            rel_dir,
+            pipeline_name,
+        )
+        rel_dir = f"pipelines/{pipeline_name}"
+        pipeline_dir = legacy_dir
+        main_py = legacy_main
+        requirements = legacy_dir / "requirements.txt"
     parts: list[str] = [
         f"## Existing pipeline `{pipeline_name}`",
         "The user wants to modify this pipeline. Propose a delta-consistent design.",
         "",
-        "### `pipelines/" + pipeline_name + "/main.py`",
+        f"### `{rel_dir}/main.py`",
         "```python",
         main_py.read_text(encoding="utf-8").rstrip("\n"),
         "```",
@@ -343,7 +383,7 @@ def _render_existing_pipeline_section(
     if requirements.is_file():
         parts += [
             "",
-            "### `pipelines/" + pipeline_name + "/requirements.txt`",
+            f"### `{rel_dir}/requirements.txt`",
             "```",
             requirements.read_text(encoding="utf-8").rstrip("\n"),
             "```",
@@ -411,26 +451,32 @@ def _build_tools(
     config: Config,
     project_dir: Path,
     capture: SubmitPlanCapture,
+    *,
+    active_target: str,
 ) -> list[Tool]:
-    """Plan-agent toolset: read_file + run_snowflake_query + submit_plan."""
-    target = config.project.default_target
+    """Plan-agent toolset: read_file + run_snowflake_query + submit_plan.
+
+    ``active_target`` selects which ``[snowflake.<target>]`` connection
+    the agent inspects. Defaults to ``config.project.default_target``
+    when the caller hasn't resolved a target yet.
+    """
     snowflake_runner: Any
-    if target in config.connections.snowflake:
+    if active_target in config.connections.snowflake:
         pool = SnowflakePool(config)
         try:
-            snowflake_runner = pool.get(target)
+            snowflake_runner = pool.get(active_target)
         except SnowflakeError:
             logger.warning(
                 "Snowflake target %r is configured but unavailable; "
                 "the agent will get an error if it uses run_snowflake_query.",
-                target,
+                active_target,
             )
             snowflake_runner = _UnconfiguredSnowflakeRunner()
     else:
         logger.warning(
             "no Snowflake connection configured for target %r; "
             "the agent's run_snowflake_query tool will return an error if used.",
-            target,
+            active_target,
         )
         snowflake_runner = _UnconfiguredSnowflakeRunner()
 
@@ -534,12 +580,10 @@ def _persist_artifact(
     payload = artifact.to_json()
     file_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
-    estimates = {
-        "tokens_input": artifact.tokens_input,
-        "tokens_output": artifact.tokens_output,
-        "cost_usd": artifact.cost_usd,
-        "model": artifact.model,
-    }
+    # P1-02 dropped `Plan.estimates_json`; estimates that were once
+    # surfaced for the planner now ride on the on-disk plan JSON
+    # alongside the design (cost, tokens, model). Build owns the
+    # deploy-state columns previously on Plan.
     task_graph = {
         "design": artifact.design,
         "pipeline_name": artifact.pipeline_name,
@@ -552,7 +596,6 @@ def _persist_artifact(
         goal=artifact.goal,
         config_hash=artifact.config_hash,
         carve_version=artifact.carve_version,
-        estimates_json=json.dumps(estimates, sort_keys=True),
         task_graph_json=json.dumps(task_graph, sort_keys=True),
         file_path=str(file_path),
         phase="drafted",
