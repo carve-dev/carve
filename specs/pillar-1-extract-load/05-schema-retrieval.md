@@ -69,18 +69,34 @@ def list_tables(ctx: SkillContext, database: str, schema: str, include_views: bo
     return SkillResult(data={"tables": rows}, truncated=len(rows) >= 200, total_count=len(rows))
 ```
 
-`@skill` lives in `src/carve/core/skills/decorator.py`. The registry (`src/carve/core/skills/registry.py`) collects all decorated functions at import time and exposes a lookup keyed on the skill name.
+> **Updated during implementation (2026-05-07):** the shipped `list_tables` enforces the cap at the database boundary using `LIMIT 201` and detects truncation by over-fetching one row. When the cap is hit it issues a separate `COUNT(*)` to populate `total_count` accurately (instead of the example's `len(rows) >= 200` heuristic, which only ever reports the cap value). `list_schemas` follows the same `LIMIT cap+1` pattern. See `src/carve/core/skills/builtin/catalog.py`.
+
+> **Updated during implementation (2026-05-07):** the catalog skills validate the `database` parameter against `^[A-Za-z_][A-Za-z0-9_]*$` (Snowflake's unquoted-identifier grammar) before interpolating it into the `FROM <db>.information_schema.<view>` clause. The driver's `%(name)s` binding works for values, not identifiers, so this is the closure for the SQL-injection vector flagged by security review. A new `InvalidDatabaseNameError` (subclass of `ValueError`) is raised on rejection. Implementation lives in `_validated_database` in `catalog.py`.
+
+`@skill` lives in `src/carve/core/skills/decorator.py`. The registry (`src/carve/core/skills/registry.py`) is a lookup keyed on the skill name.
+
+> **Updated during implementation (2026-05-07):** `@skill` does **not** auto-register decorated functions. Registration is explicit at the call site — `src/carve/core/skills/builtin/__init__.py` registers each catalog skill into the process-wide default registry on import. This keeps the decorator side-effect free and the test suite deterministic across module re-imports.
 
 ## `SkillContext`
 
+> **Updated during implementation (2026-05-07):** `run_id` is `Optional` (`str | None`). The plan flow doesn't open a `Run` row, so there's no FK target — when `run_id is None`, `log()` and `emit_event()` no-op. `__init__` also accepts an optional `snowflake_pool=` kwarg so tests can inject a pre-built pool with mocked connections.
+
 ```python
 class SkillContext:
-    def __init__(self, config: Config, repo: Repository, run_id: str, target: str):
+    def __init__(
+        self,
+        config: Config,
+        repo: Repository,
+        run_id: str | None,
+        target: str,
+        *,
+        snowflake_pool: SnowflakePool | None = None,
+    ):
         self.config = config
         self.repo = repo
         self.run_id = run_id
         self.target = target
-        self.snowflake_pool = SnowflakePool(config)
+        self.snowflake_pool = snowflake_pool or SnowflakePool(config)
 
     def log(self, message: str, level: str = "info") -> None:
         self.repo.append_log(self.run_id, level, "skill", message)
@@ -159,22 +175,26 @@ New files:
 - `src/carve/core/skills/context.py` — `SkillContext` class.
 - `src/carve/core/skills/executor.py` — `CachedSkillExecutor`.
 - `src/carve/core/skills/result.py` — `SkillResult` dataclass.
-- `src/carve/core/skills/builtin/__init__.py`
+- `src/carve/core/skills/builtin/__init__.py` — registers the catalog skills into the default registry on import.
 - `src/carve/core/skills/builtin/catalog.py` — the five catalog skills above.
 - `tests/core/skills/test_registry.py` — registration + lookup + tool-schema generation.
 - `tests/core/skills/test_decorator.py`
 - `tests/core/skills/test_executor.py` — cache behavior, target wiring.
 - `tests/core/skills/test_catalog.py` — each catalog skill against a fixture/mocked Snowflake.
+- `tests/core/skills/test_plan_agent_integration.py` — plan-agent end-to-end uses a catalog skill to ground its design.
 
 Modified files:
 
-- `src/carve/core/agents/loop.py` — accept a `SkillRegistry` so skill calls land in the loop's tool-call dispatch alongside the agent's own tools.
-- `src/carve/cli/orchestrator/planner.py` — wire the catalog skills into the plan agent's tool set (P1-02 already touches this file; this spec adds the skill registration call).
-- `src/carve/core/agents/m1_tools.py` — no change to existing tools; just imports the skill registry for tool-schema generation.
+- `src/carve/core/agents/loop.py` — accepts a `SkillRegistry` so skill calls land in the loop's tool-call dispatch alongside the agent's own tools.
+- `src/carve/cli/orchestrator/planner.py` — wires the catalog skills into the plan agent's tool set.
+
+> **Updated during implementation (2026-05-07):** `src/carve/core/agents/m1_tools.py` was **not** modified. Skill schemas are routed to the model through `AgentLoop` directly, so `m1_tools.py` doesn't need to import the registry. The original spec listed it as an import-only edit; that turned out to be unnecessary.
 
 ### Connection pool
 
-`SnowflakePool` (in `src/carve/core/snowflake/pool.py` from M1-06) gains a `get(target_name)` method that:
+> **Updated during implementation (2026-05-07):** `SnowflakePool` lives at `src/carve/core/connectors/snowflake.py` (not `core/snowflake/pool.py`), and the `get(target)` method already existed from M1-06. P1-05 *uses* it — it doesn't add it. The behavior described below is current; the file path is the only correction.
+
+`SnowflakePool.get(target)` (in `src/carve/core/connectors/snowflake.py`, defined as part of M1-06):
 
 1. Looks up `[snowflake.<target_name>]` from `carve/connections.toml` (centralized, P1-01).
 2. Resolves `${<TARGET>_*}` env var references against the loaded `.env` (M1.1-03 autoload).
@@ -213,8 +233,10 @@ Use a fixture Snowflake (mocked `INFORMATION_SCHEMA` results) and the standard a
 
 (Summary of File-level changes section.)
 
-New: 7 source files (skills package skeleton + 5 catalog skills + result/decorator/registry/context/executor + builtin), 4 test files.
-Modified: `agents/loop.py`, `cli/orchestrator/planner.py`, `agents/m1_tools.py` (import only).
+> **Updated during implementation (2026-05-07):** counts adjusted to match what shipped — 8 new source files (the skills package + builtin), 5 new test files (a plan-agent integration test was added), and only two source files modified (`agents/loop.py`, `cli/orchestrator/planner.py`). `agents/m1_tools.py` is unchanged.
+
+New: 8 source files (`skills/__init__.py`, `decorator.py`, `registry.py`, `context.py`, `executor.py`, `result.py`, `builtin/__init__.py`, `builtin/catalog.py`), 5 test files (`test_registry.py`, `test_decorator.py`, `test_executor.py`, `test_catalog.py`, `test_plan_agent_integration.py`).
+Modified: `agents/loop.py`, `cli/orchestrator/planner.py`.
 No DB migrations.
 
 ## Out of scope

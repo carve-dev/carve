@@ -40,6 +40,9 @@ from carve.core.agents.pricing import compute_cost_usd
 
 if TYPE_CHECKING:
     from carve.core.agents.tools import Tool
+    from carve.core.skills.context import SkillContext
+    from carve.core.skills.executor import CachedSkillExecutor
+    from carve.core.skills.registry import SkillRegistry
     from carve.core.state.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -141,9 +144,31 @@ class AgentLoop:
         sleep: Any = time.sleep,
         observer: AgentObserver | None = None,
         terminator_tool: str | None = None,
+        skills: SkillRegistry | None = None,
+        skill_executor: CachedSkillExecutor | None = None,
+        skill_context: SkillContext | None = None,
     ) -> None:
         self.client = client
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
+        # Skill registry integration: when supplied, the loop exposes
+        # each registered skill to the model as a tool and dispatches
+        # invocations through the (optional) `CachedSkillExecutor`. The
+        # skill names must not collide with regular tool names — this
+        # keeps the dispatch table unambiguous.
+        self.skills = skills
+        if skills is not None:
+            for name in skills.names():
+                if name in self.tools:
+                    raise ValueError(
+                        f"Skill name {name!r} collides with an existing tool. "
+                        "Skill and tool names share a single namespace."
+                    )
+            if skill_context is None:
+                raise ValueError(
+                    "skill_context is required when skills are passed to AgentLoop."
+                )
+        self.skill_executor = skill_executor
+        self.skill_context = skill_context
         self.system_prompt = system_prompt
         self.model = model
         self.repository = repository
@@ -237,11 +262,16 @@ class AgentLoop:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
+                tool_schemas: list[dict[str, Any]] = [
+                    t.to_schema() for t in self.tools.values()
+                ]
+                if self.skills is not None:
+                    tool_schemas.extend(self.skills.to_tool_schemas())
                 return self.client.messages.create(
                     model=self.model,
                     system=self.system_prompt,
                     max_tokens=self.max_tokens,
-                    tools=[t.to_schema() for t in self.tools.values()],
+                    tools=tool_schemas,
                     messages=self.messages,
                 )
             except RateLimitError as exc:
@@ -287,7 +317,12 @@ class AgentLoop:
             self._tool_calls_total += 1
 
             tool = self.tools.get(tool_name)
-            if tool is None:
+            is_skill = (
+                tool is None
+                and self.skills is not None
+                and tool_name in self.skills
+            )
+            if tool is None and not is_skill:
                 msg = f"Unknown tool: {tool_name!r}"
                 results.append(
                     {
@@ -304,7 +339,11 @@ class AgentLoop:
 
             start = time.perf_counter_ns()
             try:
-                output = tool.executor(dict(tool_input))
+                if is_skill:
+                    output = self._execute_skill(tool_name, dict(tool_input))
+                else:
+                    assert tool is not None  # narrowed by `is_skill` branch above
+                    output = tool.executor(dict(tool_input))
             except Exception as exc:
                 duration_ms = (time.perf_counter_ns() - start) // 1_000_000
                 results.append(
@@ -339,6 +378,32 @@ class AgentLoop:
                 duration_ms=int(duration_ms),
             )
         return results
+
+    def _execute_skill(self, name: str, kwargs: dict[str, Any]) -> Any:
+        """Run skill `name` via `skill_executor` (or registry directly).
+
+        The executor handles caching; absent one we fall back to a direct
+        registry lookup for callers that don't need invocation-scoped
+        caching (rare — production always passes one).
+        """
+        assert self.skills is not None
+        assert self.skill_context is not None
+        if self.skill_executor is not None:
+            result = self.skill_executor.execute(name, kwargs, self.skill_context)
+        else:
+            fn = self.skills[name]
+            result = fn(self.skill_context, **kwargs)
+        # Convert SkillResult to a JSON-friendly dict for the tool_result.
+        return {
+            "data": result.data,
+            "truncated": result.truncated,
+            "total_count": result.total_count,
+            **(
+                {"next_cursor": result.next_cursor}
+                if result.next_cursor is not None
+                else {}
+            ),
+        }
 
     def _terminator_invoked(self, response: Any) -> bool:
         """Return True if any tool_use block in `response` matches the terminator."""
@@ -433,14 +498,24 @@ def _stringify_tool_output(output: Any) -> str:
 def _summarize_tool_result(name: str, result: Any) -> str:
     """Build a short caller-friendly summary of `result` for the observer.
 
-    Tools return either a string (e.g. `read_file` content) or a dict
-    (e.g. `write_file` returns ``{"path": ..., "bytes_written": ...}``,
-    `run_snowflake_query` returns ``{"row_count": ..., "rows": [...]}``).
-    The summary picks an obvious field per tool, with `"ok"` as the
+    Tools return either a string (e.g. `read_file` content) or a dict.
+    Tool dicts come in two shapes:
+
+    1. Plain tool output: ``{"row_count": ..., "rows": [...]}`` (from
+       ``run_snowflake_query``), ``{"bytes_written": ...}`` (from
+       ``write_file``).
+    2. Skill envelopes: ``{"data": {<kind>: [...]}, "truncated": bool,
+       "total_count": int|None}`` (from any catalog skill — see
+       ``_execute_skill``).
+
+    The summary picks an obvious field per shape, with ``"ok"`` as the
     fall-through. This is observer-only — the loop still serializes
     the full result into the tool_result block separately.
     """
     if isinstance(result, dict):
+        # Skill envelope: {"data": {...}, "truncated": ..., ...}
+        if "data" in result and "truncated" in result:
+            return _summarize_skill_envelope(result)
         if "row_count" in result:
             try:
                 return f"{int(result['row_count'])} rows"
@@ -457,6 +532,29 @@ def _summarize_tool_result(name: str, result: Any) -> str:
         return f"{_format_bytes(size)} read"
     if isinstance(result, list):
         return f"{len(result)} items"
+    return "ok"
+
+
+def _summarize_skill_envelope(envelope: dict[str, Any]) -> str:
+    """Render ``{"data": {"tables": [...]}, "truncated": True, "total_count": 250}``
+    as ``"200 of 250 tables (truncated)"`` (or ``"3 databases"`` when not
+    truncated, or ``"exists: true"`` for boolean payloads).
+    """
+    data = envelope.get("data")
+    truncated = bool(envelope.get("truncated"))
+    total = envelope.get("total_count")
+    if isinstance(data, dict):
+        # Catalog skills wrap their list payload under a single key
+        # (``tables`` / ``schemas`` / ``databases`` / ``columns``); the
+        # boolean ``table_exists`` skill uses ``exists`` instead.
+        for key, value in data.items():
+            if isinstance(value, list):
+                count = len(value)
+                if truncated and isinstance(total, int):
+                    return f"{count} of {total} {key} (truncated)"
+                return f"{count} {key}"
+            if isinstance(value, bool):
+                return f"{key}: {'true' if value else 'false'}"
     return "ok"
 
 

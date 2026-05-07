@@ -56,6 +56,12 @@ from carve.core.agents.loop import TokenUsage
 from carve.core.config import Config, ConfigError
 from carve.core.connectors.exceptions import SnowflakeError
 from carve.core.connectors.snowflake import SnowflakePool
+from carve.core.skills import (
+    CachedSkillExecutor,
+    SkillContext,
+    SkillRegistry,
+    load_builtin_skills,
+)
 from carve.core.state import Plan, Repository
 from carve.version import __version__ as CARVE_VERSION
 
@@ -207,13 +213,30 @@ def generate_plan(
             )
 
     capture = SubmitPlanCapture()
-    tools = _build_tools(config, project_dir, capture, active_target=active_target)
+    # Build one SnowflakePool per invocation; share it with both the
+    # run_snowflake_query tool and the SkillContext so they hit the same
+    # per-target connection cache (one connect per target, not two).
+    snowflake_pool = SnowflakePool(config)
+    tools = _build_tools(
+        config,
+        project_dir,
+        capture,
+        active_target=active_target,
+        snowflake_pool=snowflake_pool,
+    )
     system_prompt = _compose_plan_system_prompt(
         config=config,
         project_dir=project_dir,
         parent_plan_row=parent_plan_row,
         target_pipeline=target_pipeline,
         active_target=active_target,
+    )
+
+    skills_registry, skill_executor, skill_context = _build_skills(
+        config=config,
+        repository=repository,
+        active_target=active_target,
+        snowflake_pool=snowflake_pool,
     )
 
     loop = AgentLoop(
@@ -223,6 +246,9 @@ def generate_plan(
         model=model,
         observer=observer if observer is not None else NullObserver(),
         terminator_tool="submit_plan",
+        skills=skills_registry,
+        skill_executor=skill_executor,
+        skill_context=skill_context,
     )
     initial_user_message = _compose_initial_user_message(
         goal=goal,
@@ -453,18 +479,19 @@ def _build_tools(
     capture: SubmitPlanCapture,
     *,
     active_target: str,
+    snowflake_pool: SnowflakePool,
 ) -> list[Tool]:
     """Plan-agent toolset: read_file + run_snowflake_query + submit_plan.
 
     ``active_target`` selects which ``[snowflake.<target>]`` connection
-    the agent inspects. Defaults to ``config.project.default_target``
-    when the caller hasn't resolved a target yet.
+    the agent inspects. ``snowflake_pool`` is shared with the
+    ``SkillContext`` so the run_snowflake_query tool and the catalog
+    skills reuse the same per-target connection cache.
     """
     snowflake_runner: Any
     if active_target in config.connections.snowflake:
-        pool = SnowflakePool(config)
         try:
-            snowflake_runner = pool.get(active_target)
+            snowflake_runner = snowflake_pool.get(active_target)
         except SnowflakeError:
             logger.warning(
                 "Snowflake target %r is configured but unavailable; "
@@ -485,6 +512,33 @@ def _build_tools(
         make_run_snowflake_query_tool(snowflake_runner),
         make_submit_plan_tool(capture),
     ]
+
+
+def _build_skills(
+    *,
+    config: Config,
+    repository: Repository,
+    active_target: str,
+    snowflake_pool: SnowflakePool,
+) -> tuple[SkillRegistry, CachedSkillExecutor, SkillContext]:
+    """Wire the catalog skills into a registry + executor + context.
+
+    The plan flow has no `Run` row, so `run_id=None` is passed through;
+    `SkillContext.log` no-ops when run_id is unset. The skill registry
+    is the process-wide default populated by `load_builtin_skills()`.
+    The ``snowflake_pool`` is shared with the run_snowflake_query tool
+    so both connection paths reuse the same per-target driver.
+    """
+    registry = load_builtin_skills()
+    executor = CachedSkillExecutor(registry)
+    context = SkillContext(
+        config=config,
+        repo=repository,
+        run_id=None,
+        target=active_target,
+        snowflake_pool=snowflake_pool,
+    )
+    return registry, executor, context
 
 
 def _build_client(config: Config, client: Any | None) -> Any:

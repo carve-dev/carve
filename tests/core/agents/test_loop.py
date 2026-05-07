@@ -739,3 +739,49 @@ class TestObserver:
         payload = tool_results[0][1]
         assert payload["ok"] is False
         assert "Unknown tool" in payload["summary"]
+
+
+# ---------------------------------------------------------------------------
+# _summarize_tool_result — observer rendering for skill envelopes
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeSkillEnvelope:
+    """The skill envelope ``{"data": {<kind>: [...]}, "truncated": ...}``
+    used by catalog skills must produce a useful observer summary instead
+    of falling through to ``"ok"``.
+    """
+
+    def test_skill_array_summary(self) -> None:
+        from carve.core.agents.loop import _summarize_tool_result
+
+        envelope = {
+            "data": {"tables": [{"name": "x"}, {"name": "y"}]},
+            "truncated": False,
+            "total_count": 2,
+        }
+        assert _summarize_tool_result("list_tables", envelope) == "2 tables"
+
+    def test_skill_truncated_summary(self) -> None:
+        from carve.core.agents.loop import _summarize_tool_result
+
+        envelope = {
+            "data": {"tables": [{"name": f"t{i}"} for i in range(200)]},
+            "truncated": True,
+            "total_count": 1234,
+        }
+        assert _summarize_tool_result("list_tables", envelope) == (
+            "200 of 1234 tables (truncated)"
+        )
+
+    def test_skill_boolean_summary(self) -> None:
+        from carve.core.agents.loop import _summarize_tool_result
+
+        envelope = {"data": {"exists": True}, "truncated": False, "total_count": None}
+        assert _summarize_tool_result("table_exists", envelope) == "exists: true"
+
+    def test_skill_envelope_ok_fallthrough_for_unknown_shape(self) -> None:
+        from carve.core.agents.loop import _summarize_tool_result
+
+        envelope = {"data": {"weird": 123}, "truncated": False, "total_count": None}
+        assert _summarize_tool_result("weird", envelope) == "ok"
