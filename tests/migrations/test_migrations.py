@@ -583,9 +583,12 @@ def test_0004_round_trip(project_dir: Path) -> None:
     pipeline_cols_after_head = {c["name"] for c in inspector.get_columns("pipelines")}
 
     cfg = _alembic_config(engine)
+    # Walk back to revision 0003 — past 0005 (P1-07's `runs.target`) and
+    # 0004 (the build entity). Pinned to a named rev rather than ``"-2"``
+    # so future migrations don't change the relative offset.
     with engine.begin() as conn:
         cfg.attributes["connection"] = conn
-        alembic_command.downgrade(cfg, "-1")
+        alembic_command.downgrade(cfg, "0003_rename_apply_to_deploy")
 
     inspector = inspect(engine)
     tables_after_downgrade = set(inspector.get_table_names())
@@ -669,12 +672,152 @@ def test_0004_downgrade_repopulates_current_plan_id_from_latest_build(
         )
 
     cfg = _alembic_config(engine)
+    # Walk back past 0005 → 0004 → 0003 to drop `current_build_id` and
+    # restore `current_plan_id`. Pinned to a named revision so later
+    # migrations don't shift the offset.
     with engine.begin() as conn:
         cfg.attributes["connection"] = conn
-        alembic_command.downgrade(cfg, "-1")
+        alembic_command.downgrade(cfg, "0003_rename_apply_to_deploy")
 
     with engine.begin() as conn:
         plan_id = conn.execute(
             text("SELECT current_plan_id FROM pipelines WHERE name = 'ingest'")
         ).scalar_one()
         assert plan_id == "plan_b"
+
+
+# ---------------------------------------------------------------------------
+# 0005_runs_target
+# ---------------------------------------------------------------------------
+
+
+def test_0005_adds_runs_target_column(project_dir: Path) -> None:
+    """After head: `runs.target` exists as a nullable text column."""
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    run_cols = {c["name"]: c for c in inspector.get_columns("runs")}
+    assert "target" in run_cols
+    assert run_cols["target"]["nullable"] is True
+
+
+def test_0005_round_trip(project_dir: Path) -> None:
+    """upgrade → downgrade → upgrade across 0005 — schema is stable."""
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    run_cols_at_head = {c["name"] for c in inspector.get_columns("runs")}
+    assert "target" in run_cols_at_head
+
+    cfg = _alembic_config(engine)
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.downgrade(cfg, "0004_build_entity")
+
+    inspector = inspect(engine)
+    run_cols_after_downgrade = {c["name"] for c in inspector.get_columns("runs")}
+    assert "target" not in run_cols_after_downgrade
+
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    run_cols_after_re_upgrade = {c["name"] for c in inspector.get_columns("runs")}
+    assert run_cols_after_re_upgrade == run_cols_at_head
+
+
+def test_0005_backfills_runs_target_from_latest_build(project_dir: Path) -> None:
+    """Existing runs inherit their pipeline's most-recent build's target.
+
+    Seeds at revision 0004 (before `runs.target` exists), inserts a
+    pipeline + build + a run pointing at the pipeline, then upgrades to
+    head. The run's `target` column is populated from the latest
+    build's target; runs whose pipeline has no build keep NULL.
+    """
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    cfg = _alembic_config(engine)
+
+    # Bring DB up to 0004 (just before 0005). seed pipeline + build + runs.
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "0004_build_entity")
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO plans (id, goal, config_hash, carve_version, "
+                "task_graph_json, file_path, phase, created_at, expires_at) "
+                "VALUES "
+                "('plan_a', 'g', 'h', '0.0.1', '{}', '/tmp/p.json', 'built', "
+                ":now, :now)"
+            ),
+            {"now": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO pipelines (name, description, pipeline_dir, "
+                "current_build_id, created_at, updated_at) "
+                "VALUES ('ingest', '', 'targets/staging/el/ingest', "
+                "'build_a', :now, :now)"
+            ),
+            {"now": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO builds (id, pipeline_name, plan_id, target, "
+                "created_at, manifest_json) VALUES "
+                "('build_a', 'ingest', 'plan_a', 'staging', :now, '{}')"
+            ),
+            {"now": now},
+        )
+        # Run linked to the pipeline → should inherit `staging`.
+        conn.execute(
+            text(
+                "INSERT INTO runs (id, kind, target_id, pipeline_name, "
+                "owner_user_id, status, tokens_input, tokens_output, "
+                "cost_usd, created_at) VALUES "
+                "(:id, 'run', :tid, 'ingest', 1, 'success', 0, 0, 0.0, :now)"
+            ),
+            {"id": "run_with_pipe", "tid": "build_a", "now": now},
+        )
+        # Orphan run (no pipeline_name) → stays NULL.
+        conn.execute(
+            text(
+                "INSERT INTO runs (id, kind, target_id, "
+                "owner_user_id, status, tokens_input, tokens_output, "
+                "cost_usd, created_at) VALUES "
+                "(:id, 'plan', :tid, 1, 'success', 0, 0, 0.0, :now)"
+            ),
+            {"id": "run_no_pipe", "tid": "plan_a", "now": now},
+        )
+
+    # Apply 0005.
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    with engine.begin() as conn:
+        target_for_with_pipe = conn.execute(
+            text("SELECT target FROM runs WHERE id = 'run_with_pipe'")
+        ).scalar_one()
+        target_for_no_pipe = conn.execute(
+            text("SELECT target FROM runs WHERE id = 'run_no_pipe'")
+        ).scalar_one()
+        assert target_for_with_pipe == "staging"
+        assert target_for_no_pipe is None
+

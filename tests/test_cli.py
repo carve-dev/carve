@@ -24,7 +24,7 @@ EXPECTED_COMMANDS = [
     "plan",
     "build",
     "deploy",
-    "run",
+    "el",
     "runs",
     "logs",
     "pipelines",
@@ -44,6 +44,26 @@ def test_help_lists_all_eight_commands(runner: CliRunner) -> None:
     assert result.exit_code == 0, result.output
     for cmd in EXPECTED_COMMANDS:
         assert cmd in result.output, f"missing {cmd!r} in --help output:\n{result.output}"
+
+
+def test_help_hides_deprecated_run_alias(runner: CliRunner) -> None:
+    """`carve run` is hidden from the top-level --help under P1-07.
+
+    It still works (with a deprecation banner) when invoked explicitly
+    — `test_carve_run_deprecated_alias_warns_and_forwards` covers that
+    behavior. Here we just pin that the listing isn't polluted.
+    """
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0, result.output
+    # "run" appears as part of the "el run" line in `el --help` (not
+    # this view). Top-level should show `el` but not a bare `run`
+    # entry. Typer renders hidden commands by suppressing them from the
+    # help table.
+    lines = [line.strip() for line in result.output.splitlines()]
+    bare_run = [
+        line for line in lines if line.startswith("run ") or line == "run"
+    ]
+    assert bare_run == [], f"unexpected `run` in top-level help:\n{result.output}"
 
 
 def test_version_command_prints_package_version(runner: CliRunner) -> None:
@@ -84,7 +104,7 @@ def test_deploy_prints_m2_placeholder(runner: CliRunner) -> None:
     result = runner.invoke(app, ["deploy", "my_pipeline"])
     assert result.exit_code == 0, result.output
     assert "M2" in result.output
-    assert "carve run my_pipeline" in result.output
+    assert "carve el run my_pipeline" in result.output
 
 
 @pytest.mark.parametrize(
@@ -92,7 +112,7 @@ def test_deploy_prints_m2_placeholder(runner: CliRunner) -> None:
     [
         ("plan", ["a goal"]),
         ("build", ["plan-id-123"]),
-        ("run", ["my_pipeline"]),
+        ("el", ["run", "my_pipeline"]),
         ("runs", []),
         ("logs", ["run-id-123"]),
         ("pipelines", []),

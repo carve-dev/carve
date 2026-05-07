@@ -70,12 +70,17 @@ class Repository:
         target_id: str,
         *,
         pipeline_name: str | None = None,
+        target: str | None = None,
     ) -> str:
         """Insert a new `runs` row in the default `queued` state.
 
         Returns the generated run id (a UUID4 hex string). The id is
         chosen client-side so the caller can stream logs against it
         before the row is committed.
+
+        ``target`` is the resolved active-target name (``"dev"``,
+        ``"prod"``, etc.). It is nullable on the column so legacy runs
+        that pre-date the Build entity stay representable.
         """
         run_id = uuid.uuid4().hex
         with self._session_factory() as session:
@@ -85,6 +90,7 @@ class Repository:
                     kind=kind,
                     target_id=target_id,
                     pipeline_name=pipeline_name,
+                    target=target,
                 )
             )
             session.commit()

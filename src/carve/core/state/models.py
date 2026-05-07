@@ -48,6 +48,7 @@ class Run(Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     kind: Mapped[str]
     target_id: Mapped[str]
+    target: Mapped[str | None] = mapped_column(default=None)
     pipeline_name: Mapped[str | None] = mapped_column(
         ForeignKey("pipelines.name"),
         default=None,

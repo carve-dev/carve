@@ -1,8 +1,8 @@
 """`carve deploy` — M2 placeholder.
 
 The verb is reserved for "promote this pipeline to prod via PR" (M2).
-For dev execution use `carve run`. The placeholder exits 0 so scripts
-that pre-emptively wire the call don't break.
+For dev execution use `carve el run`. The placeholder exits 0 so
+scripts that pre-emptively wire the call don't break.
 """
 
 from __future__ import annotations
@@ -21,5 +21,5 @@ def command(
         f"carve deploy will create a prod-deploy PR for pipeline "
         f"{pipeline!r} (arrives in M2)."
     )
-    console.print(f"For dev execution, use:  carve run {pipeline}")
+    console.print(f"For dev execution, use:  carve el run {pipeline}")
     raise typer.Exit(code=0)

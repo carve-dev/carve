@@ -123,7 +123,9 @@ Filter: `--target X` shows another target's artifacts.
 3. Validate `targets/<active>/el/<name>/main.py` exists; legacy fallback as noted above.
 4. Read `requirements.txt`.
 5. Build a `PythonStepConfig` (script path, requirements, timeout from `carve/runner.toml`).
-6. Create a `Run` row: `kind="run"`, `pipeline_name=<name>`, `target=<active>` (this column lands here per P1-02's lifecycle work — `runs.target` is added in migration `0004_build_entity` because Build needed it; runs use it for filtering too). `target_id` carries the most recent successful Build's id when one exists, else NULL.
+> **Updated during implementation (2026-05-07):** `runs.target` was *not* in fact added by `0004_build_entity` — that migration only added it to `builds`. P1-07 absorbed migration `0005_runs_target` to add the column to `runs` and backfill from the latest Build per pipeline. `Run.target_id` is also non-null in the schema, so we fall back to `pipeline_name` (preserving M1.1-06 semantics) when no Build exists, rather than writing NULL.
+
+6. Create a `Run` row: `kind="run"`, `pipeline_name=<name>`, `target=<active>`. `target_id` carries the most recent successful Build's id when one exists; when no Build exists yet, `target_id` falls back to `pipeline_name` (the M1.1-06 semantic — the column is non-null).
 7. Build a `LocalVenvRunner`; dispatch with the inherited environment + the `CARVE_*` vars above.
 8. Live-tail logs via the M1.1-04 progress observer.
 9. On terminal status, update `Pipeline.last_run_*` denorms; print final status; map exit code.
@@ -146,7 +148,9 @@ The watcher is shallow (single artifact directory only) — it doesn't watch oth
 
 - **Project-root containment** check from M1.1-06 carries forward: the resolved `pipeline_dir` must be under the project root. Defense-in-depth against pathological target names like `../../../etc`.
 - **Active target must be defined** in `carve/connections.toml` (per P1-01's validation). If missing, exit 2 before any subprocess starts.
-- **Re-running succeeds** — no replay guard. M1.1-07 already removed this; the rule is preserved here.
+> **Updated during implementation (2026-05-07):** the cross-reference was wrong — M1.1-07 doesn't exist. The replay guard was removed in **M1.1-06**.
+
+- **Re-running succeeds** — no replay guard. M1.1-06 already removed this; the rule is preserved here.
 
 ## Implementation
 
@@ -162,14 +166,18 @@ New files:
 
 Modified files:
 
-- `src/carve/cli/main.py` — register `el` subgroup; register hidden `carve run` deprecated alias.
-- `src/carve/cli/commands/run.py` — kept temporarily; calls into the new `el.run` after printing the deprecation banner. Removed in v0.2.
+> **Updated during implementation (2026-05-07):** the deprecated `carve run` alias was placed inline in `cli/main.py` (matching the snippet in the "CLI command structure" section above) rather than kept as a separate `cli/commands/run.py`. The legacy `cli/commands/run.py` was deleted, not retained. Effect on users is identical: `carve run` still prints the banner, forwards, and is removed in v0.2.
+
+- `src/carve/cli/main.py` — register `el` subgroup; register hidden `carve run` deprecated alias inline.
+- `src/carve/cli/commands/run.py` — **deleted**. Its responsibilities moved into `cli/commands/el/run.py`; the deprecated alias lives in `cli/main.py` as shown above.
 - `src/carve/cli/orchestrator/runner.py` — path resolution updated (`pipelines/<name>/` → `targets/<active>/el/<name>/`); legacy-fallback shim added; `CARVE_ACTIVE_TARGET` (uppercased) injection added.
 - `tests/cli/orchestrator/test_runner.py` — assertions moved to `targets/<active>/el/<name>/`; legacy-path fallback test added.
 - `tests/test_cli.py` — `EXPECTED_COMMANDS` gains `el` group; `run` flagged hidden.
 - `pyproject.toml` — add `watchdog>=4.0` runtime dep for `--watch` mode.
 
-No DB migration. The `runs.target` column was added in P1-02's migration `0004_build_entity.py`.
+> **Updated during implementation (2026-05-07):** the spec text below was incorrect — `runs.target` was never landed by `0004_build_entity` (only `builds.target` was). P1-07 added migration `0005_runs_target.py` to add the nullable `runs.target` column and backfill it from the most-recent Build per `pipeline_name`. `kind="plan"` runs (no pipeline) stay NULL.
+
+DB migration: `migrations/versions/0005_runs_target.py` adds `runs.target` (TEXT NULL) and backfills from each pipeline's most-recent Build.
 
 ## Tests
 
@@ -207,9 +215,12 @@ No DB migration. The `runs.target` column was added in P1-02's migration `0004_b
 
 (Summary of File-level changes section.)
 
-New: typer `el` subgroup, `run` and `list` subcommands, 2 test files.
-Modified: `cli/main.py`, `cli/commands/run.py` (deprecated alias), `cli/orchestrator/runner.py` (path resolution + env injection), existing runner tests.
-No DB migrations.
+> **Updated during implementation (2026-05-07):** see the callouts under "File-level changes" — the deprecated alias lives inline in `cli/main.py` (the legacy `cli/commands/run.py` was deleted), and migration `0005_runs_target.py` was added to land `runs.target`.
+
+New: typer `el` subgroup, `run` and `list` subcommands, 2 test files, migration `0005_runs_target.py`.
+Modified: `cli/main.py` (registers `el` subgroup + inline deprecated `run` alias), `cli/orchestrator/runner.py` (path resolution + env injection + Pipeline-row upsert when running an artifact whose pipeline row doesn't exist yet, satisfying the `runs.pipeline_name` FK), existing runner tests.
+Deleted: `cli/commands/run.py`.
+DB migration: `0005_runs_target.py`.
 
 ## Out of scope
 

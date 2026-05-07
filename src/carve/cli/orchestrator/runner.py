@@ -1,17 +1,33 @@
-"""`carve run` orchestration — pipeline-name-keyed execution.
+"""`carve el run` orchestration — target-aware artifact execution.
 
-Reads a pipeline by name, builds a `PythonStep` from the live files
-under ``pipelines/<name>/``, runs it through `LocalVenvRunner`, and
-tails the streaming logs to stdout. Returns a process-style exit code
-so the typer command module can hand it to `raise typer.Exit(code=...)`.
+Reads an EL artifact by name from ``targets/<active>/el/<name>/``,
+builds a `PythonStep` from the live files, runs it through
+`LocalVenvRunner`, and tails the streaming logs to stdout. Returns a
+process-style exit code so the typer command module can hand it to
+`raise typer.Exit(code=...)`.
+
+P1-07 retargeted path resolution: primary lookup is
+``targets/<active>/el/<name>/main.py``. The legacy
+``pipelines/<name>/main.py`` path from M1.1-06 is checked as a
+transitional fallback with a one-line deprecation warning, then removed
+in v0.2.
 
 Two entry points:
 
 * `run_pipeline_by_name(name, ...)` — primary API. Looks up the pipeline
   row and runs whatever's currently on disk. Re-runnable as often as
-  needed; M1.1-06 removed the replay guard from this path.
+  needed; M1.1-06 removed the replay guard and P1-07 carries it forward.
 * `run_pipeline_by_plan(plan_id, ...)` — debug/replay. Resolves to the
   pipeline the plan built and runs that.
+
+The runner injects three ``CARVE_*`` env vars into the user subprocess
+(via ``PythonStepConfig.env``):
+
+* ``CARVE_ACTIVE_TARGET`` — uppercased, matches the ``<TARGET>_*``
+  env-var prefix convention so the user script can do
+  ``os.environ[f"{target}_SNOWFLAKE_USER"]``.
+* ``CARVE_PIPELINE_NAME`` — the artifact name.
+* ``CARVE_RUN_ID`` — the ``Run.id`` for this execution.
 
 Exit code mapping:
 
@@ -55,27 +71,104 @@ def run_pipeline_by_name(
     repository: Repository,
     console: Console | None = None,
     runner: LocalVenvRunner | None = None,
+    target: str | None = None,
 ) -> int:
-    """Run the pipeline named ``pipeline_name`` and return an exit code."""
+    """Run the EL artifact named ``pipeline_name`` and return an exit code.
+
+    ``target`` overrides the resolved active target (precedence:
+    explicit ``target`` arg → ``CARVE_TARGET`` env → ``carve.toml``
+    default_target → ``"dev"``). ``run_pipeline_by_name`` does *not*
+    require a `Pipeline` row to exist — the on-disk artifact under
+    ``targets/<active>/el/<name>/`` is the source of truth. A missing
+    artifact maps to exit 2.
+    """
+    from carve.core.targets.resolution import (
+        TargetResolutionError,
+        resolve_active_target,
+    )
+
     console = console or Console()
     project_dir = project_dir.resolve()
 
-    pipeline_row = repository.get_pipeline(pipeline_name)
-    if pipeline_row is None:
+    try:
+        active_target = resolve_active_target(target, config)
+    except TargetResolutionError as exc:
+        console.print(f"[red]✗[/red] {_escape(str(exc))}")
+        return 2
+
+    # Validate the target is actually defined in connections.toml so we
+    # don't spawn a venv against a target whose creds aren't reachable.
+    available = list(config.connections.snowflake.keys())
+    if available and active_target not in available:
+        listed = ", ".join(sorted(available))
         console.print(
-            f"[red]✗[/red] Pipeline not found: {_escape(pipeline_name)}\n"
-            "  Use `carve pipelines` to see what's available, or "
-            "`carve plan \"<goal>\"` then `carve build <plan_id>` to create one."
+            f'[red]✗[/red] target "{_escape(active_target)}" not defined in '
+            f"carve/connections.toml.\n"
+            f"  Available targets: {_escape(listed)}\n"
+            f"  Create one with: carve target create {_escape(active_target)}"
         )
         return 2
 
-    current_build = repository.get_pipeline_current_build(pipeline_row.name)
-    plan_id = current_build.plan_id if current_build is not None else None
+    # Locate the artifact directory. Defense-in-depth: both candidate
+    # paths are resolved and verified to live under ``project_dir`` so
+    # a pathological pipeline name (e.g. ``..`` or absolute path) can't
+    # escape the project root.
+    primary_dir = (project_dir / "targets" / active_target / "el" / pipeline_name).resolve()
+    legacy_dir = (project_dir / "pipelines" / pipeline_name).resolve()
+    project_root = project_dir.resolve()
+    for candidate in (primary_dir, legacy_dir):
+        try:
+            candidate.relative_to(project_root)
+        except ValueError:
+            console.print(
+                f"[red]✗[/red] Pipeline directory escapes project root: "
+                f"{_escape(pipeline_name)}"
+            )
+            return 1
+
+    pipeline_dir_abs: Path | None = None
+    if (primary_dir / "main.py").is_file():
+        pipeline_dir_abs = primary_dir
+    elif (legacy_dir / "main.py").is_file():
+        console.print(
+            f"[yellow]![/yellow] Found legacy 'pipelines/{_escape(pipeline_name)}/main.py' "
+            f"at the project root. Migrate to "
+            f"'targets/{_escape(active_target)}/el/{_escape(pipeline_name)}/' "
+            f"(see CHANGELOG v0.1.0). Falling back for now."
+        )
+        logger.warning(
+            "legacy 'pipelines/%s/main.py' fallback used; migrate to "
+            "'targets/%s/el/%s/' (removed in v0.2).",
+            pipeline_name,
+            active_target,
+            pipeline_name,
+        )
+        pipeline_dir_abs = legacy_dir
+
+    if pipeline_dir_abs is None:
+        console.print(
+            f"[red]✗[/red] No EL artifact named "
+            f"'{_escape(pipeline_name)}' in target "
+            f"'{_escape(active_target)}'. "
+            f"Run `carve el list --target {_escape(active_target)}` to see "
+            f"what's available, or `carve build <plan_id>` to create it."
+        )
+        return 2
+
+    # Most-recent successful Build for (pipeline, target). Used for
+    # `target_id`. May be None for legacy/hand-built artifacts; we
+    # fall back to the pipeline name in that case.
+    latest_build = repository.latest_build_for(pipeline_name, active_target)
+    # `target_id` semantics: the build id when one exists (so historical
+    # filters can join run→build), else NULL-by-convention via the
+    # pipeline name (legacy / hand-built artifacts).
+    target_id = latest_build.id if latest_build is not None else pipeline_name
 
     return _run_pipeline_dir(
-        pipeline_name=pipeline_row.name,
-        pipeline_dir_rel=pipeline_row.pipeline_dir,
-        plan_id=plan_id,
+        pipeline_name=pipeline_name,
+        pipeline_dir_abs=pipeline_dir_abs,
+        target_id=target_id,
+        active_target=active_target,
         config=config,
         project_dir=project_dir,
         repository=repository,
@@ -129,10 +222,8 @@ def run_pipeline_by_plan(
         )
         return 2
 
-    return _run_pipeline_dir(
+    return run_pipeline_by_name(
         pipeline_name=pipeline_row.name,
-        pipeline_dir_rel=pipeline_row.pipeline_dir,
-        plan_id=plan_row.id,
         config=config,
         project_dir=project_dir,
         repository=repository,
@@ -149,28 +240,31 @@ def run_pipeline_by_plan(
 def _run_pipeline_dir(
     *,
     pipeline_name: str,
-    pipeline_dir_rel: str,
-    plan_id: str | None,
+    pipeline_dir_abs: Path,
+    target_id: str,
+    active_target: str,
     config: Config,
     project_dir: Path,
     repository: Repository,
     console: Console,
     runner: LocalVenvRunner | None,
 ) -> int:
-    """Execute ``<project_dir>/<pipeline_dir_rel>/main.py`` and tail logs."""
-    pipeline_dir_abs = (project_dir / pipeline_dir_rel).resolve()
-    # Defense-in-depth: refuse to run anything that resolves outside the
-    # project root. The migration backfill or a hand-edited state DB
-    # could in theory land an absolute path or a `..` traversal in
-    # `pipeline_dir`; mirroring `_resolve_under_root` from m1_tools.py
-    # keeps the runner consistent with the agent's path guard.
+    """Execute ``<pipeline_dir_abs>/main.py`` and tail logs.
+
+    ``pipeline_dir_abs`` must already be an absolute, resolved path
+    under ``project_dir``; the caller (`run_pipeline_by_name`) has
+    already validated containment.
+    """
     project_root = project_dir.resolve()
+    # Defense-in-depth: refuse to run anything that resolves outside the
+    # project root. Caller has already validated this for the standard
+    # path-resolution path; this guard backstops hand-built call sites.
     try:
         pipeline_dir_abs.relative_to(project_root)
     except ValueError:
         console.print(
             f"[red]✗[/red] Pipeline directory escapes project root: "
-            f"{_escape(pipeline_dir_rel)}"
+            f"{_escape(str(pipeline_dir_abs))}"
         )
         return 1
     main_py = pipeline_dir_abs / "main.py"
@@ -187,33 +281,55 @@ def _run_pipeline_dir(
 
     script_rel = main_py.relative_to(project_dir).as_posix()
 
+    # Ensure a `Pipeline` row exists for FK integrity and so `carve
+    # pipelines` / `carve runs --pipeline <name>` can index this run.
+    # If the artifact was hand-built (no `carve build` has run for it),
+    # this is the first time the row appears in the state store.
+    if repository.get_pipeline(pipeline_name) is None:
+        repository.create_or_update_pipeline(
+            name=pipeline_name,
+            description="",
+            pipeline_dir=str(pipeline_dir_abs.relative_to(project_dir)),
+        )
+
+    # Reserve the run id ahead of `PythonStepConfig` construction so we
+    # can stuff it into the env. The `Run` row is created right below.
+    run_id = repository.create_run(
+        kind="run",
+        target_id=target_id,
+        pipeline_name=pipeline_name,
+        target=active_target,
+    )
+
     try:
         step_config = PythonStepConfig(
             id=pipeline_name,
             script=script_rel,
             requirements=requirements,
             timeout_seconds=config.runner.default_timeout_seconds,
-            env={},
+            env={
+                # The agent-emitted user script reads
+                # ``os.environ['CARVE_ACTIVE_TARGET']`` and uses it as
+                # the prefix to look up its target-scoped credentials,
+                # e.g. ``os.environ[f"{target}_SNOWFLAKE_USER"]``.
+                "CARVE_ACTIVE_TARGET": active_target.upper(),
+                "CARVE_PIPELINE_NAME": pipeline_name,
+                "CARVE_RUN_ID": run_id,
+            },
         )
     except ValueError as exc:
         console.print(f"[red]✗[/red] Pipeline config is malformed: {exc}")
+        repository.update_run_status(run_id, "failed", error=str(exc))
         return 1
 
     step = PythonStep(step_config)
 
     runner = runner or LocalVenvRunner(config.runner, repository)
 
-    target_id = plan_id or pipeline_name
-    run_id = repository.create_run(
-        kind="run",
-        target_id=target_id,
-        pipeline_name=pipeline_name,
-    )
-
     context = RunContext(
         run_id=run_id,
         project_dir=project_dir,
-        target=config.project.default_target,
+        target=active_target,
         config=config,
     )
 

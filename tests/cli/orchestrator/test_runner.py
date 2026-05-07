@@ -1,13 +1,17 @@
-"""Unit tests for `cli.orchestrator.runner` (M1.1-06).
+"""Unit tests for `cli.orchestrator.runner` (P1-07).
 
-Each test plants a real script under ``pipelines/<name>/main.py`` and
-the corresponding `Pipeline` row, then runs the script through
+Each test plants a real script under ``targets/dev/el/<name>/main.py``
+and the corresponding `Pipeline` row, then runs the script through
 `LocalVenvRunner`. Requirements lists are empty so no pip work happens
 during the test — only venv creation, which is amortised through a
 module-scoped cache fixture.
 
 Replay-guard tests from the M1 applier are gone; the new contract is:
 re-runs are first-class.
+
+P1-07 retargeted path resolution to ``targets/<active>/el/<name>/``;
+``pipelines/<name>/`` is checked as a transitional fallback. The
+fallback path is exercised by `tests/cli/commands/el/test_run.py`.
 """
 
 from __future__ import annotations
@@ -65,7 +69,7 @@ def _config(*, venv_cache_dir: Path, state_db: str) -> Config:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
 
@@ -88,9 +92,10 @@ def _plant_pipeline(
     pipeline_name: str,
     script_body: str,
     plan_id: str | None = None,
+    target: str = "dev",
 ) -> str:
-    """Write `pipelines/<name>/main.py` plus the corresponding rows."""
-    pipeline_dir = project_dir / "pipelines" / pipeline_name
+    """Write `targets/<target>/el/<name>/main.py` + the corresponding rows."""
+    pipeline_dir = project_dir / "targets" / target / "el" / pipeline_name
     pipeline_dir.mkdir(parents=True, exist_ok=True)
     (pipeline_dir / "main.py").write_text(script_body)
 
@@ -110,14 +115,14 @@ def _plant_pipeline(
     repository.create_or_update_pipeline(
         name=pipeline_name,
         description="",
-        pipeline_dir=f"pipelines/{pipeline_name}",
+        pipeline_dir=f"targets/{target}/el/{pipeline_name}",
     )
     if plan_id is not None:
         # Pin a Build so lookups via current_build_id work.
         build = repository.create_build(
             pipeline_name=pipeline_name,
             plan_id=plan_id,
-            target="dev",
+            target=target,
         )
         repository.set_pipeline_current_build(pipeline_name, build.id)
     return pipeline_name
@@ -178,7 +183,7 @@ def test_run_by_name_unknown_pipeline_exits_2(
         console=console,
     )
     assert exit_code == 2
-    assert "not found" in console.export_text().lower()
+    assert "no el artifact" in console.export_text().lower()
 
 
 def test_run_by_name_failed_subprocess_returns_1(
@@ -343,10 +348,13 @@ def test_run_by_plan_drafted_plan_exits_2(
     assert "has not been built" in console.export_text()
 
 
-def test_run_by_name_missing_main_py_exits_1(
+def test_run_by_name_missing_main_py_exits_2(
     project_dir: Path, repository: Repository, venv_cache_dir: Path
 ) -> None:
-    """Pipeline row exists but the on-disk main.py is gone."""
+    """Pipeline row exists but neither targets/<active>/el/<name> nor
+    pipelines/<name> has main.py. P1-07: this is exit 2 (artifact not
+    found), with a hint to `carve el list`.
+    """
     config = _config(
         venv_cache_dir=venv_cache_dir,
         state_db=f"sqlite:///{project_dir}/.carve/state.db",
@@ -354,7 +362,7 @@ def test_run_by_name_missing_main_py_exits_1(
     repository.create_or_update_pipeline(
         name="orphan",
         description="",
-        pipeline_dir="pipelines/orphan",
+        pipeline_dir="targets/dev/el/orphan",
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -364,39 +372,8 @@ def test_run_by_name_missing_main_py_exits_1(
         repository=repository,
         console=console,
     )
-    assert exit_code == 1
-    assert "main.py" in console.export_text()
-
-
-def test_run_by_name_pipeline_dir_escapes_project_root_exits_1(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
-) -> None:
-    """A Pipeline row with `pipeline_dir="../escape"` is refused with exit 1.
-
-    Defense-in-depth: even if a malformed pipeline_dir somehow lands in
-    the state store (legacy migration backfill, hand-edited DB) the
-    runner refuses to execute anything that resolves outside
-    ``project_dir``.
-    """
-    config = _config(
-        venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
-    )
-    repository.create_or_update_pipeline(
-        name="escapee",
-        description="",
-        pipeline_dir="../escape",
-    )
-    console = Console(record=True, width=120)
-    exit_code = run_pipeline_by_name(
-        pipeline_name="escapee",
-        config=config,
-        project_dir=project_dir,
-        repository=repository,
-        console=console,
-    )
-    assert exit_code == 1
-    assert "escapes project root" in console.export_text()
+    assert exit_code == 2
+    assert "No EL artifact" in console.export_text()
 
 
 def test_runner_module_does_not_export_apply_plan() -> None:
