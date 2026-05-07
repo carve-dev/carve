@@ -62,7 +62,7 @@ The whole flow is one command. No PR machinery, no branch management, no provide
 2. Read the artifact's most recent successful Build's manifest_json (P1-02) — which destinations the build expects.
 3. For each destination table: confirm it exists with the expected columns. Surface column-by-column drift if any.
 4. Confirm the runtime role has `SELECT, INSERT, UPDATE, DELETE` privileges on each destination.
-5. (Optional, opt-in via `--smoke-test`.) Run a `SELECT 1 FROM <destination> LIMIT 1` against each destination to confirm queryability without consuming meaningful warehouse credits.
+5. Run a `SELECT 1 FROM <destination> LIMIT 1` against each destination to confirm queryability. Always-on by default; opt out with `--no-smoke-test`. Cheap (one row, one warehouse-second per destination) but adds round-trip latency on slow networks — opt out only if you need to.
 
 Returns 0 on all checks pass; non-zero with diagnosis on any failure. Verify is also called internally by `carve el deploy` (step 7), but exposing it as a standalone command is useful for:
 
@@ -227,7 +227,7 @@ No DB migration. No new `Run` columns; `Run.kind="deploy"` already exists; `Run.
 - `test_verify_passes_on_correct_state` — destination matches manifest → exit 0.
 - `test_verify_detects_column_drift` — destination has extra/missing column → exit non-zero with diff.
 - `test_verify_runtime_role_grants_check` — runtime role missing INSERT → exit non-zero.
-- `test_verify_smoke_test_flag` — `--smoke-test` runs `SELECT 1 LIMIT 1` against each destination.
+- `test_verify_no_smoke_test_flag` — `--no-smoke-test` skips the `SELECT 1 LIMIT 1` checks; default behavior runs them.
 - `test_carve_deploy_legacy_alias_warns_and_forwards` — `carve deploy <name> --from X --to Y` prints deprecation banner and runs.
 
 ## Acceptance criteria

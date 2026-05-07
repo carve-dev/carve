@@ -67,10 +67,9 @@ This is the central reason the centralized `.env` model works: the same `main.py
 
 The `carve el` typer subgroup houses Pillar 1's operational verbs:
 
-- `carve el run <name> [--target X] [--plan <plan_id>]` — this spec
+- `carve el run <name> [--target X] [--watch]` — this spec
 - `carve el list [--target X]` — this spec
 - `carve el deploy <name> --from X --to Y [...]` — P1-08
-- `carve el provision <name> --target X` — P1-08
 - `carve el verify <name> --target X` — P1-08
 
 `carve run <name>` (M1.1-06's top-level command) becomes a deprecated alias defined in `src/carve/cli/main.py`:
@@ -80,11 +79,15 @@ The `carve el` typer subgroup houses Pillar 1's operational verbs:
 def deprecated_run_alias(
     name: str = typer.Argument(...),
     target: str | None = typer.Option(None, "--target"),
-    plan: str | None = typer.Option(None, "--plan"),
+    watch: bool = typer.Option(False, "--watch"),
 ) -> None:
     rprint("[yellow]`carve run` is deprecated; use `carve el run` instead.[/yellow]")
     rprint("[yellow]This alias will be removed in v0.2.[/yellow]")
-    el_run.command(name, target, plan)  # forward to the subcommand
+    el_run.command(name, target=target, watch=watch)  # forward to the subcommand
+
+# If a user passes the dropped --plan flag to the deprecated alias, typer's
+# unknown-option handling produces a clear "no such option" error. We
+# don't silently forward it — the M1.1-06 flag is gone.
 ```
 
 The alias prints a deprecation banner, forwards to `carve el run`, exits with that command's exit code. `--help` lists `el` prominently and shows `run` only when the user explicitly runs `carve run --help` (typer's `hidden=True`).
@@ -151,7 +154,7 @@ The watcher is shallow (single artifact directory only) — it doesn't watch oth
 
 New files:
 
-- `src/carve/cli/commands/el/__init__.py` — typer subgroup wiring `run`, `list` (and later `deploy`, `provision`, `verify` from P1-08).
+- `src/carve/cli/commands/el/__init__.py` — typer subgroup wiring `run`, `list` (and later `deploy`, `verify` from P1-08).
 - `src/carve/cli/commands/el/run.py` — refactor of M1.1-06's `cli/commands/run.py`, with path resolution + target awareness + legacy fallback.
 - `src/carve/cli/commands/el/list.py` — the listing command.
 - `tests/cli/commands/el/test_run.py`

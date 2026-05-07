@@ -277,7 +277,7 @@ Safety rails:
 Explicitly **not in scope:**
 
 - Dropping anything in the target's Snowflake account. The user removes Snowflake state separately (or leaves it; the deletion is purely local).
-- Cleaning up open PRs that referenced the deleted target. They'll fail their next `provision` / `verify` step; the user closes them manually.
+- Cleaning up open PRs that referenced the deleted target. They'll fail their next `deploy` / `verify` step; the user closes them manually.
 
 Pipeline lifecycle (disable/archive/restore) is a Pillar 4 / M3 concern; `delete` is the only artifact-removal verb Pillar 1 ships.
 

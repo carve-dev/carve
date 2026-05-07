@@ -25,7 +25,7 @@ This is `v0.1.0` on GitHub — proves Pillar 1 in isolation. A user adopting onl
 - **Extract-load agent** as the AI specialist that authors EL scripts. Universal data-engineering skill + Snowflake destination skill, loaded on demand.
 - **Snowflake DDL generation** for EL destinations — per-EL `<target>/snowflake/<el-name>.sql` with the CREATE TABLE / GRANT statements the script needs.
 - **Catalog skills** for the EL agent to inspect target schemas at plan time.
-- **EL deploy** — `carve el deploy <name> --from X --to Y` runs local pre-flight + opens a PR carrying the artifact + DDL + a deployment checklist. Composable post-merge primitives: `carve el provision`, `carve el migrate`, `carve el verify`. One example GitHub Actions workflow ships in docs; users adopt as they wish.
+- **EL deploy** — `carve el deploy <name> --from X --to Y` is one deterministic command: copies files, applies DDL via the deploy role, smoke-verifies, records a deploy run. The user wraps it in whatever CI/CD they want (GHA, GitLab, Airflow, manual) — Carve doesn't open PRs or generate workflow files. `carve el verify` is a standalone read-only sanity check.
 - **Recovery agent** for `carve el run` failures and Phase-1 deploy failures (auto-fix loop bounded by attempts + cost).
 - **CLI subcommand structure** (`carve el ...`, `carve target ...`).
 
@@ -67,7 +67,7 @@ Every shipped primitive is preserved as-is. Pillar 1 is **incremental**, not a r
 
 - The target system itself (`targets/<name>/` layout + `carve target` subcommand family) — synthesized during this session's design discussion
 - The `Build` entity as a separate row from Plan — first appears in accepted M2-01; lands here in Pillar 1
-- The composable post-merge deploy primitives (`carve el provision`, `carve el verify`) — replacement for the parked M2-14 generated-workflow approach
+- The single-command deploy (`carve el deploy --from X --to Y` does file copy + DDL apply + smoke verify in one shot) — replacement for the parked M2-14 generated-workflow approach
 
 ## Spec list
 

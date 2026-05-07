@@ -36,7 +36,7 @@ This is Pillar 1's **only** specialist. M1.1-06's `m1_build_agent` (which wrote 
 
 **DDL emission (per P1-06):**
 
-- Generates a companion `targets/<active>/snowflake/<artifact_name>.sql` with `CREATE SCHEMA IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, and the runtime-role `GRANT` statements the script needs at run time. Idempotent by construction; consumed at deploy time by P1-08's `carve el provision`.
+- Generates a companion `targets/<active>/snowflake/<artifact_name>.sql` with `CREATE SCHEMA IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, and the runtime-role `GRANT` statements the script needs at run time. Idempotent by construction; applied at deploy time by `carve el deploy`'s DDL-apply phase (P1-08).
 
 **Cross-cutting:**
 
@@ -134,7 +134,7 @@ The agent does **not** have:
 - A tool to execute the script (only `carve el run` / the runner does).
 - A tool to run `pip install` (the runner manages venvs).
 - A tool to write outside `targets/<active_target>/`.
-- A tool to execute DDL against the target — provisioning is `carve el provision`'s job (P1-08), not the agent's.
+- A tool to execute DDL against the target — DDL application is `carve el deploy`'s job (P1-08), not the build-time agent's.
 
 ## Skills
 
@@ -163,7 +163,7 @@ Skills are markdown files loaded into the conversation via `lookup_skill(name)`.
 - **`MERGE` upsert pattern.** Canonical `USING (SELECT ... FROM VALUES ...)` form; explicit column lists.
 - **Role / warehouse propagation.** The connection context's role and warehouse must reach the connection call; don't accept the connector's default.
 - **Snowflake-specific types.** `VARIANT` for JSON-ish, `NUMBER(p,s)` scale handling, `TIMESTAMP_NTZ` vs `TIMESTAMP_TZ`, `DATE` vs `TIMESTAMP` for daily watermarks.
-- **DDL emission patterns** (Pillar 1 specific, per P1-06). `CREATE TABLE IF NOT EXISTS` with the column list from the task; `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ... TO ROLE <runtime_role>`. Idempotent for safe re-application by `carve el provision`.
+- **DDL emission patterns** (Pillar 1 specific, per P1-06). `CREATE TABLE IF NOT EXISTS` with the column list from the task; `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ... TO ROLE <runtime_role>`. Idempotent for safe re-application by `carve el deploy`'s DDL-apply phase.
 
 ### Skill loading model
 
@@ -209,7 +209,7 @@ When Pillar 2 lands, this `assert` is replaced with a `dispatch_to_specialist(ta
 - The extract-load agent produces working `targets/<active>/el/<name>/main.py` plus `requirements.txt` plus `targets/<active>/snowflake/<name>.sql` for at least these source patterns: HTTP-paginated REST, Socrata via `sodapy`, S3 file read, local CSV file read.
 - Generated scripts pass the runner's structured-log format expectations (M1.1-04 observer parses progress lines correctly).
 - Re-running a generated pipeline is idempotent under each documented `transformation.strategy` (`merge_upsert`, `truncate_load`, `append_only`, `watermark_incremental`).
-- Generated DDL files are idempotent (`CREATE TABLE IF NOT EXISTS`, `GRANT …`); re-running `carve el provision` against an unchanged target is a no-op.
+- Generated DDL files are idempotent (`CREATE TABLE IF NOT EXISTS`, `GRANT …`); re-running `carve el deploy` against an unchanged source is a no-op for the DDL-apply phase.
 - Type coercion for JSON-ish columns works without manual intervention — the Iowa-liquor `dict`-binding regression is covered by a fixture test.
 - Skills are loaded on demand. Recorded LLM transcripts on simple tasks show no skill loaded; transcripts on Snowflake-MERGE-with-VARIANT tasks show both skills loaded.
 - The agent rejects out-of-scope tasks via `submit_step(error=True, summary=...)`. A test fixture asserts this for a "transform stg_orders" goal mis-routed to extract-load.
