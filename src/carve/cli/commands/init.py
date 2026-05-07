@@ -10,6 +10,7 @@ env-example-block / per-target artifact-dir scaffolding to
 for the parts they share.
 """
 
+import json
 from pathlib import Path
 
 import typer
@@ -32,15 +33,33 @@ from carve.core.targets.registry import (
 
 console = Console()
 
-CARVE_TOML_CONTENT = """\
+_CARVE_TOML_TEMPLATE = """\
 [project]
-name = "my-carve-project"
+name = {name}
 version = "0.0.1"
 default_target = "dev"
 
 [paths]
 config_dir = "carve"
+agents_dir = "carve/agents"
+targets_dir = "targets"
 """
+
+
+def _carve_toml_content(project_name: str) -> str:
+    """Return the rendered ``carve.toml`` body for ``project_name``.
+
+    The project name is detected from the project root's directory name at
+    init time (``Path(directory).resolve().name``); users can edit
+    ``carve.toml`` after the fact if they want a different display name.
+
+    The name is escaped via ``json.dumps`` — TOML basic strings share their
+    escape grammar with JSON strings (same ``\\n`` / ``\\"`` / ``\\\\`` /
+    ``\\uXXXX``), so a directory whose name contains quotes, newlines, or
+    other meta-characters renders as a single, valid TOML key rather than
+    breaking the file or injecting bonus tables.
+    """
+    return _CARVE_TOML_TEMPLATE.format(name=json.dumps(project_name))
 
 
 RUNNER_TOML_CONTENT = """\
@@ -70,8 +89,8 @@ ENV_EXAMPLE_HEADER = """\
 # Copy this to `.env` and fill in real values. `.env` is gitignored.
 
 # === Project-wide ===
-# ANTHROPIC_API_KEY=
-# GITHUB_TOKEN=
+ANTHROPIC_API_KEY=
+# GITHUB_TOKEN=                          # uncomment if using `carve el deploy`
 """
 
 GITIGNORE_CONTENT = """\
@@ -112,15 +131,20 @@ def command(
 ) -> None:
     """Create a new Carve project skeleton in `directory`."""
     root = directory.resolve()
+    if not root.name:
+        console.print(
+            f"[red]Error:[/red] {root} has no directory name component; "
+            "refusing to initialize a project at the filesystem root."
+        )
+        raise typer.Exit(code=2)
     root.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[bold]Initializing Carve project in[/bold] {root}")
 
-    _write_if_missing(root / "carve.toml", CARVE_TOML_CONTENT)
+    _write_if_missing(root / "carve.toml", _carve_toml_content(root.name))
     _write_if_missing(root / "carve" / "runner.toml", RUNNER_TOML_CONTENT)
     _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
-    _ensure_dir(root / "pipelines")
     _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER)
     _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
 

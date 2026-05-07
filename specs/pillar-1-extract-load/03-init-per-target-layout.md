@@ -95,23 +95,31 @@ The `[paths]` section gains `targets_dir = "targets"` so an advanced user can re
 
 P1-01 introduced `src/carve/core/targets/registry.py` with TOML-edit-in-place helpers and `.env.example` block helpers. P1-03 wires them into `carve init`:
 
+> **Updated during implementation (2026-05-07):** the shipped `command()` writes `.env.example` directly via the `ENV_EXAMPLE_HEADER` constant (no separate `_env_example_header_only()` helper) and skips writing an empty `connections.toml` first — `add_target_to_project("dev", root)` creates the file with its first `[snowflake.dev]` section in one shot. Idempotency is handled by catching `TargetExistsError` on re-runs. The end-state filesystem matches the sketch below; only the call sequence is tighter.
+
 ```python
 def command(directory: Path = Argument(...)) -> None:
     root = directory.resolve()
     root.mkdir(parents=True, exist_ok=True)
     console.print(f"[bold]Initializing Carve project in[/bold] {root}")
 
-    _write_if_missing(root / "carve.toml", _carve_toml_template(default_target="dev"))
+    _write_if_missing(root / "carve.toml", _carve_toml_content(root.name))
     _write_if_missing(root / "carve" / "runner.toml", RUNNER_TOML_CONTENT)
     _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
-    _write_if_missing(root / "carve" / "connections.toml", _connections_header_only())
-    _write_if_missing(root / ".env.example", _env_example_header_only())
+    _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER)
+    _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
 
-    # Seed the dev target via the same helper carve target create uses
-    add_target_to_project("dev", root)
+    # Seed the dev target via the same helper carve target create uses.
+    # This writes carve/connections.toml with [snowflake.dev], appends
+    # the # === dev target === block to .env.example, and creates
+    # targets/dev/el/. Re-runs raise TargetExistsError, which we swallow
+    # for idempotency.
+    try:
+        add_target_to_project("dev", root)
+    except TargetExistsError:
+        (root / "targets" / "dev" / "el").mkdir(parents=True, exist_ok=True)
 
-    _write_if_missing(root / ".gitignore", _gitignore_template())
     _initialize_state_store(root)
 
     console.print("[green]✓[/green] Project initialized.")
@@ -189,15 +197,16 @@ M1.1-03's existing root-`.env` autoload runs unchanged — the centralized model
 
 ## Files this spec produces
 
+> **Updated during implementation (2026-05-07):** `src/carve/core/config/schema.py` was already modified by P1-01 (the `PathsConfig.targets_dir` field landed with the target system), so it's not in P1-03's diff. There was never a `tests/cli/commands/test_init.py` file in the tree — the new tests landed entirely in the new `test_init_centralized.py`, and only `tests/test_cli.py` needed assertion updates. Template-string naming is also a small internal detail: the project-wide `carve.toml` template is implemented as `_CARVE_TOML_TEMPLATE` + a `_carve_toml_content(name)` helper (the project name is templated from the cwd directory name); `_gitignore_template`, `_connections_header_only`, and `_env_example_header_only` from the architecture sketch were collapsed into module-level constants (`GITIGNORE_CONTENT`, `ENV_EXAMPLE_HEADER`) and direct calls to `add_target_to_project` (which writes `connections.toml` from scratch, so a separate header helper isn't needed).
+
 New:
 
 - `tests/cli/commands/test_init_centralized.py` — net-new tests for the centralized layout.
 
 Modified:
 
-- `src/carve/cli/commands/init.py` — refactored to call `add_target_to_project("dev", root)` from `core/targets/registry.py` (P1-01). Template strings split: project-wide ones (`RUNNER_TOML_CONTENT`, `MODELS_TOML_CONTENT`, `_carve_toml_template`, `_gitignore_template`) stay in `init.py`; target-scoped ones (`_connections_section_template`, `_env_example_block_template`) move to `core/targets/registry.py`.
-- `src/carve/core/config/schema.py` — `PathsConfig` gains `targets_dir = "targets"`.
-- `tests/test_cli.py` and `tests/cli/commands/test_init.py` — update assertions for the centralized layout.
+- `src/carve/cli/commands/init.py` — refactored to call `add_target_to_project("dev", root)` from `core/targets/registry.py` (P1-01). Template strings split: project-wide ones (`_CARVE_TOML_TEMPLATE` + `_carve_toml_content(name)` helper, `RUNNER_TOML_CONTENT`, `MODELS_TOML_CONTENT`, `GITIGNORE_CONTENT`, `ENV_EXAMPLE_HEADER`) stay in `init.py`; target-scoped ones (`_connections_section_template`, `_env_example_block_template`) live in `core/targets/registry.py` (moved there by P1-01).
+- `tests/test_cli.py` — update assertions for the centralized layout.
 - `CHANGELOG.md` — entry under `## [Unreleased]` documenting the layout change and the manual migration recipe.
 
 ## Out of scope

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (P1-03 — centralized config + per-target artifact layout)
+
+- **`carve init` now produces a centralized config + per-target artifact
+  layout.** Configuration lives at the project level
+  (`carve/connections.toml`, `carve/runner.toml`, `carve/models.toml`,
+  root `.env` / `.env.example`); only deployable artifacts live per
+  target (`targets/<name>/el/`). The legacy top-level `pipelines/`
+  directory is no longer created.
+- `carve.toml` now seeds `[paths]` with both `agents_dir = "carve/agents"`
+  and `targets_dir = "targets"`, so an advanced user can relocate the
+  per-target tree if they want.
+- `carve.toml` `[project] name` is detected from the project root's
+  directory name at init time (replacing the hardcoded
+  `"my-carve-project"`).
+- `.env.example` ships `ANTHROPIC_API_KEY=` uncommented so a new user's
+  first `cp .env.example .env` call yields a runnable file. The
+  `# GITHUB_TOKEN=` line stays commented and gains a
+  `# uncomment if using carve el deploy` clarifying suffix.
+- `carve init` and `carve target create` now share a single
+  `add_target_to_project` helper for the section + env-block + artifact
+  dir; both verbs produce byte-identical artifacts.
+
+#### Manual migration recipe (M1.1 → P1)
+
+```bash
+# 1. Move artifacts into the per-target tree
+git mv pipelines targets/dev/el
+
+# 2. Reshape carve/connections.toml from the old M1.1 single-target shape
+#    to the new multi-section centralized shape:
+#       [snowflake.dev]
+#       account = "${DEV_SNOWFLAKE_ACCOUNT}"
+#       ...
+
+# 3. Rename env vars in .env to add the DEV_ prefix
+#    (e.g. SNOWFLAKE_ACCOUNT → DEV_SNOWFLAKE_ACCOUNT).
+
+# 4. Edit carve.toml: add `default_target = "dev"` under [project],
+#    and `targets_dir = "targets"` under [paths].
+```
+
+There is no `carve migrate` command in v0.1; the recipe above is short
+enough that the ceremony of an automated migration isn't worth the
+maintenance.
+
 ### Added (M1.1-06 — pipeline-centric lifecycle)
 
 - **`carve plan` is now design-only**: it produces a structured design

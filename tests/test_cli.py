@@ -121,7 +121,8 @@ def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None
     assert (tmp_path / "carve" / "runner.toml").is_file()
     assert (tmp_path / "carve" / "models.toml").is_file()
     assert (tmp_path / "carve" / "agents").is_dir()
-    assert (tmp_path / "pipelines").is_dir()
+    assert (tmp_path / "targets" / "dev" / "el").is_dir()
+    assert not (tmp_path / "pipelines").exists()
     assert (tmp_path / ".env.example").is_file()
     assert (tmp_path / ".gitignore").is_file()
 
@@ -190,7 +191,11 @@ def test_init_writes_env_example_template(runner: CliRunner, tmp_path: Path) -> 
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / ".env.example").read_text()
-    assert "# ANTHROPIC_API_KEY=" in content
+    assert "ANTHROPIC_API_KEY=" in content
+    # Project-wide ANTHROPIC_API_KEY is uncommented in the new layout.
+    assert "# ANTHROPIC_API_KEY=" not in content
+    assert "# GITHUB_TOKEN=" in content
+    assert "# === Project-wide ===" in content
     assert "# === dev target ===" in content
     assert "DEV_SNOWFLAKE_ACCOUNT=" in content
     assert "DEV_SNOWFLAKE_USER=" in content
@@ -217,7 +222,7 @@ def test_init_produces_loadable_config(
     assert result.exit_code == 0, result.output
 
     config = load_config(tmp_path)
-    assert config.project.name == "my-carve-project"
+    assert config.project.name == tmp_path.name
     assert config.models.anthropic_api_key is None
     assert config.models.default_model == "claude-sonnet-4-5-20250929"
     assert config.runner.type == "local_venv"
@@ -231,9 +236,12 @@ def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve.toml").read_text()
-    assert 'name = "my-carve-project"' in content
+    # The project name is detected from the directory name at init time.
+    assert f'name = "{tmp_path.name}"' in content
     assert 'default_target = "dev"' in content
     assert 'config_dir = "carve"' in content
+    assert 'agents_dir = "carve/agents"' in content
+    assert 'targets_dir = "targets"' in content
 
 
 def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path) -> None:
