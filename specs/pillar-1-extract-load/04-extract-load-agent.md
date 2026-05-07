@@ -117,9 +117,13 @@ The build flow pre-scopes this from the M1.1-06 plan agent's `submit_plan(design
 
 Any other path raises an error. This is defense-in-depth alongside the project-root containment check from M1.1-06.
 
+> **Updated during implementation (2026-05-07):** `_resolve_artifact_name` validates the task-supplied artifact name against `^[a-z][a-z0-9_]*$` and raises `ExtractLoadAgentError` for unsafe names. This closes a path-traversal vector where an artifact name like `../escape` would have resolved cleanly under `project_dir` and slipped through the allow-list's `relative_to` guard. Six parametrized hardening tests cover the rejection cases.
+
 The agent terminates by calling `submit_step(file_list, summary)`. The build flow verifies the file list against the task's `expected_outputs` before recording the Build row (P1-02).
 
 ## Tools
+
+> **Updated during implementation (2026-05-07):** The previous flat `src/carve/core/agents/tools.py` module became a `tools/` package; `tools/__init__.py` re-exports every prior import for backward compatibility. The five extract-load tools live in `tools/extract_load_tools.py` inside that package.
 
 Five tools, declared in `src/carve/core/agents/tools/extract_load_tools.py`:
 
@@ -142,7 +146,9 @@ Skills are markdown files loaded into the conversation via `lookup_skill(name)`.
 
 ### Universal data-engineering skill
 
-`src/carve/skills/data_engineering.md`. Sub-sections:
+> **Updated during implementation (2026-05-07):** Skill files live under `src/carve/core/skills/` (not `src/carve/skills/`), aligning with the skill-system layout from P1-05.
+
+`src/carve/core/skills/data_engineering.md`. Sub-sections:
 
 - **Pagination patterns.** Offset, cursor, `Link`-header. Code stubs for each.
 - **Retry with exponential backoff.** Idempotent retry on 5xx, network errors, rate-limit (429) responses. Honors `Retry-After` when present.
@@ -155,7 +161,7 @@ Skills are markdown files loaded into the conversation via `lookup_skill(name)`.
 
 ### Snowflake destination skill
 
-`src/carve/skills/snowflake_destination.md`. Sub-sections:
+`src/carve/core/skills/snowflake_destination.md`. Sub-sections:
 
 - **`executemany` quirks.** Parameter binding, batch size, the `paramstyle='qmark'` requirement, the dict/list rejection.
 - **`write_pandas`.** When to use it (medium-sized loads, schema inference helpful), schema implications, automatic table creation pitfalls.
@@ -176,6 +182,8 @@ Skills are *content* the agent appends to the conversation, not separate sub-age
 1. **Role.** "You are Carve's Python extract-load specialist. You author and modify the Python script that pulls rows from a source system, lands them in Snowflake, and the companion DDL file that ensures the destination table exists with the right grants."
 2. **Connection-context preamble.** Target / database / schema / role / warehouse from `carve/connections.toml`'s `[snowflake.<active>]` section (same pattern as M1.1-05 and `m1_build_agent`, just centralized).
 3. **Convention preamble.** The relevant excerpt of `carve/conventions.md` from Pillar 2's M2-08 — only the parts that apply to extract-load code (file layout, logging style, retry posture). Pillar 1 ships with this empty unless a user has hand-written one; the build flow passes through what's present.
+
+   > **Updated during implementation (2026-05-07):** Wired now (not deferred to M2-08): the agent reads `<project_dir>/<config_dir>/conventions.md` at invocation time and, when non-empty, injects it as a `## Conventions` section in the system prompt. Empty/missing file results in no section. Two regression tests cover the present/absent paths (`test_convention_preamble_passed_through_when_present`, `test_convention_preamble_skipped_when_absent`). Pillar 2's M2-08 only needs to author the file content; no agent retrofit required.
 4. **Available skills.** A one-line description of `data_engineering` and `snowflake_destination` skills, with guidance on when to load each.
 5. **Hard rules.**
    - No Python defaults for `<TARGET>_SNOWFLAKE_*` env vars (`os.environ['X']` only).
@@ -234,13 +242,15 @@ When Pillar 2 lands, this `assert` is replaced with a `dispatch_to_specialist(ta
 
 New:
 
+> **Updated during implementation (2026-05-07):** Skill files live under `src/carve/core/skills/` (not `src/carve/skills/`); the previous flat `tools.py` became a `tools/` package preserving every prior import via `tools/__init__.py`.
+
 - `src/carve/core/agents/extract_load/__init__.py`
 - `src/carve/core/agents/extract_load/agent.py` — agent module: `run_extract_load_agent(task, active_target, config) -> ExtractLoadResult`. Mirrors the agent layout that lands in Pillar 2 for dbt and snowflake.
+- `src/carve/core/agents/tools/__init__.py` — re-exports the prior flat-module surface so existing imports continue to resolve.
 - `src/carve/core/agents/tools/extract_load_tools.py` — the five tools listed above. `make_write_file_tool(allowed_paths: set[Path])` factory binds the path allow-list at call time.
 - `src/carve/core/agents/prompts/extract_load_agent.md` — system prompt (per the structure above).
-- `src/carve/skills/__init__.py` — skill registry (lookup_skill backing).
-- `src/carve/skills/data_engineering.md` — universal data-engineering skill.
-- `src/carve/skills/snowflake_destination.md` — Snowflake destination skill.
+- `src/carve/core/skills/data_engineering.md` — universal data-engineering skill.
+- `src/carve/core/skills/snowflake_destination.md` — Snowflake destination skill.
 - `tests/core/agents/test_extract_load_agent.py`
 - `tests/core/skills/test_data_engineering.py`
 - `tests/core/skills/test_snowflake_destination.py`

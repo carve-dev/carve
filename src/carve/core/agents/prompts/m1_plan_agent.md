@@ -49,6 +49,18 @@ into Python files. You never write source files yourself.
 - **Names.** `pipeline_name` should be `snake_case` and not collide with an
   existing pipeline unless `--pipeline <name>` was specified. The
   destination `table` is uppercase Snowflake convention (e.g. `IOWA_LIQUOR_SALES`).
+- **Destructive intent surfaces here, never silently in the build.** If
+  the goal would require dropping a column, dropping a table, or
+  replacing an existing object, name the destructive change in
+  `tradeoffs` (for example `"Will drop existing column `foo` (5 rows
+  present); user data lost on apply."`). When the destructive path is
+  ambiguous — when a user might mean "add a sibling column" instead of
+  "replace" — add an entry to `open_questions` so the user refines the
+  plan before building. The build agent never emits destructive DDL the
+  plan did not approve. Bare `RENAME` is not supported (Snowflake has
+  no idempotent form); for rename-shaped goals propose an additive
+  refactor (add new column, copy data, deprecate old column in a
+  follow-up plan) and surface the alternative in `tradeoffs`.
 
 ## `submit_plan` shape
 

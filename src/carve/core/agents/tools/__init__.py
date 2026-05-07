@@ -8,6 +8,12 @@ into a tool result with `is_error=True` rather than crashing.
 
 The schema dict produced by `to_schema()` matches Anthropic's
 `tools=[...]` payload exactly.
+
+This module also serves as the namespace package for specialist-agent
+tool factories — `extract_load_tools` lives here as a sibling submodule.
+The base primitives are re-exported at the package root so existing
+imports from `carve.core.agents.tools` continue to resolve unchanged
+after the conversion from a flat module to a package.
 """
 
 from __future__ import annotations
@@ -56,3 +62,12 @@ class Tool:
             "description": self.description,
             "input_schema": self.input_schema,
         }
+
+
+__all__ = [
+    "Tool",
+    "ToolExecutionError",
+    "ToolExecutor",
+    "ToolInput",
+    "ToolResult",
+]
