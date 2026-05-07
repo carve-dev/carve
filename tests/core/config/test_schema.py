@@ -43,6 +43,29 @@ class TestPathsConfig:
         assert cfg.agents_dir == "carve/agents"
         assert cfg.skills_dir == "carve/skills"
         assert cfg.pipelines_dir == "carve/pipelines"
+        assert cfg.targets_dir == "targets"
+
+    def test_relative_nested_paths_allowed(self) -> None:
+        cfg = PathsConfig(targets_dir="data/envs", config_dir="cfg")
+        assert cfg.targets_dir == "data/envs"
+        assert cfg.config_dir == "cfg"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "",
+            " ",
+            "/abs/targets",
+            "\\abs\\targets",
+            "..",
+            "../escape",
+            "ok/../escape",
+            "with\x00nul",
+        ],
+    )
+    def test_unsafe_paths_rejected(self, bad: str) -> None:
+        with pytest.raises(ValidationError):
+            PathsConfig(targets_dir=bad)
 
 
 class TestSnowflakeConnection:

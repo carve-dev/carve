@@ -1,8 +1,13 @@
 """`carve init` — create the minimum Carve project layout in the current directory.
 
-This is one of the few commands that does real work in M1-01. The exact tree
-written here is consumed by `M1-02` (config loader) and several later specs,
-so the contents are intentionally fixed rather than configurable.
+The exact tree written here is consumed by `M1-02` (config loader) and several
+later specs, so the contents are intentionally fixed rather than configurable.
+
+P1-01 refactored this command to delegate the connections-section /
+env-example-block / per-target artifact-dir scaffolding to
+``add_target_to_project("dev", root)``. The single helper guarantees that
+``carve init`` and ``carve target create`` produce byte-identical artifacts
+for the parts they share.
 """
 
 from pathlib import Path
@@ -20,6 +25,10 @@ from carve.core.state.database import (
     create_engine_from_config,
     initialize_database,
 )
+from carve.core.targets.registry import (
+    TargetExistsError,
+    add_target_to_project,
+)
 
 console = Console()
 
@@ -33,31 +42,6 @@ default_target = "dev"
 config_dir = "carve"
 """
 
-CONNECTIONS_TOML_CONTENT = """\
-# Connection definitions for Snowflake (and future connectors).
-# The key after `[snowflake.<target>]` is the target name, referenced from
-# carve.toml's `default_target` (default: "dev").
-#
-# Use ${VAR_NAME} to interpolate environment variables from .env or your shell.
-
-# [snowflake.dev]
-# account = "${SNOWFLAKE_ACCOUNT}"          # e.g. "abc12345.us-east-1"
-# user = "${SNOWFLAKE_USER}"
-# password = "${SNOWFLAKE_PASSWORD}"
-# role = "${SNOWFLAKE_ROLE}"                # e.g. "SYSADMIN"
-# warehouse = "${SNOWFLAKE_WAREHOUSE}"      # e.g. "COMPUTE_WH"
-# database = "${SNOWFLAKE_DATABASE}"
-# schema = "PUBLIC"                          # optional; defaults to PUBLIC
-
-# Alternative auth methods (uncomment one and remove `password = ...`):
-#
-# Key-pair:
-#   private_key_path = "/path/to/rsa_key.p8"
-#   # set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE in your env if the key is encrypted
-#
-# SSO / external browser (dev only — pops a browser window):
-#   authenticator = "externalbrowser"
-"""
 
 RUNNER_TOML_CONTENT = """\
 # Runner configuration. The keys here populate the `runner` section of
@@ -82,18 +66,12 @@ MODELS_TOML_CONTENT = """\
 # (auth_mode = "claude_code_oauth"). Not yet implemented as of this version.
 """
 
-ENV_EXAMPLE_CONTENT = """\
+ENV_EXAMPLE_HEADER = """\
 # Copy this to `.env` and fill in real values. `.env` is gitignored.
-# ANTHROPIC_API_KEY=
 
-# Snowflake (used by carve/connections.toml's [snowflake.dev]):
-# SNOWFLAKE_ACCOUNT=
-# SNOWFLAKE_USER=
-# SNOWFLAKE_PASSWORD=
-# SNOWFLAKE_ROLE=
-# SNOWFLAKE_WAREHOUSE=
-# SNOWFLAKE_DATABASE=
-# SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+# === Project-wide ===
+# ANTHROPIC_API_KEY=
+# GITHUB_TOKEN=
 """
 
 GITIGNORE_CONTENT = """\
@@ -139,13 +117,32 @@ def command(
     console.print(f"[bold]Initializing Carve project in[/bold] {root}")
 
     _write_if_missing(root / "carve.toml", CARVE_TOML_CONTENT)
-    _write_if_missing(root / "carve" / "connections.toml", CONNECTIONS_TOML_CONTENT)
     _write_if_missing(root / "carve" / "runner.toml", RUNNER_TOML_CONTENT)
     _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
     _ensure_dir(root / "pipelines")
-    _write_if_missing(root / ".env.example", ENV_EXAMPLE_CONTENT)
+    _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER)
     _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
+
+    # Add the default "dev" target — creates carve/connections.toml's
+    # [snowflake.dev] section, appends the # === dev target === block to
+    # .env.example, and creates targets/dev/el/. The same helper backs
+    # `carve target create`, so init's output for these three artifacts
+    # is byte-identical to what a user would get by running
+    # `carve target create dev` in a fresh repo. Init is idempotent: a
+    # re-run on an already-initialised project leaves the existing
+    # ``[snowflake.dev]`` section untouched.
+    try:
+        add_target_to_project("dev", root)
+        console.print(f"[green]+[/green] {root / 'carve' / 'connections.toml'}")
+        console.print(f"[green]+[/green] {root / 'targets' / 'dev' / 'el'}/")
+    except TargetExistsError:
+        console.print(
+            f"[yellow]![/yellow] {root / 'carve' / 'connections.toml'} "
+            "already has [snowflake.dev], skipping"
+        )
+        # Still ensure the artifact dir exists (cheap, idempotent).
+        (root / "targets" / "dev" / "el").mkdir(parents=True, exist_ok=True)
 
     _initialize_state_store(root)
 

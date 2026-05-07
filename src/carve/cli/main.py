@@ -19,6 +19,7 @@ from carve.cli.commands import (
     serve,
     version,
 )
+from carve.cli.commands.target import app as target_app
 from carve.cli.dotenv import load_dotenv
 
 app = typer.Typer(
@@ -26,6 +27,14 @@ app = typer.Typer(
     help="AI-first data engineering framework. Carve structure from chaos.",
     no_args_is_help=True,
 )
+
+
+# Module-level slot for the resolved ``--target`` flag. Subcommands read it
+# via ``carve.cli.main.ACTIVE_TARGET_FLAG`` rather than the typer context to
+# keep their signatures clean. ``None`` means "no flag passed"; downstream
+# code falls through to ``CARVE_TARGET`` env var or ``default_target`` from
+# config (see ``carve.core.targets.resolution.resolve_active_target``).
+ACTIVE_TARGET_FLAG: str | None = None
 
 
 @app.callback()
@@ -43,6 +52,14 @@ def _main_callback(
         "--env-file",
         help="Path to a .env file. Defaults to <project-dir>/.env.",
     ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        help=(
+            "Active target (e.g. dev, staging, prod). Overrides "
+            "$CARVE_TARGET and `default_target` in carve.toml."
+        ),
+    ),
 ) -> None:
     """Auto-load a project-local ``.env`` before any subcommand runs.
 
@@ -50,11 +67,14 @@ def _main_callback(
     ``CARVE_NO_DOTENV=1`` to disable entirely (useful with direnv, mise, or
     similar env managers).
     """
+    global ACTIVE_TARGET_FLAG
+    ACTIVE_TARGET_FLAG = target
+
     if os.environ.get("CARVE_NO_DOTENV") == "1":
         return
     root = project_dir if project_dir is not None else Path.cwd()
-    target = env_file if env_file is not None else root / ".env"
-    load_dotenv(target)
+    env_target = env_file if env_file is not None else root / ".env"
+    load_dotenv(env_target)
 
 
 app.command(name="init")(init.command)
@@ -67,6 +87,7 @@ app.command(name="logs")(logs.command)
 app.command(name="pipelines")(pipelines.command)
 app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
+app.add_typer(target_app, name="target")
 
 
 if __name__ == "__main__":

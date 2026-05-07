@@ -11,7 +11,9 @@ threading it through.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pathlib import PurePosixPath
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProjectConfig(BaseModel):
@@ -33,6 +35,35 @@ class PathsConfig(BaseModel):
     agents_dir: str = "carve/agents"
     skills_dir: str = "carve/skills"
     pipelines_dir: str = "carve/pipelines"
+    targets_dir: str = "targets"
+
+    @field_validator(
+        "config_dir",
+        "agents_dir",
+        "skills_dir",
+        "pipelines_dir",
+        "targets_dir",
+    )
+    @classmethod
+    def _project_relative(cls, value: str) -> str:
+        # Block path-traversal vectors that would let a malicious carve.toml
+        # redirect filesystem operations outside the project root. The fields
+        # are joined with the project root by callers; here we enforce that
+        # the value is a relative POSIX-style path with no `..` segments and
+        # no absolute prefix. Empty / whitespace-only values are also refused.
+        if not value or value.strip() != value or value.strip() == "":
+            raise ValueError("path must be a non-empty, non-whitespace string")
+        if value.startswith("/") or value.startswith("\\"):
+            raise ValueError(f"path must be relative; got {value!r}")
+        path = PurePosixPath(value)
+        if path.is_absolute():
+            raise ValueError(f"path must be relative; got {value!r}")
+        for part in path.parts:
+            if part == "..":
+                raise ValueError(f"path must not contain '..'; got {value!r}")
+            if "\x00" in part:
+                raise ValueError(f"path must not contain NUL bytes; got {value!r}")
+        return value
 
 
 class SnowflakeConnection(BaseModel):

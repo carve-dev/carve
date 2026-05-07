@@ -1,0 +1,86 @@
+"""Resolve the active target from CLI flag, env var, or config.
+
+Resolution order (first hit wins):
+
+1. ``--target`` flag passed on the command line.
+2. ``CARVE_TARGET`` environment variable.
+3. ``default_target`` from ``carve.toml``.
+4. Hard-coded fallback ``"dev"`` (only when no ``Config`` is available —
+   e.g. early-init / pre-init scenarios).
+
+The resolved name is *not* validated against ``carve/connections.toml`` here;
+that's a separate step performed by ``require_target`` so that read-only
+commands (like ``carve target list``) can call ``resolve_active_target``
+without erroring out on a missing section.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+
+from carve.core.config import Config
+
+
+class TargetResolutionError(Exception):
+    """Raised when the resolved target is not defined in connections.toml."""
+
+
+def resolve_active_target(
+    cli_flag: str | None,
+    config: Config | None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve the active target name.
+
+    Args:
+        cli_flag: The value passed via ``--target X`` (None if absent).
+        config: A loaded ``Config``, or None when ``carve.toml`` is missing.
+        env: Override for ``os.environ`` (used by tests).
+
+    Returns:
+        The resolved target name. Never empty.
+    """
+    env_map = env if env is not None else os.environ
+    if cli_flag:
+        return cli_flag
+    env_value = env_map.get("CARVE_TARGET")
+    if env_value:
+        return env_value
+    if config is not None and config.project.default_target:
+        return config.project.default_target
+    return "dev"
+
+
+def require_target(
+    name: str,
+    available: list[str],
+) -> None:
+    """Validate that ``name`` is among the configured targets.
+
+    Args:
+        name: The resolved target name.
+        available: The list of target names defined in
+            ``carve/connections.toml`` (one per ``[snowflake.<target>]``
+            section).
+
+    Raises:
+        TargetResolutionError: If ``name`` is not in ``available``. The
+            message lists the available targets so the user can see what
+            is defined and what's missing.
+    """
+    if name in available:
+        return
+    if available:
+        listed = ", ".join(sorted(available))
+        msg = (
+            f'target "{name}" not defined in carve/connections.toml.\n'
+            f"Available targets: {listed}\n"
+            f"Create one with: carve target create {name}"
+        )
+    else:
+        msg = (
+            f'target "{name}" not defined in carve/connections.toml.\n'
+            f"No targets defined yet. Create one with: carve target create {name}"
+        )
+    raise TargetResolutionError(msg)

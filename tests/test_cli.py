@@ -29,6 +29,7 @@ EXPECTED_COMMANDS = [
     "logs",
     "pipelines",
     "serve",
+    "target",
     "version",
 ]
 
@@ -151,18 +152,20 @@ def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) 
 
 
 def test_init_writes_connections_toml_template(runner: CliRunner, tmp_path: Path) -> None:
-    """`connections.toml` should ship a fully-commented Snowflake template."""
+    """`connections.toml` ships a real `[snowflake.dev]` section.
+
+    P1-01 changed init to call ``add_target_to_project("dev", root)``,
+    so the section is uncommented and uses ``${DEV_SNOWFLAKE_*}``-prefixed
+    placeholders.
+    """
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
-    # Connections is a dict-of-targets shape, so the [snowflake.<target>]
-    # header *does* belong in this file (commented out).
-    assert "# [snowflake.dev]" in content
-    assert '# account = "${SNOWFLAKE_ACCOUNT}"' in content
-    # Both alternative auth methods are documented.
-    assert 'authenticator = "externalbrowser"' in content
-    assert "private_key_path" in content
+    assert "[snowflake.dev]" in content
+    assert 'account = "${DEV_SNOWFLAKE_ACCOUNT}"' in content
+    assert 'user = "${DEV_SNOWFLAKE_USER}"' in content
+    assert 'password = "${DEV_SNOWFLAKE_PASSWORD}"' in content
 
 
 def test_init_writes_runner_toml_template(runner: CliRunner, tmp_path: Path) -> None:
@@ -178,25 +181,38 @@ def test_init_writes_runner_toml_template(runner: CliRunner, tmp_path: Path) -> 
 
 
 def test_init_writes_env_example_template(runner: CliRunner, tmp_path: Path) -> None:
-    """`.env.example` should list every env var referenced by the templates."""
+    """`.env.example` lists project-wide vars + a ``# === dev target ===`` block.
+
+    P1-01 introduced target-prefixed env-var names; the dev block lives
+    alongside the project-wide section.
+    """
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / ".env.example").read_text()
     assert "# ANTHROPIC_API_KEY=" in content
-    assert "# SNOWFLAKE_ACCOUNT=" in content
-    assert "# SNOWFLAKE_USER=" in content
-    assert "# SNOWFLAKE_PASSWORD=" in content
+    assert "# === dev target ===" in content
+    assert "DEV_SNOWFLAKE_ACCOUNT=" in content
+    assert "DEV_SNOWFLAKE_USER=" in content
+    assert "DEV_SNOWFLAKE_PASSWORD=" in content
 
 
-def test_init_produces_loadable_config(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_produces_loadable_config(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A freshly-initialised project must round-trip through `load_config()`.
 
-    The templates are all commented out, so the merged config falls back to
-    schema defaults. Crucially, `models.anthropic_api_key` is `None` (the
-    field is now optional at load-time); commands that need it raise their
-    own ConfigError at use-time.
+    P1-01 made init write a real ``[snowflake.dev]`` section with
+    ``${DEV_SNOWFLAKE_*}`` placeholders, so loading needs those env vars
+    populated. We set placeholder values to satisfy the loader.
     """
+    monkeypatch.setenv("DEV_SNOWFLAKE_ACCOUNT", "acc")
+    monkeypatch.setenv("DEV_SNOWFLAKE_USER", "u")
+    monkeypatch.setenv("DEV_SNOWFLAKE_PASSWORD", "p")
+    monkeypatch.setenv("DEV_SNOWFLAKE_ROLE", "r")
+    monkeypatch.setenv("DEV_SNOWFLAKE_WAREHOUSE", "w")
+    monkeypatch.setenv("DEV_SNOWFLAKE_DATABASE", "d")
+
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
 
@@ -205,7 +221,8 @@ def test_init_produces_loadable_config(runner: CliRunner, tmp_path: Path) -> Non
     assert config.models.anthropic_api_key is None
     assert config.models.default_model == "claude-sonnet-4-5-20250929"
     assert config.runner.type == "local_venv"
-    assert config.connections.snowflake == {}
+    assert "dev" in config.connections.snowflake
+    assert config.connections.snowflake["dev"].account == "acc"
 
 
 def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
@@ -231,6 +248,150 @@ def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path)
     second = runner.invoke(app, ["init", str(tmp_path)])
     assert second.exit_code == 0
     assert (tmp_path / "carve.toml").read_text() == sentinel
+
+
+# ---------------------------------------------------------------------------
+# P1-01: target system regressions
+# ---------------------------------------------------------------------------
+
+
+def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> None:
+    """``carve init`` produces the same artifacts that ``carve target create dev``
+    would, on a fresh project.
+
+    Both code paths route through ``add_target_to_project("dev", root)``;
+    this regression test pins the contract by initialising one project with
+    ``init`` and another by stitching together ``init`` + a fresh
+    ``target create``, then comparing the dev section + dev env-example
+    block + ``targets/dev/el/`` byte-for-byte.
+    """
+    init_dir = tmp_path / "init"
+    create_dir = tmp_path / "create"
+    init_dir.mkdir()
+    create_dir.mkdir()
+
+    # `init` flow: produces dev directly.
+    result = runner.invoke(app, ["init", str(init_dir)])
+    assert result.exit_code == 0, result.output
+
+    # `target create` flow: init another project, then delete dev (force +
+    # no-default-warning), then re-create dev via `target create`.
+    result = runner.invoke(app, ["init", str(create_dir)])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        app,
+        [
+            "target",
+            "delete",
+            "dev",
+            "--yes",
+            "--force",
+            "--no-default-warning",
+            "--project-dir",
+            str(create_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        app,
+        ["target", "create", "dev", "--project-dir", str(create_dir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    # Pull out the [snowflake.dev] body from each connections.toml.
+    init_conn = (init_dir / "carve" / "connections.toml").read_text()
+    create_conn = (create_dir / "carve" / "connections.toml").read_text()
+    assert _extract_section(init_conn, "snowflake.dev") == _extract_section(
+        create_conn, "snowflake.dev"
+    )
+
+    # Pull out the # === dev target === block from each .env.example.
+    init_env = (init_dir / ".env.example").read_text()
+    create_env = (create_dir / ".env.example").read_text()
+    assert _extract_env_block(init_env, "dev") == _extract_env_block(create_env, "dev")
+
+    # targets/dev/el/ exists in both.
+    assert (init_dir / "targets" / "dev" / "el").is_dir()
+    assert (create_dir / "targets" / "dev" / "el").is_dir()
+
+
+def _extract_section(content: str, header: str) -> list[str]:
+    """Return the lines of a TOML section, including the header.
+
+    Stops at the next ``[`` header or EOF.
+    """
+    lines = content.splitlines()
+    out: list[str] = []
+    in_section = False
+    target = f"[{header}]"
+    for line in lines:
+        if line.strip() == target:
+            in_section = True
+            out.append(line)
+            continue
+        if in_section and line.strip().startswith("[") and line.strip() != target:
+            break
+        if in_section:
+            out.append(line)
+    return out
+
+
+def _extract_env_block(content: str, name: str) -> list[str]:
+    """Return the lines of an env-example block for ``name``."""
+    lines = content.splitlines()
+    out: list[str] = []
+    in_block = False
+    header = f"# === {name} target ==="
+    for line in lines:
+        if line.strip() == header:
+            in_block = True
+            out.append(line)
+            continue
+        if in_block and line.lstrip().startswith("# ===") and line.strip() != header:
+            break
+        if in_block:
+            out.append(line)
+    return out
+
+
+def test_top_level_target_flag_wired(runner: CliRunner, tmp_path: Path) -> None:
+    """Running ``carve --target staging <subcommand>`` stows ``staging`` for
+    downstream resolution.
+
+    We exercise this via ``carve target show staging`` after creating the
+    target — the show command itself doesn't care about the top-level flag,
+    but a successful invocation exercises the typer plumbing for the flag.
+    Crucially, the run must not error out due to the new top-level option.
+    """
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.output
+
+    # Pass the top-level --target flag and verify it's captured. We use
+    # `target show` (passing --project-dir at the subcommand level so it
+    # can find the project) to drive an actual command invocation; the
+    # primary assertion is that the top-level flag was stowed.
+    result = runner.invoke(
+        app,
+        [
+            "--target",
+            "staging",
+            "target",
+            "show",
+            "staging",
+            "--project-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    # Verify it was captured into the module-level slot.
+    from carve.cli import main as carve_main
+
+    assert carve_main.ACTIVE_TARGET_FLAG == "staging"
 
 
 # ---------------------------------------------------------------------------

@@ -119,6 +119,7 @@ dependencies = [
     { name = "rich" },
     { name = "snowflake-connector-python" },
     { name = "sqlalchemy" },
+    { name = "tomlkit" },
     { name = "typer" },
 ]
 
@@ -145,6 +146,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "snowflake-connector-python", specifier = ">=3.7" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "tomlkit", specifier = ">=0.13" },
     { name = "typer", specifier = ">=0.12" },
 ]
 provides-extras = ["dev"]

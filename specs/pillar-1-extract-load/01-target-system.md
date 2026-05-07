@@ -145,7 +145,9 @@ Available targets: dev, staging, prod
 Create one with: carve target create stagung
 ```
 
-Validation runs once at the top of every command that reads/writes target state — surfaced via a typer dependency (`active_target = Depends(require_target)`).
+> **Updated during implementation (2026-05-07):** `require_target` shipped as a plain validator (`require_target(name, available) -> None`, raises `TargetResolutionError` on miss) rather than a typer-dependency callable. The declarative `active_target = Depends(require_target)` wiring on subcommands was punted; commands that need an active target call `resolve_active_target(...)` + `require_target(...)` directly. The `--target` flag value is shared from the typer root callback to subcommands via the `carve.cli.main.ACTIVE_TARGET_FLAG` module-level slot.
+
+Validation runs once at the top of every command that reads/writes target state. The validator is a plain function (`require_target(name, available)`) rather than a typer dependency; subcommands call `resolve_active_target(...)` followed by `require_target(...)` explicitly.
 
 ## `carve target` subcommands
 
@@ -193,14 +195,16 @@ Implementation:
 
 Prints a `rich`-formatted table of existing targets. Authoritative source is `carve/connections.toml` — every `[snowflake.<name>]` section is a defined target. The `targets/<name>/` directory presence is reported alongside.
 
+> **Updated during implementation (2026-05-07):** the `Last activity` column was punted from this release because `runs.target` does not exist yet (added in P1-02 with the Build entity migration). The shipped table has the five columns: Name / Default / Secrets / Artifacts dir / EL artifacts. The column will be reintroduced once `runs.target` lands.
+
 ```
 Targets
 
-  Name      Default   Secrets    Artifacts dir   EL artifacts   Last activity
-  ──────────────────────────────────────────────────────────────────────────
-  dev       *         ✓ all set  ✓ exists        3              2 minutes ago
-  staging             ✗ missing  ✓ exists        0              —
-  prod                ✓ all set  ✗ missing       —              —
+  Name      Default   Secrets    Artifacts dir   EL artifacts
+  ────────────────────────────────────────────────────────────
+  dev       *         ✓ all set  ✓ exists        3
+  staging             ✗ missing  ✓ exists        0
+  prod                ✓ all set  ✗ missing       —
 ```
 
 Columns:
@@ -210,11 +214,12 @@ Columns:
 - **Secrets** — `✓ all set` if every `${<NAME>_*}` env var the section references is present in the loaded environment; `✗ missing` otherwise (helps spot adoption-time misses without leaking which specific vars).
 - **Artifacts dir** — `✓ exists` if `targets/<name>/` exists; `✗ missing` otherwise. Missing-but-defined targets are valid (a target can exist in config without artifacts yet).
 - **EL artifacts** — count of subdirectories under `targets/<name>/el/`. Dash if the artifacts dir is missing.
-- **Last activity** — most recent `Run` row touching this target (`runs.target = <name>`); rendered as relative time.
 
 Empty state (no targets directory or empty): "No targets yet. Run `carve init` or `carve target create <name>`."
 
 ### `carve target show <name>`
+
+> **Updated during implementation (2026-05-07):** EL-artifact rows render as bare directory names rather than annotated with last-deploy/last-run timestamps, for the same reason `target list` lost its `Last activity` column — `runs.target` does not exist yet (added in P1-02). The annotations will return once the column lands.
 
 Detailed view of one target:
 
@@ -233,8 +238,8 @@ Connection (resolved)
     database:  ANALYTICS_STAGING
 
 EL artifacts
-  iowa_liquor (last deployed 3 days ago, last run 2 hours ago — success)
-  salesforce_opps (built but never deployed)
+  iowa_liquor
+  salesforce_opps
 
 (No pipelines or schedules — Pillars 3 and 4 not yet adopted.)
 ```
@@ -344,8 +349,9 @@ New files:
 
 Modified files:
 
-- `src/carve/cli/main.py` — register `target` subgroup; add top-level `--target` callback option; add `--target` -> `resolve_active_target` plumbing.
-- `src/carve/cli/commands/init.py` — refactored to call `add_target_to_project("dev", root)` from the registry instead of writing a per-target `connections.toml`.
+- `src/carve/cli/main.py` — register `target` subgroup; add top-level `--target` callback option; add `--target` -> `resolve_active_target` plumbing (the resolved flag is shared with subcommands via the module-level `ACTIVE_TARGET_FLAG` slot).
+- `src/carve/cli/commands/init.py` — refactored to call `add_target_to_project("dev", root)` from the registry instead of writing a per-target `connections.toml`. Init now writes the `[snowflake.dev]` section into `carve/connections.toml` (previously left it empty/minimal); this is the natural consequence of sharing the helper with `carve target create`.
+- `src/carve/core/config/schema.py` — add `targets_dir: str = "targets"` to `PathsConfig` so registry helpers don't hard-code the path. Default is backward compatible.
 - `pyproject.toml` — add `tomlkit>=0.13` runtime dependency (preserves comments + ordering on TOML edits).
 - `tests/test_cli.py` — `EXPECTED_COMMANDS` gains `target` group.
 
@@ -397,8 +403,8 @@ Same regex as pipeline names from M1.1-06; consistency is intentional.
 ## Acceptance criteria
 
 - `carve target create <name>` adds `[snowflake.<name>]` to `carve/connections.toml`, appends a `# === <name> target ===` block to `.env.example`, and creates `targets/<name>/el/`. Fails on section collision and on invalid name.
-- `carve target list` shows all targets with the default flag, secrets status, artifacts-dir presence, EL artifact count.
-- `carve target show <name>` shows connection summary with `${VAR}`-substituted values rendered as `<from VAR>` (never the resolved secret) and EL artifact list with last-deploy/last-run timestamps where available.
+- `carve target list` shows all targets with the default flag, secrets status, artifacts-dir presence, EL artifact count. (The `Last activity` column was punted; reintroduced when `runs.target` lands in P1-02.)
+- `carve target show <name>` shows connection summary with `${VAR}`-substituted values rendered as `<from VAR>` (never the resolved secret) and EL artifact list. (Per-artifact last-deploy/last-run annotations were punted; reintroduced when `runs.target` lands in P1-02.)
 - `carve target rename <old> <new>` rewrites the section in `connections.toml`, rewrites `<OLD>_*` → `<NEW>_*` lines in `.env.example`, `git mv`s `targets/<old>` → `targets/<new>` if the artifacts dir exists, and updates `default_target` if applicable.
 - `carve target delete <name>` removes the section + env-example block + artifacts dir, with the safety rails described.
 - `--target X` flag, `CARVE_TARGET` env var, and `default_target` config resolve correctly; missing target exits 2 with a helpful message.
@@ -409,8 +415,8 @@ Same regex as pipeline names from M1.1-06; consistency is intentional.
 
 (Summary of the file-level changes section above.)
 
-New: 7 source files + 1 typer subgroup, 7 test files.
-Modified: `cli/main.py`, `cli/commands/init.py` (extract-only refactor), `tests/test_cli.py`.
+New: 9 source files (5 target subcommands + `target/__init__.py` typer subgroup + `core/targets/__init__.py` + `resolution.py` + `registry.py`), 7 test files.
+Modified: `cli/main.py`, `cli/commands/init.py` (refactored to share `add_target_to_project`), `core/config/schema.py` (added `PathsConfig.targets_dir`), `pyproject.toml` (added `tomlkit>=0.13`), `tests/test_cli.py`.
 No DB migrations.
 
 ## Out of scope
