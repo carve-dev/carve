@@ -3,7 +3,7 @@
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1 day
 **Dependencies:** M1-04 (agent loop), M1-06 (Snowflake connector), P1-01 (target system), P1-02 (plan/build lifecycle), P1-05 (schema retrieval), P1-06 (Snowflake DDL for EL)
-**Lineage:** Carries content from **accepted M2-03** ([`specs/milestone-2-real-product/03-extract-load-agent.md`](../milestone-2-real-product/03-extract-load-agent.md)) almost verbatim. The system prompt structure, tool set, both skills (`data_engineering.md`, `snowflake_destination.md`), the hard rules from **M1.1-05** (no `os.environ.get` defaults; pass `role=` explicitly; idempotency), and the regression test for the Iowa-liquor `dict`-binding bug all carry forward unchanged. **Net deltas:**
+**Lineage:** Carries content from **accepted M2-03** ([`specs/_archive/milestone-2-real-product/03-extract-load-agent.md`](../_archive/milestone-2-real-product/03-extract-load-agent.md)) almost verbatim. The system prompt structure, tool set, both skills (`data_engineering.md`, `snowflake_destination.md`), the hard rules from **M1.1-05** (no `os.environ.get` defaults; pass `role=` explicitly; idempotency), and the regression test for the Iowa-liquor `dict`-binding bug all carry forward unchanged. **Net deltas:**
 1. Output paths shift from `pipelines/<name>/` to `targets/<active_target>/el/<name>/` per the per-target folder model (P1-01).
 2. Connection context comes from `carve/connections.toml`'s `[snowflake.<active>]` section (centralized model from P1-01), not `targets/<name>/connections.toml`.
 3. The agent also emits the per-EL DDL companion file at `targets/<active>/snowflake/<name>.sql` (per P1-06).

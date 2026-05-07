@@ -1,64 +1,49 @@
 # Carve — design documents
 
-This folder contains the full product and engineering specification for **Carve**, an AI-first open-source framework for data engineering and analytics engineering. It captures every architectural decision, design choice, and build plan from the project's brainstorming phase, organized so an engineering team can pick it up and execute.
+This folder contains the full product and engineering specification for **Carve**, an AI-first open-source framework for data engineering and analytics engineering. It captures the architectural decisions, design choices, and build plan for the project, organized so an engineering team can pick it up and execute.
 
 ## Document map
 
 ### Top-level
 
 - [`PRD.md`](./PRD.md) — the master product requirements document. The single source of truth for what Carve is, who it's for, and what it does.
-- [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — the six-week build plan, broken into three milestones, with a day-by-day schedule.
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the technical architecture deep-dive: components, data flow, extension points, and the boundary between OSS and SaaS.
+- [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — the build plan, organized around four product pillars released as v0.1 → v0.4.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the technical architecture deep-dive: components, data flow, extension points, the dev/prod target model, and the boundary between OSS and SaaS.
 
-### Milestone 1 — walking skeleton (week 1)
+### Carve's four product pillars
 
-The smallest end-to-end loop that proves the core idea works. CLI only, one agent, one step type, no UI.
+Carve is structured as four independent-but-composable pillars. Each ships as its own version; later pillars build on earlier ones, but each pillar produces value standalone.
 
-- [`milestone-1-walking-skeleton/README.md`](./milestone-1-walking-skeleton/README.md) — overview and acceptance criteria
-- [`01-cli-foundation.md`](./milestone-1-walking-skeleton/01-cli-foundation.md)
-- [`02-config-loader.md`](./milestone-1-walking-skeleton/02-config-loader.md)
-- [`03-state-store.md`](./milestone-1-walking-skeleton/03-state-store.md)
-- [`04-anthropic-agent-loop.md`](./milestone-1-walking-skeleton/04-anthropic-agent-loop.md)
-- [`05-python-step-and-runner.md`](./milestone-1-walking-skeleton/05-python-step-and-runner.md)
-- [`06-snowflake-connector.md`](./milestone-1-walking-skeleton/06-snowflake-connector.md)
+| Pillar | Version | Status | Goal |
+|---|---|---|---|
+| 1. **Extract & Load** | v0.1 | **specs in flight** | AI authors Python EL scripts that move data from sources into Snowflake. Standalone — works for users who already have a dbt project + their own scheduler. |
+| 2. **Transform** | v0.2 | planned | AI maintains dbt models in a new or existing repo. |
+| 3. **Pipeline** | v0.3 | planned | Define multi-step pipelines composed of EL artifacts (Pillar 1) + dbt models (Pillar 2) + ad-hoc steps (SQL, shell, HTTP). |
+| 4. **Schedule & Execution** | v0.4 | planned | Schedule, run, monitor, and maintain pipeline executions. |
 
-### Milestone 2 — real product (weeks 2-3)
+**Adoption is incremental.** A team that just wants AI-authored EL scripts adopts Pillar 1 and keeps using their existing scheduler. A team that wants the whole lifecycle adopts all four. Pillars 1 and 2 work standalone; Pillars 3 and 4 build on them.
 
-The version you'd publish to GitHub and start showing people. Multiple agents, plan/deploy workflow, dbt integration, basic web UI, brownfield onboarding.
+### Pillar 1 — Extract & Load (v0.1, in flight)
 
-- [`milestone-2-real-product/README.md`](./milestone-2-real-product/README.md) — overview and acceptance criteria
-- [`01-plan-deploy-workflow.md`](./milestone-2-real-product/01-plan-deploy-workflow.md)
-- [`02-orchestration-agent.md`](./milestone-2-real-product/02-orchestration-agent.md)
-- [`03-dbt-agent.md`](./milestone-2-real-product/03-dbt-agent.md)
-- [`04-snowflake-agent.md`](./milestone-2-real-product/04-snowflake-agent.md)
-- [`05-dbt-integration.md`](./milestone-2-real-product/05-dbt-integration.md)
-- [`06-brownfield-onboarding.md`](./milestone-2-real-product/06-brownfield-onboarding.md)
-- [`07-convention-inference.md`](./milestone-2-real-product/07-convention-inference.md)
-- [`08-schema-retrieval.md`](./milestone-2-real-product/08-schema-retrieval.md)
-- [`09-fastapi-server.md`](./milestone-2-real-product/09-fastapi-server.md)
-- [`10-websocket-streaming.md`](./milestone-2-real-product/10-websocket-streaming.md)
-- [`11-web-ui-workbench.md`](./milestone-2-real-product/11-web-ui-workbench.md)
-- [`12-web-ui-pipeline-monitor.md`](./milestone-2-real-product/12-web-ui-pipeline-monitor.md)
-- [`13-github-pr-integration.md`](./milestone-2-real-product/13-github-pr-integration.md)
+The smallest end-to-end loop: AI authors EL scripts, generates DDL, runs them in dev, and deploys them to other targets. CLI only; no UI.
 
-### Milestone 3 — polish for adoption (weeks 4-6)
+- [`pillar-1-extract-load/README.md`](./pillar-1-extract-load/README.md) — overview, acceptance criteria, lineage notes
+- [`01-target-system.md`](./pillar-1-extract-load/01-target-system.md) — `targets/<name>/` layout, `carve target` subcommand, `--target` flag
+- [`02-plan-build-lifecycle.md`](./pillar-1-extract-load/02-plan-build-lifecycle.md) — Plan / Build entity / lifecycle, per-target
+- [`03-init-per-target-layout.md`](./pillar-1-extract-load/03-init-per-target-layout.md) — `carve init` scaffolds the centralized layout
+- [`04-extract-load-agent.md`](./pillar-1-extract-load/04-extract-load-agent.md) — AI specialist authoring EL scripts
+- [`05-schema-retrieval.md`](./pillar-1-extract-load/05-schema-retrieval.md) — catalog skills + the skill registry infrastructure
+- [`06-snowflake-ddl-for-el.md`](./pillar-1-extract-load/06-snowflake-ddl-for-el.md) — per-EL DDL emission contract
+- [`07-el-run.md`](./pillar-1-extract-load/07-el-run.md) — `carve el run` command + `carve el list`
+- [`08-el-deploy.md`](./pillar-1-extract-load/08-el-deploy.md) — `carve el deploy --from X --to Y` (single deterministic command) + `carve el verify`
+- [`09-recovery-agent.md`](./pillar-1-extract-load/09-recovery-agent.md) — auto-fix loop for run + deploy failures
 
-The version that lets a stranger from the internet succeed without your help. Multi-step pipelines, MCP integrations, embeddings, the remaining UI screens, docs, examples.
+### Foundation (M1, M1.1) — already shipped
 
-- [`milestone-3-polish/README.md`](./milestone-3-polish/README.md) — overview and acceptance criteria
-- [`01-multi-step-pipelines.md`](./milestone-3-polish/01-multi-step-pipelines.md)
-- [`02-sql-step-type.md`](./milestone-3-polish/02-sql-step-type.md)
-- [`03-shell-http-steps.md`](./milestone-3-polish/03-shell-http-steps.md)
-- [`04-mcp-client.md`](./milestone-3-polish/04-mcp-client.md)
-- [`05-quality-agent.md`](./milestone-3-polish/05-quality-agent.md)
-- [`06-skills-sdk.md`](./milestone-3-polish/06-skills-sdk.md)
-- [`07-custom-step-types.md`](./milestone-3-polish/07-custom-step-types.md)
-- [`08-embedding-search.md`](./milestone-3-polish/08-embedding-search.md)
-- [`09-web-ui-agent-studio.md`](./milestone-3-polish/09-web-ui-agent-studio.md)
-- [`10-web-ui-dbt-run-view.md`](./milestone-3-polish/10-web-ui-dbt-run-view.md)
-- [`11-example-projects.md`](./milestone-3-polish/11-example-projects.md)
-- [`12-documentation-site.md`](./milestone-3-polish/12-documentation-site.md)
-- [`13-doctor-command.md`](./milestone-3-polish/13-doctor-command.md)
+These are kept as living spec directories for the M1 / M1.1 work that's already in code.
+
+- [`milestone-1-walking-skeleton/`](./milestone-1-walking-skeleton/) — the smallest end-to-end loop (CLI foundation, config loader, state store, Anthropic agent loop, Python step + runner, Snowflake connector). Shipped.
+- [`milestone-1.1-followups/`](./milestone-1.1-followups/) — UX polish and the pipeline-centric lifecycle (init templates, OAuth, dotenv autoload, plan progress, agent prompt tightening, plan/build/run separation, run-retry-permits-redo). Shipped.
 
 ### Reference
 
@@ -67,21 +52,27 @@ The version that lets a stranger from the internet succeed without your help. Mu
 - [`reference/governance.md`](./reference/governance.md) — open-source governance, contributor model, license choice
 - [`reference/glossary.md`](./reference/glossary.md) — definitions of the terms used throughout these docs
 
+### Archive
+
+- [`_archive/`](./_archive/) — historical specs that have been superseded by the pillar restructure. Includes the original "milestone 2 — real product" and "milestone 3 — polish" milestones, kept as source material for later pillars and as lineage for the current pillar specs. See [`_archive/README.md`](./_archive/README.md) for the disposition map.
+
 ## How to use these docs
 
 If you're picking this project up cold:
 
 1. Read [`PRD.md`](./PRD.md) end to end. It's the most important document — everything else is implementation detail.
-2. Read [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) to understand the milestone-by-milestone delivery shape.
+2. Read [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) to understand the four-pillar delivery shape.
 3. Skim [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the technical model.
-4. Open the milestone-1 folder and start building.
+4. Open [`pillar-1-extract-load/`](./pillar-1-extract-load/) and start building (M1 + M1.1 are already shipped).
 
 If you're contributing to a specific area:
 
-1. Find the relevant spec in the milestone folders.
-2. Each spec is self-contained — it lists its dependencies on other specs at the top.
-3. Specs include scope, interfaces, file paths, acceptance criteria, and estimated effort.
+1. Find the relevant spec in the active pillar directory.
+2. Each spec is self-contained — it lists its dependencies on other specs at the top, plus a `Lineage` field naming any M1 / M1.1 / archived M2 / archived M3 ancestors.
+3. Specs include scope, interfaces, file paths, acceptance criteria, tests, and estimated effort.
 
 ## Status
 
-These documents represent the design phase. No code has been written yet. The schedule in [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) assumes one focused engineer using AI coding tools aggressively and starts from a green field.
+- **M1 and M1.1 are shipped.** Code is in `src/`. ~300 tests passing.
+- **Pillar 1 specs are in flight.** Drafting and review complete; implementation hasn't started.
+- **Pillars 2-4 are planned.** Spec directories haven't been created yet; lineage from M2/M3 archive will inform them when work starts.

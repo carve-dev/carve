@@ -287,15 +287,15 @@ The lifecycle verbs split cleanly along this boundary:
 | `carve run <pipeline>` | Yes — executes against a target | `default_target` (dev) | Yes — `carve run --target prod <pipeline>` is the manual prod-execution path |
 | `carve deploy <pipeline>` | No — opens a PR with already-built code | n/a | No — deploy ships code, not data |
 
-**The promoted artifact is the pipeline directory.** `pipelines/<name>/main.py`, `requirements.txt`, and any other source files are what travel through the PR into prod. Plans and builds are dev-side records — they live in the developer's `.carve/state.db` and never leave it. Prod gets its own state DB (full of run records from `carve run --target prod`), but no plans, because you don't design pipelines in prod.
+**The promoted artifact is the per-target folder.** `targets/<target>/el/<artifact>/main.py`, `requirements.txt`, and the companion `targets/<target>/snowflake/<artifact>.sql` are what land in the destination target's tree when a deploy runs. Plans and builds are dev-side records — they live in the developer's `.carve/state.db` and never travel to prod. (Configuration — `carve/connections.toml`, root `.env` — is centralized at the project level, not per-target. See [`pillar-1-extract-load/01-target-system.md`](./pillar-1-extract-load/01-target-system.md) for the full layout.)
 
-**Dev iteration** lives entirely on `default_target`: plan, build, run, re-run, edit, re-run, until the rows in the dev schema look right. Re-running is free — no replay guard.
+**Dev iteration** lives entirely on `default_target`: `carve plan` → `carve build` → `carve el run`, re-run, edit, re-run, until the rows in the dev schema look right. Re-running is free — no replay guard.
 
-**Prod deploy** in M2 is automated: `carve deploy <pipeline> --target prod` runs a local pre-flight, opens a PR, and includes a generated GitHub Actions workflow (`.github/workflows/carve-deploy-<pipeline>-<target>.yml`). On merge, the workflow runs the *deploy phases* (DDL provisioning, idempotent migrations, verification) against the prod target via the deploy role. The deploy workflow is **push-triggered** (fires once per merge), not scheduled.
+**Prod deploy in Pillar 1 is one deterministic command.** `carve el deploy <artifact> --from <X> --to <Y>` runs end-to-end: validates targets, pre-flight drift check (with recovery-agent help), copies files into `<Y>`'s tree, applies DDL via the deploy role, smoke-verifies. The user's CI/CD (GitHub Actions, GitLab CI, Airflow, custom script) wraps the command however they want. Carve does **not** open PRs, generate workflow files, or assume any particular Git provider — that's intentional OSS-flexibility. See [`pillar-1-extract-load/08-el-deploy.md`](./pillar-1-extract-load/08-el-deploy.md) for the full deploy semantics.
 
-**Prod ongoing execution** (running the pipeline on a recurring schedule) is still the user's responsibility in M1/M2. Once the pipeline is deployed, *what runs it on schedule against the prod target* is whatever orchestrator the user already operates: an Airflow DAG calling `carve run --target prod`, a GitHub Actions cron, a Dagster job, or a manual run from a deployment box. Carve provides the deploy automation and the executable; the user provides the recurring scheduler.
+**Prod ongoing execution** (running the pipeline on a recurring schedule) is the user's responsibility in v0.1 / v0.2 / v0.3. Once a deploy lands, *what runs it on schedule against the prod target* is whatever orchestrator the user already operates: an Airflow DAG calling `carve el run --target prod`, a GitHub Actions cron, a Dagster job, or a manual run from a deployment box. Carve provides the deploy automation and the executable; the user provides the recurring scheduler.
 
-**M3 closes this gap** with first-class scheduling: pipeline-level cron expressions, a scheduler daemon, pause/resume controls in the pipeline monitor. After M3, "prod" means "running on Carve's scheduler against the prod target." Until then, "prod" means "the merged code, runnable against the prod target by your existing orchestrator."
+**Pillar 4 closes this gap** with first-class scheduling: pipeline-level cron expressions, a scheduler daemon (or generated CI snippets), pause/resume controls. After Pillar 4 ships, "prod" means "running on Carve's scheduler against the prod target." Until then, "prod" means "the deployed code, runnable against the prod target by your existing orchestrator."
 
 Two implications worth naming:
 
@@ -312,7 +312,7 @@ Five layers, in increasing cost:
 4. **Lineage traversal** — graph queries over the manifest's dependency graph.
 5. **Embedding search** — semantic search for fuzzy concepts ("customer churn metrics"). Returns pointers, not full content.
 
-The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. Skills 1-4 ship in M2; skill 5 ships in M3.
+The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. **Layer 1 (catalog queries) ships in Pillar 1** along with the skill registry / decorator / `SkillContext` / caching infrastructure. **Layers 2-4 (manifest, grep, lineage) ship in Pillar 2** alongside the dbt agent. **Layer 5 (embedding search)** is far-future, likely Pillar 4 or later.
 
 ## 9. The OSS-to-SaaS architectural seams
 

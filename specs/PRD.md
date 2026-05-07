@@ -76,7 +76,7 @@ The loop applies whether the user is building a new pipeline, modifying an exist
 - Multi-LLM-provider support (Anthropic-only; abstraction prepared but unused)
 - Multi-user authentication, SSO, RBAC
 - Docker or Kubernetes runners (`LocalVenvRunner` only)
-- Embedding-based semantic search over schema (deferred to milestone 3)
+- Embedding-based semantic search over schema (deferred to Pillar 4 or later)
 - MCP server (Carve as MCP server for outside agents)
 - Visual pipeline builder
 - Looker, Tableau, or other BI integrations
@@ -374,11 +374,10 @@ These are healthy adjacent product spaces, all of which Carve might integrate wi
 
 These are decisions deferred to implementation or to later releases:
 
-- Final choice of CLI framework (`click` vs `typer` vs `cyclopts`) — implementation decision in milestone 1
-- Final choice of frontend framework (React + Vite + Tailwind + shadcn is the working assumption) — implementation decision in milestone 2
-- Whether to support `dbt` 1.6 or only 1.7+ — minor compatibility decision
-- Convention for naming generated PR branches — small decision in milestone 2
-- Whether the documentation site uses `mkdocs-material` or `docusaurus` — implementation decision in milestone 3
+- Final choice of CLI framework (`click` vs `typer` vs `cyclopts`) — already settled in M1: `typer`.
+- Final choice of frontend framework (React + Vite + Tailwind + shadcn is the working assumption) — implementation decision when the UI milestone arrives (post-Pillar-4).
+- Whether to support `dbt` 1.6 or only 1.7+ — minor compatibility decision; resolved in Pillar 2.
+- Whether the documentation site uses `mkdocs-material` or `docusaurus` — implementation decision when the docs site lands (likely alongside or after Pillar 4).
 
 ## 12. Appendix — naming and brand
 
@@ -386,4 +385,4 @@ These are decisions deferred to implementation or to later releases:
 - GitHub org: `carve-data` (placeholder; check availability before claiming)
 - Tagline: "Carve structure from chaos" or "AI-powered data engineering, from raw to refined"
 - Brand vocabulary: agents *chisel*, skills are *blades*, workflow definitions are *cuts*, output artifacts are *carvings*. Use sparingly — don't overdose on the metaphor.
-- Color: defer to milestone 3 design pass.
+- Color: defer to a UI / branding pass (post-Pillar-4 or alongside).

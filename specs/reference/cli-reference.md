@@ -153,7 +153,7 @@ carve serve --workers 4
 
 ### `carve doctor`
 
-Run diagnostics. See [M3-13](../milestone-3-polish/13-doctor-command.md).
+Run diagnostics. See [M3-13](../_archive/milestone-3-polish/13-doctor-command.md).
 
 ```bash
 carve doctor

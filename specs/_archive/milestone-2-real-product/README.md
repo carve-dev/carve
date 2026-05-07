@@ -1,4 +1,35 @@
-# Milestone 2 — Real product
+> # ⚠ Archived
+>
+> **This milestone has been superseded by Carve's pillar-based structure.** The work
+> originally planned here was restructured around four product pillars:
+>
+> 1. **Extract & Load** — see [`specs/pillar-1-extract-load/`](../../pillar-1-extract-load/) (v0.1)
+> 2. **Transform** — `specs/pillar-2-transform/` (planned, v0.2)
+> 3. **Pipeline** — `specs/pillar-3-pipeline/` (planned, v0.3)
+> 4. **Schedule & Execution** — `specs/pillar-4-schedule/` (planned, v0.4)
+>
+> The specs in this directory are kept as **historical reference and source material**
+> for the pillar specs. Each pillar's `Lineage` field names its M2 ancestors. Do
+> **not** treat anything here as authoritative; consult the pillar specs for the
+> current direction.
+>
+> **What carried forward:**
+> - **M2-01** Plan/deploy workflow → P1-02 (Plan/Build lifecycle), P1-08 (deploy)
+> - **M2-02** Orchestration agent → deferred to Pillar 2+ (only meaningful with multiple specialists)
+> - **M2-03** Extract-load agent → P1-04 verbatim
+> - **M2-05** Snowflake agent → narrow subset in P1-06 (per-EL DDL only); broader Snowflake agent in Pillar 2+
+> - **M2-07** Brownfield onboarding → moves to Pillar 2 (alongside dbt detection)
+> - **M2-09** Schema retrieval → catalog layer in P1-05; remaining layers (manifest, grep, lineage) in Pillar 2
+> - **M2-10** FastAPI server → moves to a UI milestone after Pillar 4 (or scrapped)
+> - **M2-14** Deploy orchestration → reframed as P1-08 (single-command, OSS-flexible)
+> - **M2-15** Recovery agent → P1-09 (scope expanded to four trigger contexts)
+> - **M2-04**, **M2-06**, **M2-08**, **M2-11**, **M2-12**, **M2-13** → still pending re-homing into later pillars
+>
+> See [`specs/_archive/README.md`](../README.md) for the full archive index.
+
+---
+
+# Milestone 2 — Real product (archived)
 
 **Duration:** 2 weeks (days 8-21)
 **Goal:** the version you'd publish to GitHub. Multiple agents, plan/deploy with PRs, dbt integration, basic web UI, brownfield onboarding.

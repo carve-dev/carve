@@ -1,307 +1,130 @@
 # Carve — Project Plan
 
-A six-week build plan to ship Carve v0.1.0 from a green field. The schedule assumes one focused engineer using AI coding tools aggressively. If the work happens nights and weekends, double the timeline. If the team is two engineers, parallel paths exist within each milestone but the critical path doesn't shrink linearly.
+Carve is structured as **four product pillars**, each shipped as its own version. Pillars 1 and 2 work standalone; Pillars 3 and 4 build on them. A team that just wants AI-authored EL scripts adopts Pillar 1; a team that wants the full lifecycle adopts all four.
 
-## Milestone overview
+## The four pillars
 
-| Milestone | Duration | Goal |
-|---|---|---|
-| **M1 — Walking skeleton** | Week 1 | Smallest end-to-end loop that proves the architecture |
-| **M2 — Real product** | Weeks 2-3 | Shippable to GitHub, useful for the primary persona |
-| **M3 — Polish for adoption** | Weeks 4-6 | Strangers can succeed without help; v0.1.0 release |
+| Version | Pillar | Status | Goal |
+|---|---|---|---|
+| v0.1 | **Extract & Load** | specs in flight | AI authors Python EL scripts that move data from sources into Snowflake. Standalone — works for users who already have a dbt project + their own scheduler. |
+| v0.2 | **Transform** | planned | AI maintains dbt models in a new or existing repo. |
+| v0.3 | **Pipeline** | planned | Multi-step pipelines composed of EL artifacts (Pillar 1) + dbt models (Pillar 2) + ad-hoc steps (SQL, shell, HTTP). |
+| v0.4 | **Schedule & Execution** | planned | Schedule, run, monitor, and maintain pipeline executions. |
 
-Each milestone is a usable product. Demo it, get feedback, then start the next.
+Each pillar is a usable product. Demo it, get feedback, then start the next.
+
+## Foundation (already shipped)
+
+Two pre-pillar milestones laid the groundwork:
+
+- **M1 — Walking skeleton.** Smallest end-to-end loop: CLI foundation, config loader, state store, Anthropic agent loop with tool-use, Python step + `LocalVenvRunner`, Snowflake connector. Specs in [`milestone-1-walking-skeleton/`](./milestone-1-walking-skeleton/). **Shipped.**
+- **M1.1 — Follow-ups.** UX polish and the pipeline-centric lifecycle: init config templates, Claude Code OAuth path, dotenv autoload, live progress output, plan-prompt tightening, plan/build/run separation, run-retry-permits-redo. Specs in [`milestone-1.1-followups/`](./milestone-1.1-followups/). **Shipped.**
+
+Combined, M1 + M1.1 give Carve the agent loop, state store, runner, connector, and the `plan → build → run → deploy` lifecycle that all four pillars build on. ~300 tests passing.
 
 ## Guiding principles
 
-- **Ship before perfect.** The version that gets feedback in week 2 will be more valuable than the one that ships in month 6 with three more features.
-- **Pick boring technology.** FastAPI, SQLite, SQLAlchemy, React + Vite, Tailwind, click or typer, pydantic, jinja. Save the novelty budget for the agent layer.
-- **Skip the SaaS scaffolding.** The runner abstraction matters because the SaaS pivot exists later. The implementations don't.
-- **Cut the agent count for v0.1.** Five agents is the long-term picture. Start with two: orchestration and a combined "code" agent. Split as needed.
-- **Defer extension points.** Hard-code built-in skills and step types until they've stabilized. The SDK comes in milestone 3.
+- **Ship before perfect.** The version that gets feedback in week 2 is more valuable than the one that ships in month 6 with three more features.
+- **Pick boring technology.** `typer`, `pydantic`, `SQLAlchemy`, `SQLite`, `Snowflake-connector-python`, `Anthropic SDK`, `tomlkit`. Save the novelty budget for the agent layer.
+- **Skip the SaaS scaffolding.** The runner and connector abstractions matter because the SaaS pivot exists later. The implementations don't.
+- **Ship pillars standalone.** A user adopting only Pillar 1 should never feel they're using a half-finished product. Each pillar is complete on its own.
+- **Defer extension points.** Hard-code built-in skills and step types until they've stabilized. The skills SDK lands later.
 
-## Milestone 1 — Walking skeleton (week 1)
+## Pillar 1 — Extract & Load (v0.1, in flight)
 
-**Single goal:** prove an agent can take a natural-language request, generate working Python that connects to Snowflake, and execute it end-to-end.
+**Goal:** AI authors Python EL scripts for Snowflake. Standalone.
 
-### Day-by-day
+**Acceptance criteria.** A data engineer with a Snowflake account (no dbt project, no orchestrator, nothing else) can:
 
-**Day 1 — Project skeleton**
-- `pyproject.toml` with `uv` (or `poetry`)
-- Repo layout from `ARCHITECTURE.md`: `src/carve/`, `tests/`, `docs/`, `examples/`
-- Pre-commit hooks: ruff, mypy
-- Basic GitHub Actions CI: lint + test on push
-- LICENSE (Apache 2.0), CONTRIBUTING.md stub, README.md stub
-- Spec: [`milestone-1-walking-skeleton/01-cli-foundation.md`](./milestone-1-walking-skeleton/01-cli-foundation.md)
+1. Run `carve init` — gets `carve.toml`, `carve/{connections.toml, runner.toml, models.toml}`, `targets/dev/el/`, `.env.example`, `.gitignore`
+2. Copy `.env.example` to `.env` and fill in `ANTHROPIC_API_KEY` + `DEV_SNOWFLAKE_*` vars
+3. `carve plan "ingest the Iowa liquor sales feed"` — AI produces a design
+4. `carve build <plan_id>` — AI authors `targets/dev/el/iowa_liquor/{main.py, requirements.txt}` plus `targets/dev/snowflake/iowa_liquor.sql`
+5. `carve el run iowa_liquor` — script runs against dev, lands rows in dev's Snowflake
+6. (When ready for prod) `carve target create prod` — appends `[snowflake.prod]` to `carve/connections.toml`
+7. Add `PROD_SNOWFLAKE_*` values to `.env`
+8. `carve el deploy iowa_liquor --from dev --to prod` — copies the artifact, applies DDL via the deploy role, smoke-verifies
 
-**Day 2 — Config and state store**
-- `carve.toml` parsing with pydantic models
-- Multi-file config loader (`carve/connections.toml`, `carve/runner.toml`, etc.)
-- Environment variable interpolation
-- SQLite state store with three tables: `runs`, `logs`, `plans`
-- SQLAlchemy ORM models, basic repository pattern
-- Specs: [`02-config-loader.md`](./milestone-1-walking-skeleton/02-config-loader.md), [`03-state-store.md`](./milestone-1-walking-skeleton/03-state-store.md)
+**Specs.** Nine specs in [`pillar-1-extract-load/`](./pillar-1-extract-load/) — see the README for the full list.
 
-**Day 3 — Anthropic client and basic agent loop**
-- Anthropic SDK wrapper that handles tool-use turn-taking
-- A combined "code" agent with hardcoded tools: read file, write file, run Snowflake query
-- System prompt for the code agent (short, focused)
-- Spec: [`04-anthropic-agent-loop.md`](./milestone-1-walking-skeleton/04-anthropic-agent-loop.md)
+**Estimated effort.** ~1 week for an experienced engineer using AI coding tools aggressively. The day-by-day depends on which specs the engineer picks up in parallel; spec dependencies are documented so the dependency graph is explicit.
 
-**Day 4 — Snowflake connection and Python step**
-- Snowflake connector wrapper using `snowflake-connector-python`
-- Connection management from `carve/connections.toml`
-- `Step` protocol and `PythonStep` implementation
-- `LocalVenvRunner` that creates venvs, installs deps, executes scripts, captures stdout/stderr
-- Specs: [`05-python-step-and-runner.md`](./milestone-1-walking-skeleton/05-python-step-and-runner.md), [`06-snowflake-connector.md`](./milestone-1-walking-skeleton/06-snowflake-connector.md)
+**Internal milestone.** When all 9 specs are implemented and the acceptance flow above works end-to-end against a real Snowflake account, tag `v0.1.0`.
 
-**Day 5 — End-to-end wiring**
-- `carve init` command: scaffolds project layout
-- `carve plan "<goal>"` command: invokes agent, returns plan as JSON
-- `carve deploy <pipeline_name>` command: executes the plan
-- `carve run <pipeline>` command: runs a pipeline through the runner
-- Run history persists to state store
-- Demo target: `carve plan "ingest a CSV from a public URL into my dev Snowflake schema"` → plan → deploy → data lands in Snowflake
+## Pillar 2 — Transform (v0.2, planned)
 
-**Days 6-7 — Buffer**
-- Whatever broke. There will be something.
-- Polish error messages and CLI output formatting
-- Write a one-page README walkthrough so the demo is repeatable
-- Tag `v0.0.1` internally; share with three trusted reviewers
+**Goal:** AI maintains dbt models in a new or existing repo.
 
-### Acceptance criteria for M1
+**Probable scope** (specs not yet drafted; informed by the M2 archive):
 
-A new user can clone the repo, run `carve init`, edit a config file with their Snowflake credentials, run `carve plan "<reasonable goal>"`, run `carve deploy`, and end up with data in their warehouse. The whole flow takes under 10 minutes, all from the CLI.
+- dbt agent — authors and modifies dbt models, tests, and documentation
+- dbt integration — `dbt` step type, manifest reader, structured manifest queries (Layer 2 from P1-05's five-layer schema retrieval model)
+- File grep + lineage traversal skills (Layers 3 + 4)
+- Brownfield onboarding — detect existing dbt projects, integrate without overwriting
+- Convention inference — analyze existing dbt repo, generate `carve/conventions.md`
+- Build coordinator pattern — when there are multiple specialists (extract-load + dbt), the coordinator dispatches each plan task to the right one. Deferred from Pillar 1 because Pillar 1 has only one specialist.
 
-## Milestone 2 — Real product (weeks 2-3)
+Pillar 2 stays standalone — a user with no Pillar-1 EL artifacts can use Carve purely for dbt work.
 
-**Goal:** the version you'd publish to GitHub. Multiple agents, plan/deploy workflow with PRs, dbt integration, basic web UI, brownfield onboarding.
+## Pillar 3 — Pipeline (v0.3, planned)
 
-### Week 2
+**Goal:** Define multi-step pipelines that orchestrate EL + dbt + ad-hoc steps.
 
-**Day 8 — Plan/deploy formalization**
-- Plan files written to `.carve/plans/<plan_id>.json`
-- Plan schema with task graph, cost estimates, file diffs, config hash, expiry
-- `carve plan show <plan_id>`, `carve plan list`, `carve plan diff`
-- Deploy checks config hash before executing
-- Spec: [`milestone-2-real-product/01-plan-deploy-workflow.md`](./milestone-2-real-product/01-plan-deploy-workflow.md)
+**Probable scope** (informed by the M3 archive):
 
-**Day 9 — Orchestration agent**
-- Split the M1 "code" agent into orchestration + dbt + Snowflake
-- Orchestration agent does goal classification, impact analysis (stub), and agent selection
-- Task graph generation
-- Specs: [`02-orchestration-agent.md`](./milestone-2-real-product/02-orchestration-agent.md), [`03-dbt-agent.md`](./milestone-2-real-product/03-dbt-agent.md), [`04-snowflake-agent.md`](./milestone-2-real-product/04-snowflake-agent.md)
+- Pipeline definition format (`pipeline_defs/<name>.yml` per target)
+- Multi-step execution: `depends_on`, parallel/sequential, failure modes
+- Step types: `el://<artifact>`, `dbt://<model>`, `sql://<file>`, `shell://...`, `http://...`
+- Custom step types via plugin
+- Multi-step pipeline recovery (recovery agent gets "step that failed" awareness)
 
-**Day 10 — dbt integration**
-- `dbt` step type
-- `DbtRunner` that shells out to `dbt-core` with the right project_dir, profiles_dir, and target
-- Manifest reader that loads `target/manifest.json` and exposes structured queries
-- Specs: [`05-dbt-integration.md`](./milestone-2-real-product/05-dbt-integration.md)
+Pipelines reference Pillar 1 EL artifacts and Pillar 2 dbt models by name. Cross-pillar references resolve per-target via the centralized `targets/<name>/` folder structure (P1-01).
 
-**Day 11 — Brownfield `carve init`**
-- Detect existing `dbt_project.yml`
-- Read existing `profiles.yml` rather than overwriting
-- Run `dbt parse` to build initial manifest cache
-- Spec: [`06-brownfield-onboarding.md`](./milestone-2-real-product/06-brownfield-onboarding.md)
+## Pillar 4 — Schedule & Execution (v0.4, planned)
 
-**Day 12 — Convention inference**
-- Analyze model names, materializations, test patterns, SQL style
-- Generate `carve/conventions.md` from the analysis
-- Include conventions doc in agent system prompts
-- Spec: [`07-convention-inference.md`](./milestone-2-real-product/07-convention-inference.md)
+**Goal:** Schedule, run, monitor, and maintain pipeline executions.
 
-**Days 13-14 — Schema retrieval and end-to-end test**
-- Implement structured catalog query skills
-- Implement dbt manifest query skills
-- Wire skills into the orchestrator's pre-scoping step
-- Test against a real existing dbt project; fix what breaks
-- Spec: [`08-schema-retrieval.md`](./milestone-2-real-product/08-schema-retrieval.md)
+**Probable scope:**
 
-### Week 3
+- Schedule definition (`schedules/<name>.yml` per target — cron-style)
+- Scheduler daemon (or generated CI/CD config snippets for users who use external schedulers)
+- Run history UI (or expanded CLI views)
+- Pipeline lifecycle (disable, archive, restore — currently sketched as M3-15 in the archive)
+- Quality agent — split from the dbt agent for tests and freshness
+- Embedding-based schema search (Layer 5 from P1-05)
+- MCP server consumption
 
-**Day 15 — FastAPI server**
-- REST endpoints for: list pipelines, list runs, trigger run, get run status, list plans
-- Auth: single API key from env var
-- Spec: [`09-fastapi-server.md`](./milestone-2-real-product/09-fastapi-server.md)
+A future **UI milestone** (post-Pillar-4 or a parallel track) covers the FastAPI server, WebSocket streaming, workbench, and pipeline monitor screens. Carve's CLI / Claude / chat interfaces are the primary surface; the web UI is layered on top, optional, and not blocking the v0.4 release.
 
-**Day 16 — WebSocket log streaming**
-- WebSocket endpoint for run events and log lines
-- The CLI's `carve logs --follow` uses the same WebSocket
-- Spec: [`10-websocket-streaming.md`](./milestone-2-real-product/10-websocket-streaming.md)
+## Risk and slip
 
-**Days 17-18 — Workbench screen**
-- React + Vite + Tailwind + shadcn project under `src/carve/ui/`
-- Workbench: goal input, active goal feed with task graphs, artifact preview
-- Live updates via WebSocket
-- FastAPI serves the built `dist/` assets
-- Spec: [`11-web-ui-workbench.md`](./milestone-2-real-product/11-web-ui-workbench.md)
+The risk pattern across all four pillars is the same:
 
-**Day 19 — Pipeline monitor screen**
-- Pipeline list with status, last run, schedule
-- Click-through to run history
-- Spec: [`12-web-ui-pipeline-monitor.md`](./milestone-2-real-product/12-web-ui-pipeline-monitor.md)
+- **Schema retrieval edge cases.** Real-world Snowflake accounts are messier than fixtures. Mitigation: dogfood early against three different test repos.
+- **Brownfield detection edge cases (Pillar 2).** Same shape; same mitigation.
+- **Recovery agent's failure-classification breadth.** New failure shapes appear in real use. Mitigation: the `failure_taxonomy.py` is intentionally extensible and ships with the patterns we know about; new categories arrive via PR.
+- **Scheduler + monitoring complexity (Pillar 4).** This is the biggest unknown. Pillar 4's spec set will land closer to the work, not now.
 
-**Day 20 — GitHub PR integration**
-- After `carve deploy`, generated artifacts are committed to a feature branch
-- A PR is opened against the configured default branch
-- PR description includes the plan summary, file diffs, impact analysis
-- Spec: [`13-github-pr-integration.md`](./milestone-2-real-product/13-github-pr-integration.md)
-
-**Day 21 — Buffer and brownfield dogfooding**
-- Point Carve at three different test repos. Fix everything that breaks.
-- Tag `v0.0.5` and share with five trusted reviewers including at least one outside the team
-
-### Acceptance criteria for M2
-
-A data engineer with an existing dbt project can:
-
-1. Run `carve init` in their repo
-2. Have Carve detect their dbt project and generate a conventions doc
-3. Run `carve plan "make stg_orders incremental"` and see a sensible plan
-4. Run `carve deploy` and see a PR opened in their GitHub repo
-5. Watch the run live in the web UI's workbench
-6. See pipeline runs in the pipeline monitor
-
-## Milestone 3 — Polish for adoption (weeks 4-6)
-
-**Goal:** remove friction so the first hundred users you don't know personally can succeed on their own. v0.1.0 release at the end of week 6.
-
-### Week 4
-
-**Days 22-23 — Multi-step pipelines**
-- Step DAG executor with `depends_on`, parallel execution, failure modes
-- New step types: `sql`, `shell`, `http`
-- Pipeline TOML schema with `[[steps]]`
-- Specs: [`milestone-3-polish/01-multi-step-pipelines.md`](./milestone-3-polish/01-multi-step-pipelines.md), [`02-sql-step-type.md`](./milestone-3-polish/02-sql-step-type.md), [`03-shell-http-steps.md`](./milestone-3-polish/03-shell-http-steps.md)
-
-**Days 24-25 — MCP client**
-- MCP server config in `carve/mcp_servers.toml`
-- MCP tools registered as namespaced skills (`mcp:server:tool`)
-- Per-agent allowlists
-- Test with the official Snowflake MCP server and the dbt MCP server
-- Spec: [`04-mcp-client.md`](./milestone-3-polish/04-mcp-client.md)
-
-**Day 26 — Quality agent**
-- Split out from the dbt agent
-- Generates dbt tests, source freshness checks, anomaly detection rules
-- Spec: [`05-quality-agent.md`](./milestone-3-polish/05-quality-agent.md)
-
-**Days 27-28 — Skills SDK**
-- `@skill` decorator
-- `SkillContext` interface
-- Custom skill discovery from `carve/skills/*.py`
-- Type stubs for IDE support
-- Spec: [`06-skills-sdk.md`](./milestone-3-polish/06-skills-sdk.md)
-
-### Week 5
-
-**Day 29 — Custom step types**
-- `StepType` base class
-- Custom step type discovery from `carve/steps/*.py`
-- Documentation and example
-- Spec: [`07-custom-step-types.md`](./milestone-3-polish/07-custom-step-types.md)
-
-**Days 30-31 — Embedding-based schema search**
-- Embedding pipeline for dbt model docs, source docs, column comments
-- Local ChromaDB store
-- Semantic search skill that returns pointers, not full content
-- Refresh on dbt build + scheduled
-- Spec: [`08-embedding-search.md`](./milestone-3-polish/08-embedding-search.md)
-
-**Days 32-33 — Agent studio screen**
-- Agent list, agent editor with system prompt, model selection, skills, guardrails
-- Skills tab
-- Settings tab with MCP server management
-- Edits commit to git
-- Spec: [`09-web-ui-agent-studio.md`](./milestone-3-polish/09-web-ui-agent-studio.md)
-
-**Days 34-35 — dbt run view screen**
-- Lineage DAG with status colors
-- Run summary, test results, failure investigation flow
-- "Investigate" button that hands the failure back to the dbt agent
-- Spec: [`10-web-ui-dbt-run-view.md`](./milestone-3-polish/10-web-ui-dbt-run-view.md)
-
-### Week 6
-
-**Days 36-37 — Example projects**
-- Three working examples: `salesforce-mart`, `stripe-revenue`, `postgres-sync`
-- Each example has a README walkthrough, sample data, expected outputs
-- CI runs the examples end-to-end on every PR
-- Spec: [`11-example-projects.md`](./milestone-3-polish/11-example-projects.md)
-
-**Days 38-39 — Documentation site**
-- mkdocs-material site under `docs/`
-- Concepts (steps, agents, plan-and-deploy, schema-context)
-- Guides (first pipeline, brownfield setup, writing a custom skill)
-- Reference (CLI, config schema, glossary)
-- Auto-deploy via GitHub Actions
-- Spec: [`12-documentation-site.md`](./milestone-3-polish/12-documentation-site.md)
-
-**Day 40 — Doctor command**
-- `carve doctor` runs a checklist: LLM provider, Snowflake, dbt installed, state store, venvs cached, MCP servers
-- Spec: [`13-doctor-command.md`](./milestone-3-polish/13-doctor-command.md)
-
-**Days 41-42 — Release prep and launch**
-- Final dogfooding pass against five different real-world projects
-- Write the launch blog post
-- Polish the README (the most-read piece of marketing the project has)
-- Set up `carve-data/carve` GitHub org and repo if not already
-- Tag `v0.1.0`
-- Post to Hacker News, the dbt Slack, the Locally Optimistic Slack, /r/dataengineering
-
-### Acceptance criteria for M3
-
-A stranger from the internet can:
-
-1. Read the README, decide it's worth trying
-2. Clone Carve, run `carve init`, configure their connections
-3. Try the first example project successfully
-4. Generate their first PR against their own dbt project
-5. All within 20 minutes, without messaging anyone for help
-
-## Risk timeline
-
-Risks that materialize at specific points in the schedule:
-
-- **Week 1 risk:** the agent loop is harder than expected. Mitigation: the M1 demo is intentionally narrow. If the agent struggles with broad goals, narrow the M1 demo target further until something works.
-- **Week 2 risk:** brownfield detection has edge cases. Mitigation: have at least three real dbt projects ready to test against during week 2. Don't theorize — measure.
-- **Week 3 risk:** the web UI takes longer than budgeted. Mitigation: ship just two screens for M2. The agent studio and dbt run view are explicitly deferred to M3.
-- **Week 4-5 risk:** MCP integration discovers protocol issues with specific servers. Mitigation: pick two MCP servers known to work well (Snowflake's official, dbt's) for the initial integration. Don't try to be compatible with all servers simultaneously.
-- **Week 6 risk:** docs and polish always take longer than expected. Mitigation: docs writing starts in week 5. Don't leave it for the final week.
-
-## Schedule realism
-
-The schedule above is achievable for an experienced engineer using AI coding tools aggressively. Specifically:
-
-- Most of the code is well-specified enough that Claude Code can produce solid first drafts
-- The engineer's time goes to architecture decisions, integration debugging, prompt engineering for the agents, and the genuinely tricky bits (orchestration, brownfield detection, embedding pipeline)
-- Code review and integration testing are the bottleneck, not raw typing speed
-
-If the schedule slips, the slip almost always falls in one of three places:
-1. Brownfield edge cases (week 2)
-2. Web UI polish (weeks 3, 5)
-3. Documentation completeness (week 6)
-
-Plan for those slips. If you have to cut, cut the embedding-based search from M3 (defer to v0.2) and ship without it. The catalog and manifest queries cover most use cases.
+If a pillar slips, the slip cuts scope rather than time — defer pieces to the next pillar or a follow-up release.
 
 ## What this plan deliberately defers
 
-- **Multi-LLM-provider support** — Anthropic-only for v0.1. OpenAI etc. comes when someone asks.
-- **Docker runner** — `LocalVenvRunner` only for v0.1.
-- **Multi-user authentication** — single user only.
-- **MCP server (Carve as MCP server)** — consumed but not exposed in v0.1.
-- **Visual pipeline editor** — TOML-only authoring, AI-first.
-- **BigQuery, Databricks, Redshift adapters** — Snowflake-only.
-- **dbt Cloud as an executor backend** — supported as a stretch goal in M3 if time permits, otherwise deferred.
+- **Multi-LLM-provider support.** Anthropic-only for v0.1. OpenAI / Google / others come when there's demand.
+- **Docker runner.** `LocalVenvRunner` only.
+- **Multi-user authentication.** Single user. SaaS comes later.
+- **MCP server (Carve as MCP server).** Consumed in Pillar 4; not exposed in any v0.x.
+- **Visual pipeline editor.** TOML / YAML authoring, AI-first. The web UI provides views, not authoring.
+- **BigQuery, Databricks, Redshift, Postgres destinations.** Snowflake-only for v0.1; M4 or community contributions extend.
+- **dbt Cloud as an executor backend.** Possibly later; stays out of v0.x.
 
-## What happens after v0.1.0
+## What's after v0.4
 
-The first 30 days post-launch are about listening, not building. The roadmap is shaped by real user feedback. Early candidates for v0.2:
+The first 30 days post-launch of each pillar are about listening, not building. Roadmap evolves with real user feedback. Early candidates for v0.5+:
 
-- BigQuery adapter
-- OpenAI / multi-provider support
+- BigQuery / Databricks adapters
+- Multi-provider LLM support
 - Docker runner
-- Multi-user authentication
-- Embedding search if cut from M3
+- Multi-user authentication for SaaS-mode
+- Visual pipeline monitor (if the CLI views aren't enough)
 
-But these are guesses. The actual v0.2 priorities come from the issues and PRs that arrive in the first month.
+But these are guesses. The actual v0.5+ priorities come from issues and PRs that arrive after each pillar ships.

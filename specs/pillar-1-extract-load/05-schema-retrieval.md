@@ -3,7 +3,7 @@
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 0.5 day
 **Dependencies:** M1-06 (Snowflake connector), P1-01 (target system)
-**Lineage:** Subset of **M2-09** ([`specs/milestone-2-real-product/09-schema-retrieval.md`](../milestone-2-real-product/09-schema-retrieval.md), 210 lines, not yet formally reviewed but content is current). Pillar 1 ships only the **catalog-query layer** (Layer 1 from M2-09's five-layer model). dbt manifest queries (Layer 2), file grep (Layer 3), and lineage traversal (Layer 4) move to **Pillar 2** alongside the dbt agent. Embedding-based search (Layer 5) is far-future. The skill registry, decorator, `SkillContext`, caching, and truncation infrastructure carry forward verbatim — Pillar 2's additional layers reuse it without further structural design.
+**Lineage:** Subset of **M2-09** ([`specs/_archive/milestone-2-real-product/09-schema-retrieval.md`](../_archive/milestone-2-real-product/09-schema-retrieval.md), 210 lines, not yet formally reviewed but content is current). Pillar 1 ships only the **catalog-query layer** (Layer 1 from M2-09's five-layer model). dbt manifest queries (Layer 2), file grep (Layer 3), and lineage traversal (Layer 4) move to **Pillar 2** alongside the dbt agent. Embedding-based search (Layer 5) is far-future. The skill registry, decorator, `SkillContext`, caching, and truncation infrastructure carry forward verbatim — Pillar 2's additional layers reuse it without further structural design.
 
 ## Purpose
 

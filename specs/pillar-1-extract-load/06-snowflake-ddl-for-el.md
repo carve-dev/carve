@@ -3,7 +3,7 @@
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 0.5 day
 **Dependencies:** M1-06 (Snowflake connector), P1-02 (plan/build lifecycle), P1-04 (extract-load agent), P1-05 (schema retrieval)
-**Lineage:** Narrow subset of **M2-05** ([`specs/milestone-2-real-product/05-snowflake-agent.md`](../milestone-2-real-product/05-snowflake-agent.md)). Pillar 1 ships only the per-EL DDL emission portion (the "Per-pipeline output" section added during the SDLC discussion). The full Snowflake agent's broader scope — warehouse creation/sizing, role hierarchies, account-level RBAC, dynamic tables, streams, tasks — defers to **Pillar 2** or later.
+**Lineage:** Narrow subset of **M2-05** ([`specs/_archive/milestone-2-real-product/05-snowflake-agent.md`](../_archive/milestone-2-real-product/05-snowflake-agent.md)). Pillar 1 ships only the per-EL DDL emission portion (the "Per-pipeline output" section added during the SDLC discussion). The full Snowflake agent's broader scope — warehouse creation/sizing, role hierarchies, account-level RBAC, dynamic tables, streams, tasks — defers to **Pillar 2** or later.
 
 ## Purpose
 

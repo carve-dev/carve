@@ -170,7 +170,7 @@ default_branch_protected = true
 
 ## `carve/mcp.toml`
 
-External MCP servers Carve consumes. See [M3-04](../milestone-3-polish/04-mcp-client.md).
+External MCP servers Carve consumes. See [M3-04](../_archive/milestone-3-polish/04-mcp-client.md).
 
 ```toml
 [servers.pagerduty]

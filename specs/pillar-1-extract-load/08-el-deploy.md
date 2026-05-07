@@ -3,7 +3,7 @@
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1 day
 **Dependencies:** P1-01 (target system), P1-02 (plan/build lifecycle), P1-06 (Snowflake DDL for EL), P1-07 (`carve el run`)
-**Lineage:** Replaces the **parked M2-14 proposal** ([`specs/milestone-2-real-product/_spec_update_proposal_M2-14.md`](../milestone-2-real-product/_spec_update_proposal_M2-14.md), drafted but never accepted). The 5-phase ceremony, generated GHA workflow files, and `Provider` abstraction in that proposal are all dropped — too prescriptive for OSS, fights users on Airflow/GitLab/custom CI. Deploy here is a single deterministic command users wrap in whatever workflow they already operate. The deploy-role / runtime-role separation pattern from the parked proposal carries forward as a documented recommendation.
+**Lineage:** Replaces the **parked M2-14 proposal** ([`specs/_archive/milestone-2-real-product/_spec_update_proposal_M2-14.md`](../_archive/milestone-2-real-product/_spec_update_proposal_M2-14.md), drafted but never accepted). The 5-phase ceremony, generated GHA workflow files, and `Provider` abstraction in that proposal are all dropped — too prescriptive for OSS, fights users on Airflow/GitLab/custom CI. Deploy here is a single deterministic command users wrap in whatever workflow they already operate. The deploy-role / runtime-role separation pattern from the parked proposal carries forward as a documented recommendation.
 
 ## Purpose
 
