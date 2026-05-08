@@ -640,3 +640,106 @@ def test_two_builds_against_different_targets(
     # Each target's directory got its own files.
     assert (project_dir / "targets/dev/el/csv_ingest/main.py").is_file()
     assert (project_dir / "targets/prod/el/csv_ingest/main.py").is_file()
+
+
+# ---------------------------------------------------------------------------
+# destination.toml emission + override application
+# ---------------------------------------------------------------------------
+
+
+def test_build_writes_destination_toml(
+    project_dir: Path, repository: Repository
+) -> None:
+    """The build flow emits ``destination.toml`` next to ``main.py``.
+
+    Stage-1 contract: per-artifact, per-target destination config.
+    Table is always literal; database/schema match the connection
+    defaults (ANALYTICS/RAW from the test config) so they appear
+    commented-out in the file rather than as live overrides.
+    """
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    # The default _config has dev's snowflake.database == "DB" / schema_ ==
+    # None. The plan's design carries database="ANALYTICS", schema="RAW",
+    # table="RAW_CSV". Because the plan's database differs from env,
+    # destination.toml will write database as a live override.
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_destn1")
+
+    client = _client_returning(*_success_responses())
+    build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+
+    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    assert dest_path.is_file()
+    content = dest_path.read_text(encoding="utf-8")
+    # Table is always live.
+    assert 'table = "RAW_CSV"' in content
+    # Database differs from env default → live override.
+    live_db_lines = [
+        line for line in content.splitlines() if line.startswith("database =")
+    ]
+    assert live_db_lines == ['database = "ANALYTICS"']
+
+
+def test_build_destination_override_applies_before_agent_runs(
+    project_dir: Path, repository: Repository
+) -> None:
+    """``destination_override`` mutates ``design.destination`` so the
+    agent sees the user's chosen FQN AND destination.toml reflects it."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_destn2")
+
+    client = _client_returning(*_success_responses())
+    build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        destination_override={"table": "OVERRIDDEN_TABLE", "schema": "STAGING"},
+    )
+
+    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    assert dest_path.is_file()
+    content = dest_path.read_text(encoding="utf-8")
+    assert 'table = "OVERRIDDEN_TABLE"' in content
+    # schema=STAGING differs from default (test config has schema_=None) →
+    # live override.
+    live_schema_lines = [
+        line for line in content.splitlines() if line.startswith("schema =")
+    ]
+    assert live_schema_lines == ['schema = "STAGING"']
+
+
+def test_build_destination_override_empty_string_clears_field(
+    project_dir: Path, repository: Repository
+) -> None:
+    """Passing ``""`` for a field via ``destination_override`` clears it
+    from ``design.destination`` — the prompt-edit path uses this to
+    revert an override back to "inherit from env."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_destn3")
+
+    client = _client_returning(*_success_responses())
+    build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        # The plan's design has database="ANALYTICS"; clear it so it
+        # falls back to env at runtime.
+        destination_override={"database": ""},
+    )
+
+    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    content = dest_path.read_text(encoding="utf-8")
+    # database now matches env (None); should NOT be a live line.
+    live_db_lines = [
+        line for line in content.splitlines() if line.startswith("database =")
+    ]
+    assert live_db_lines == []

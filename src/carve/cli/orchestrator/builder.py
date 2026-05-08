@@ -87,6 +87,7 @@ def build_plan(
     max_turns: int = 30,
     observer: AgentObserver | None = None,
     force: bool = False,
+    destination_override: dict[str, str] | None = None,
 ) -> BuildArtifact:
     """Build the pipeline files described by ``plan_id``.
 
@@ -130,6 +131,24 @@ def build_plan(
         )
 
     design = _load_plan_design(plan_row)
+
+    # Apply CLI-flag overrides (from `carve build --table/--database/--schema`)
+    # to the design's destination BEFORE the agent runs. The agent sees
+    # the overridden values in its design preamble; destination.toml
+    # then reflects them. Empty-string sentinel means "clear the field"
+    # (used by the prompt-edit flow when the user blanks out a value
+    # to fall back to env inherit).
+    if destination_override:
+        dest_block = design.get("destination")
+        if not isinstance(dest_block, dict):
+            dest_block = {}
+        for key, value in destination_override.items():
+            if value == "":
+                dest_block.pop(key, None)
+            else:
+                dest_block[key] = value
+        design["destination"] = dest_block
+
     pipeline_name = _pipeline_name_from(plan_row, design)
 
     cli_flag = target if target is not None else ACTIVE_TARGET_FLAG

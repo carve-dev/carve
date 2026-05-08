@@ -467,6 +467,14 @@ def _execute_phases(
             ctx.console.print(
                 f"  DDL:   targets/{ctx.dest_target}/snowflake/{ctx.pipeline_name}.sql"
             )
+
+        # Surface destination.toml overrides — particularly the case
+        # where an override differs from the destination target's env
+        # default. This is the "promotion mismatch" foot-gun: an override
+        # set at plan time in dev silently propagates to prod unless the
+        # user notices and edits prod's destination.toml.
+        _render_destination_override_warning(ctx)
+
         # Pass through to typer's confirm; tests bypass with `yes=True`.
         if not typer.confirm("Proceed with deploy?", default=False):
             ctx.console.print("[yellow]Aborted by user.[/yellow]")
@@ -853,6 +861,89 @@ def _load_plan_design(repository: Repository, plan_id: str) -> dict[str, Any] | 
         return None
     design = task_graph.get("design")
     return design if isinstance(design, dict) else None
+
+
+def _render_destination_override_warning(ctx: DeployContext) -> None:
+    """Surface destination.toml overrides before the deploy proceeds.
+
+    The source's ``destination.toml`` will be copied verbatim to the
+    destination target. When it carries overrides (database / schema
+    set explicitly), the user might be surprised that the override
+    propagates — particularly if the override differs from the
+    destination target's connection defaults.
+
+    No-op when destination.toml is missing or carries no overrides.
+    """
+    from carve.core.targets.destination import read_destination_toml
+
+    src_path = (
+        ctx.project_dir
+        / "targets"
+        / ctx.source_target
+        / "el"
+        / ctx.pipeline_name
+        / "destination.toml"
+    )
+    try:
+        destination = read_destination_toml(src_path)
+    except ValueError as exc:
+        ctx.console.print(
+            f"[red]✗[/red] {src_path} is malformed: {exc}"
+        )
+        return
+    if destination is None:
+        return  # nothing to surface
+
+    has_db_override = destination.has_database_override
+    has_schema_override = destination.has_schema_override
+    if not (has_db_override or has_schema_override):
+        return  # table-only file, no overrides to flag
+
+    # Pull the destination target's connection defaults so we can show
+    # the user what the override differs from (the high-friction case).
+    dest_section = ctx.config.connections.snowflake.get(ctx.dest_target)
+    dest_env_db = dest_section.database if dest_section is not None else None
+    dest_env_schema = (
+        dest_section.schema_ if dest_section is not None else None
+    )
+
+    ctx.console.print()
+    ctx.console.print(
+        "[bold yellow]⚠ destination.toml carries overrides:[/bold yellow]"
+    )
+    ctx.console.print(
+        f"  table:    [bold]{destination.table}[/bold]  [dim](always literal)[/dim]"
+    )
+    if has_db_override:
+        if dest_env_db == destination.database:
+            ctx.console.print(
+                f"  database: [bold]{destination.database}[/bold]  "
+                f"[dim](matches {ctx.dest_target}'s default — no effect)[/dim]"
+            )
+        else:
+            ctx.console.print(
+                f"  database: [bold]{destination.database}[/bold]  "
+                f"[yellow](override; {ctx.dest_target}'s default is "
+                f"{dest_env_db or '<unset>'})[/yellow]"
+            )
+    if has_schema_override:
+        if dest_env_schema == destination.schema:
+            ctx.console.print(
+                f"  schema:   [bold]{destination.schema}[/bold]  "
+                f"[dim](matches {ctx.dest_target}'s default — no effect)[/dim]"
+            )
+        else:
+            ctx.console.print(
+                f"  schema:   [bold]{destination.schema}[/bold]  "
+                f"[yellow](override; {ctx.dest_target}'s default is "
+                f"{dest_env_schema or '<unset>'})[/yellow]"
+            )
+    ctx.console.print(
+        "[dim]To change the override before deploying, edit "
+        f"targets/{ctx.dest_target}/el/{ctx.pipeline_name}/destination.toml "
+        "after this confirmation, then re-run.[/dim]"
+    )
+    ctx.console.print()
 
 
 # Public re-exports for downstream consumers (the deprecated alias

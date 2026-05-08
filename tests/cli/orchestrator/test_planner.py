@@ -633,3 +633,112 @@ def _dummy_plan_row(plan_id: str) -> Any:
         task_graph_json="{}",
         file_path=f".carve/plans/{plan_id}.json",
     )
+
+
+# ---------------------------------------------------------------------------
+# Destination hint enforcement (CLI flags + goal-text FQN parsing)
+# ---------------------------------------------------------------------------
+
+
+def test_destination_hint_overrides_agent_choice(
+    project_dir: Path, repository: Repository
+) -> None:
+    """CLI flags via destination_hint override what the agent submits.
+
+    The agent might pick `RAW_CSV_DATA` for the destination table; the
+    user passed `--table FORCED_TABLE` on `carve plan`. The post-submit
+    enforcement step must replace the agent's choice with the flag's.
+    """
+    config = _config()
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", _design(), tool_id="tu_1"),
+            ],
+            stop_reason="tool_use",
+            usage=_usage(),
+        ),
+    )
+
+    artifact = generate_plan(
+        goal="ingest a CSV from a public URL into Snowflake",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        destination_hint={"table": "FORCED_TABLE", "schema": "FORCED_SCHEMA"},
+    )
+
+    # Enforced fields override the agent's design.
+    dest = artifact.design["destination"]
+    assert dest["table"] == "FORCED_TABLE"
+    assert dest["schema"] == "FORCED_SCHEMA"
+    # Database wasn't in the hint → agent's value preserved.
+    assert dest["database"] == "ANALYTICS"
+
+
+def test_goal_text_fqn_seeds_destination_when_no_flags(
+    project_dir: Path, repository: Repository
+) -> None:
+    """An FQN parsed from goal text becomes the destination when no
+    CLI flags are provided. CLI flags would still take precedence — see
+    the test above — but here we exercise the goal-only path."""
+    config = _config()
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", _design(), tool_id="tu_1"),
+            ],
+            stop_reason="tool_use",
+            usage=_usage(),
+        ),
+    )
+
+    artifact = generate_plan(
+        goal=(
+            "Daily ingest of Iowa liquor sales data into "
+            "ANALYTICS.SALES.IOWA_LIQUOR — keep it incremental."
+        ),
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+
+    dest = artifact.design["destination"]
+    assert dest["database"] == "ANALYTICS"
+    assert dest["schema"] == "SALES"
+    assert dest["table"] == "IOWA_LIQUOR"
+
+
+def test_cli_flags_beat_goal_text_fqn(
+    project_dir: Path, repository: Repository
+) -> None:
+    """When BOTH the goal text and a CLI flag specify a field, the
+    flag wins. Goal-text parse is a fallback for unset flags."""
+    config = _config()
+    client = _client_returning(
+        _response(
+            content=[
+                _tool_use_block("submit_plan", _design(), tool_id="tu_1"),
+            ],
+            stop_reason="tool_use",
+            usage=_usage(),
+        ),
+    )
+
+    artifact = generate_plan(
+        goal="ingest the iowa data into ANALYTICS.SALES.IOWA",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+        destination_hint={"table": "FLAG_WIN"},
+    )
+
+    dest = artifact.design["destination"]
+    # Flag wins on table.
+    assert dest["table"] == "FLAG_WIN"
+    # Goal text picked schema and database.
+    assert dest["database"] == "ANALYTICS"
+    assert dest["schema"] == "SALES"

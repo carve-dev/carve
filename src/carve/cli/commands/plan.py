@@ -51,6 +51,35 @@ def command(
             "files in its context and proposes a delta."
         ),
     ),
+    table: str | None = typer.Option(
+        None,
+        "--table",
+        help=(
+            "Pre-seed the destination table name. The agent honors this "
+            "and does not pick a different name. If omitted, the agent "
+            "infers the table from the goal text or picks a snake_case "
+            "default."
+        ),
+    ),
+    database: str | None = typer.Option(
+        None,
+        "--database",
+        help=(
+            "Pre-seed the destination database. When set, lands in "
+            "destination.toml as an override and is used by the script "
+            "instead of the target's <TARGET>_SNOWFLAKE_DATABASE env "
+            "var. Omit to inherit from the target's connection."
+        ),
+    ),
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        help=(
+            "Pre-seed the destination schema. Same shape as --database — "
+            "override at runtime, omit to inherit from the target's "
+            "<TARGET>_SNOWFLAKE_SCHEMA env var."
+        ),
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -64,6 +93,13 @@ def command(
             "[red]✗[/red] --refine and --pipeline are mutually exclusive."
         )
         raise typer.Exit(code=2)
+
+    # Build a destination-override hint for the planner. Goal-text
+    # parsing happens INSIDE generate_plan as a fallback when no flag
+    # value is provided — flags always win.
+    destination_hint = _destination_hint_from_flags(
+        table=table, database=database, schema=schema
+    )
 
     project_dir = Path.cwd()
 
@@ -92,6 +128,7 @@ def command(
                 observer=observer,
                 parent_plan_id=refine,
                 pipeline_name=pipeline,
+                destination_hint=destination_hint,
             )
             # `--target` is read inside `generate_plan` via the module-level
             # `ACTIVE_TARGET_FLAG` slot wired by `_main_callback`; nothing
@@ -221,3 +258,27 @@ def _render_refine_diff(
         console.print(f"  [yellow]{field}[/yellow]")
         console.print(f"    - {old_repr}")
         console.print(f"    + {new_repr}")
+
+
+def _destination_hint_from_flags(
+    *,
+    table: str | None,
+    database: str | None,
+    schema: str | None,
+) -> dict[str, str] | None:
+    """Bundle CLI-flag-supplied destination fields for the planner.
+
+    Returns ``None`` when no flag was passed. The planner injects this
+    into the agent's preamble so the agent honors flagged fields and
+    parses the rest from the goal text (or falls back to connection
+    defaults). Returning a dict (even partial) signals "the user has
+    opinions about the destination — respect them."
+    """
+    out: dict[str, str] = {}
+    if table is not None and table.strip():
+        out["table"] = table.strip()
+    if database is not None and database.strip():
+        out["database"] = database.strip()
+    if schema is not None and schema.strip():
+        out["schema"] = schema.strip()
+    return out or None

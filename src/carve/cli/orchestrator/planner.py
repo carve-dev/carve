@@ -149,6 +149,7 @@ def generate_plan(
     observer: AgentObserver | None = None,
     parent_plan_id: str | None = None,
     pipeline_name: str | None = None,
+    destination_hint: dict[str, str] | None = None,
 ) -> PlanArtifact:
     """Run the plan agent and persist the resulting design.
 
@@ -224,12 +225,22 @@ def generate_plan(
         active_target=active_target,
         snowflake_pool=snowflake_pool,
     )
+
+    # Resolve user-specified destination: CLI flags first, then
+    # FQN parsed from the goal text. The combined dict is the
+    # "instruction" the system prompt advertises to the agent and
+    # the floor we enforce after submit_plan.
+    user_destination = _resolve_user_destination(
+        goal=goal, destination_hint=destination_hint
+    )
+
     system_prompt = _compose_plan_system_prompt(
         config=config,
         project_dir=project_dir,
         parent_plan_row=parent_plan_row,
         target_pipeline=target_pipeline,
         active_target=active_target,
+        user_destination=user_destination,
     )
 
     skills_registry, skill_executor, skill_context = _build_skills(
@@ -264,6 +275,19 @@ def generate_plan(
         )
 
     design = capture.design
+
+    # Enforce user-specified destination fields. The agent saw them
+    # in the system prompt and is told to honor them; this is the
+    # belt-and-braces enforcement that runs even if the agent
+    # ignored or "improved" them.
+    if user_destination:
+        dest_block = design.get("destination")
+        if not isinstance(dest_block, dict):
+            dest_block = {}
+        for key, value in user_destination.items():
+            dest_block[key] = value
+        design["destination"] = dest_block
+
     submitted_name = _validate_pipeline_name(
         design.get("pipeline_name"),
         target_pipeline=target_pipeline,
@@ -311,6 +335,7 @@ def _compose_plan_system_prompt(
     parent_plan_row: Plan | None,
     target_pipeline: str | None,
     active_target: str,
+    user_destination: dict[str, str] | None = None,
 ) -> str:
     """Assemble the plan agent's system prompt: base + connection + pipeline.
 
@@ -318,10 +343,17 @@ def _compose_plan_system_prompt(
     contract. We append a connection-context preamble (M1.1-05 pattern)
     and, if applicable, an existing-pipeline preamble so the agent has
     the context the user already implicitly assumed.
+
+    ``user_destination`` carries CLI-flag-supplied + goal-parsed
+    destination fields; it's surfaced as a separate "Honor these
+    fields" block so the agent doesn't try to be clever.
     """
     sections: list[str] = [load_m1_plan_agent_prompt()]
 
     sections.append(_render_connection_context(config, active_target))
+
+    if user_destination:
+        sections.append(_render_user_destination_block(user_destination))
 
     if target_pipeline is not None:
         existing = _render_existing_pipeline_section(
@@ -336,6 +368,55 @@ def _compose_plan_system_prompt(
         sections.append(_render_parent_plan_section(parent_plan_row))
 
     return "\n\n".join(sections)
+
+
+def _render_user_destination_block(user_destination: dict[str, str]) -> str:
+    """Tell the agent which destination fields the user fixed.
+
+    Surfaces both CLI flags and goal-parsed identifiers as a single
+    "user-fixed" set; the agent doesn't need to distinguish.
+    """
+    lines = [
+        "## User-specified destination",
+        "",
+        "The user has fixed the destination fields below. Honor them "
+        "verbatim in `design.destination` — do NOT pick different "
+        "values, even if your catalog inspection suggests something "
+        "else looks better. Fields not listed here remain your call.",
+        "",
+    ]
+    for key in ("database", "schema", "table"):
+        value = user_destination.get(key)
+        if value is not None:
+            lines.append(f"- **{key}:** `{value}`")
+    return "\n".join(lines)
+
+
+def _resolve_user_destination(
+    *,
+    goal: str,
+    destination_hint: dict[str, str] | None,
+) -> dict[str, str]:
+    """Combine CLI-flag hint + goal-text FQN into one destination dict.
+
+    Precedence: CLI flags win over goal-parsed values. Returns an
+    empty dict when no field is set (no flags AND no FQN parsed from
+    the goal); callers treat that as "agent picks freely."
+    """
+    from carve.core.targets.destination import parse_fqn_from_goal
+
+    out: dict[str, str] = {}
+    parsed = parse_fqn_from_goal(goal)
+    if parsed is not None:
+        if parsed.database is not None:
+            out["database"] = parsed.database
+        if parsed.schema is not None:
+            out["schema"] = parsed.schema
+        out["table"] = parsed.table
+    if destination_hint:
+        for key, value in destination_hint.items():
+            out[key] = value  # CLI flags overwrite goal-parsed
+    return out
 
 
 def _render_connection_context(config: Config, active_target: str) -> str:

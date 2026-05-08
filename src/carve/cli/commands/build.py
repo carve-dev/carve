@@ -36,6 +36,41 @@ def command(
         "-q",
         help="Suppress live progress output; print only the final summary.",
     ),
+    table: str | None = typer.Option(
+        None,
+        "--table",
+        help=(
+            "Override the destination table at build time. The plan's "
+            "design.destination.table is replaced before the agent runs."
+        ),
+    ),
+    database: str | None = typer.Option(
+        None,
+        "--database",
+        help=(
+            "Override the destination database. Lands in destination.toml "
+            "as a live override; without this, the runtime database "
+            "inherits from <TARGET>_SNOWFLAKE_DATABASE."
+        ),
+    ),
+    schema_: str | None = typer.Option(
+        None,
+        "--schema",
+        help=(
+            "Override the destination schema. Same shape as --database — "
+            "lands as an override in destination.toml; otherwise inherits "
+            "from <TARGET>_SNOWFLAKE_SCHEMA."
+        ),
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=(
+            "Skip the destination-FQN confirmation prompt. Useful for "
+            "scripted CI builds; equivalent to answering `y`."
+        ),
+    ),
 ) -> None:
     """Run the build agent against ``plan_id`` and write pipeline files."""
     project_dir = Path.cwd()
@@ -51,6 +86,25 @@ def command(
     session_factory = create_session_factory(engine)
     repository = Repository(session_factory)
 
+    # Confirm or override the destination FQN before invoking the
+    # build agent. CLI flags override the plan's design unconditionally;
+    # without flags and without --yes, the user gets a y/e/n prompt.
+    confirm_result = _confirm_or_override_destination(
+        plan_id=plan_id,
+        repository=repository,
+        config=config,
+        cli_table=table,
+        cli_database=database,
+        cli_schema=schema_,
+        skip_prompt=yes,
+    )
+    if confirm_result is False:  # explicit abort from prompt
+        raise typer.Exit(code=1)
+    # Narrow: confirm_result is now `None | dict[str, str]`.
+    destination_override: dict[str, str] | None = (
+        confirm_result if isinstance(confirm_result, dict) else None
+    )
+
     observer = RichConsoleObserver(console, quiet=quiet)
 
     try:
@@ -62,6 +116,7 @@ def command(
                 repository=repository,
                 observer=observer,
                 force=force,
+                destination_override=destination_override,
             )
         finally:
             observer.close()
@@ -109,3 +164,170 @@ def command(
         f"       carve el deploy {artifact.pipeline_name} --to {artifact.target}"
     )
     raise typer.Exit(code=0)
+
+
+def _confirm_or_override_destination(
+    *,
+    plan_id: str,
+    repository: Repository,
+    config: object,
+    cli_table: str | None,
+    cli_database: str | None,
+    cli_schema: str | None,
+    skip_prompt: bool,
+) -> dict[str, str] | None | bool:
+    """Surface the destination FQN before the build agent runs.
+
+    Returns one of:
+
+    * ``None`` — no override; build_plan should use the plan's
+      stored ``design.destination`` as-is.
+    * ``dict`` — override one or more of ``database`` / ``schema`` /
+      ``table``. The builder applies these to ``design.destination``
+      before invoking the agent.
+    * ``False`` — user explicitly aborted the prompt with ``n``.
+      Caller should exit non-zero without building.
+
+    The prompt distinguishes "live override" (value differs from the
+    target's connection default) from "inherit" (matches default or
+    unset).
+    """
+    import json as _json
+
+    from rich.markup import escape as _esc
+
+    from carve.cli.commands.el import resolve_subcommand_target
+    from carve.core.targets.resolution import resolve_active_target
+
+    # Read the plan's stored destination so we can show the user what
+    # the agent originally proposed.
+    plan_row = repository.get_plan(plan_id)
+    if plan_row is None or not plan_row.task_graph_json:
+        return None  # build_plan will raise its own clean error
+
+    try:
+        task_graph = _json.loads(plan_row.task_graph_json)
+    except (TypeError, ValueError):
+        return None
+    design = task_graph.get("design") if isinstance(task_graph, dict) else None
+    plan_destination = (
+        design.get("destination") if isinstance(design, dict) else None
+    )
+    if not isinstance(plan_destination, dict):
+        plan_destination = {}
+
+    # Resolve the active target so we can compare against connection
+    # defaults for the env-vs-override classification.
+    active_target = resolve_active_target(
+        resolve_subcommand_target(None), config  # type: ignore[arg-type]
+    )
+    target_section = config.connections.snowflake.get(active_target)  # type: ignore[attr-defined]
+    env_db = target_section.database if target_section is not None else None
+    env_schema = target_section.schema_ if target_section is not None else None
+
+    # Apply CLI flags as the proposed values; fall back to plan's.
+    proposed = {
+        "database": cli_database or plan_destination.get("database"),
+        "schema": cli_schema or plan_destination.get("schema"),
+        "table": cli_table or plan_destination.get("table"),
+    }
+
+    # Build the override dict only for fields that differ from what's
+    # already in the plan (so build_plan only mutates what it needs).
+    override: dict[str, str] = {}
+    if cli_database is not None and cli_database != plan_destination.get("database"):
+        override["database"] = cli_database
+    if cli_schema is not None and cli_schema != plan_destination.get("schema"):
+        override["schema"] = cli_schema
+    if cli_table is not None and cli_table != plan_destination.get("table"):
+        override["table"] = cli_table
+
+    if skip_prompt:
+        return override or None
+
+    # Prompt the user. Print the destination prominently with
+    # provenance per field.
+    console.print()
+    console.print(f"[bold]Destination for target=[cyan]{active_target}[/cyan]:[/bold]")
+
+    def _provenance(field: str, value: str | None, env_value: str | None) -> str:
+        if value is None:
+            if env_value:
+                return f"[dim]<inherits {env_value} from env>[/dim]"
+            return "[red]<unset and no env default>[/red]"
+        if env_value is None:
+            return "[yellow](override; no env default)[/yellow]"
+        if value == env_value:
+            return "[green](matches env default)[/green]"
+        return f"[yellow](override; env default is {_esc(env_value)})[/yellow]"
+
+    console.print(
+        f"  database: [bold]{_esc(str(proposed['database'] or '?'))}[/bold]"
+        f"  {_provenance('database', proposed['database'], env_db)}"
+    )
+    console.print(
+        f"  schema:   [bold]{_esc(str(proposed['schema'] or '?'))}[/bold]"
+        f"  {_provenance('schema', proposed['schema'], env_schema)}"
+    )
+    console.print(
+        f"  table:    [bold]{_esc(str(proposed['table'] or '?'))}[/bold]"
+        f"  [dim](always literal)[/dim]"
+    )
+    console.print()
+
+    while True:
+        answer = typer.prompt(
+            "Confirm? (y to proceed, e to edit, n to abort)",
+            default="y",
+            show_default=True,
+        ).strip().lower()
+        if answer in ("y", "yes"):
+            return override or None
+        if answer in ("n", "no"):
+            console.print("[yellow]Aborted by user.[/yellow]")
+            return False
+        if answer in ("e", "edit"):
+            for field in ("database", "schema", "table"):
+                current = proposed[field]
+                new_value = typer.prompt(
+                    f"  {field}",
+                    default=str(current) if current is not None else "",
+                    show_default=True,
+                ).strip()
+                if not new_value:
+                    # User cleared the value → unset (only meaningful
+                    # for database / schema; table is required).
+                    if field == "table":
+                        console.print("[red]✗ table is required.[/red]")
+                        continue
+                    proposed[field] = None
+                    if plan_destination.get(field) is not None:
+                        override[field] = ""  # signal: clear the field
+                else:
+                    proposed[field] = new_value
+                    if new_value != plan_destination.get(field):
+                        override[field] = new_value
+            console.print(
+                "[green]✓[/green] Updated. Confirming..."
+            )
+            # Re-show the resolved values, then loop to ask y/n/e
+            # again. Most users will pick `y` after editing once.
+            console.print()
+            console.print(
+                f"[bold]Destination for target=[cyan]{active_target}[/cyan]:[/bold]"
+            )
+            for field, env_value in (
+                ("database", env_db),
+                ("schema", env_schema),
+                ("table", None),
+            ):
+                console.print(
+                    f"  {field:<9} [bold]"
+                    f"{_esc(str(proposed[field] or '?'))}[/bold]  "
+                    f"{_provenance(field, proposed[field], env_value)}"
+                )
+            console.print()
+            continue
+        console.print(
+            "[yellow]Please answer `y` (yes), `n` (no), or `e` (edit).[/yellow]"
+        )
