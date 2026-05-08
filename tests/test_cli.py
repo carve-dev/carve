@@ -99,12 +99,20 @@ def test_command_stub_exits_zero(runner: CliRunner, command: str, args: list[str
     assert result.exit_code == 0, result.output
 
 
-def test_deploy_prints_m2_placeholder(runner: CliRunner) -> None:
-    """`carve deploy` is a reserved-verb stub that prints a redirect to `carve run`."""
+def test_deploy_alias_requires_from_and_to(runner: CliRunner) -> None:
+    """`carve deploy` (P1-08 forwarding alias) demands `--from` and `--to`.
+
+    The M1.1-06 stub that printed an "M2 arrives later" placeholder is
+    replaced by a thin wrapper around ``carve el deploy`` that prints
+    a yellow deprecation banner and forwards the same flags. Calling
+    it with just a positional name triggers typer's missing-option
+    error path; the deprecation banner is exercised in
+    ``tests/cli/commands/el/test_deploy.py``.
+    """
     result = runner.invoke(app, ["deploy", "my_pipeline"])
-    assert result.exit_code == 0, result.output
-    assert "M2" in result.output
-    assert "carve el run my_pipeline" in result.output
+    # Missing --from / --to → typer exits 2 with a usage message.
+    assert result.exit_code == 2
+    assert "--from" in result.output
 
 
 @pytest.mark.parametrize(

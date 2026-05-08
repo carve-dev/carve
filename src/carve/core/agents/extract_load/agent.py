@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -48,6 +47,11 @@ from carve.core.agents.tools.extract_load_tools import (
 from carve.core.config.schema import Config
 from carve.core.connectors.snowflake import SnowflakePool
 from carve.core.state.repository import Repository
+from carve.core.targets.names import (
+    ARTIFACT_NAME_RE,
+    InvalidArtifactNameError,
+    validate_artifact_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -218,12 +222,11 @@ def run_extract_load_agent(
 # ---------------------------------------------------------------------------
 
 
-# Same naming regex M1.1-06 uses for pipeline names. Lowercase, alphanumeric
-# and underscores, must start with a letter — no dots, dashes, slashes, or
-# `..` segments. Validating here closes the path-traversal loophole where
-# an artifact_name like ``"../../foo"`` would still resolve under
-# ``project_dir`` and slip through the allow-list's `relative_to` guard.
-_ARTIFACT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# The artifact-name regex (M1.1-06's pipeline-name shape) is hoisted
+# into ``carve.core.targets.names`` so the deploy/verify CLIs can
+# validate the same way the agent does. The local alias is kept as a
+# convenience for code that wants the raw pattern.
+_ARTIFACT_NAME_RE = ARTIFACT_NAME_RE
 
 
 def _resolve_artifact_name(task: dict[str, Any]) -> str:
@@ -264,14 +267,16 @@ def _resolve_artifact_name(task: dict[str, Any]) -> str:
 
 
 def _validated_artifact_name(name: str) -> str:
-    """Return ``name`` if it matches the artifact naming regex, else raise."""
-    if not _ARTIFACT_NAME_RE.fullmatch(name):
-        raise ExtractLoadAgentError(
-            f"Invalid artifact_name {name!r}: must match "
-            f"{_ARTIFACT_NAME_RE.pattern} (lowercase letters, digits, "
-            "and underscores; must start with a letter)."
-        )
-    return name
+    """Return ``name`` if it matches the artifact naming regex, else raise.
+
+    Wraps :func:`carve.core.targets.names.validate_artifact_name` so a
+    bad name surfaces as :class:`ExtractLoadAgentError` (the agent's
+    error type) rather than the generic ``InvalidArtifactNameError``.
+    """
+    try:
+        return validate_artifact_name(name)
+    except InvalidArtifactNameError as exc:
+        raise ExtractLoadAgentError(str(exc)) from exc
 
 
 def _allow_listed_paths(

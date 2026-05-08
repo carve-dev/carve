@@ -931,7 +931,7 @@ def test_artifact_name_validation_rejects_unsafe_values(
     task = _iowa_task()
     task["inputs"]["artifact_name"] = bad_name
     client = _client_returning()  # no API call expected — error is pre-call
-    with pytest.raises(ExtractLoadAgentError, match="artifact_name"):
+    with pytest.raises(ExtractLoadAgentError, match="artifact"):
         _run(project_dir, client, task=task)
 
 

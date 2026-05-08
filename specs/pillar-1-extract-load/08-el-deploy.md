@@ -123,6 +123,8 @@ We do **not** ship a per-pipeline-per-target generated workflow file. We do **no
 
 ## Recovery agent integration
 
+> **Updated during implementation (2026-05-07):** P1-08 ships the recovery seam at `src/carve/core/deploy/recovery.py`: a `RecoveryHandler` Protocol with a single `attempt(context: RecoveryContext) -> RecoveryResult`, a `RecoveryStage` StrEnum (`PREFLIGHT` / `DDL_APPLY` / `VERIFY`), and `NullRecoveryHandler` (the default until P1-09 lands — always returns `success=False, diagnosis="recovery agent not enabled"`). P1-09 plugs an LLM-backed handler into this Protocol; deploy itself is unchanged. Note: the `validate_ddl_statements` allow-list runs **before** the recovery loop. A statement that violates the allow-list raises `UnsafeDdlError`, which is structural (the file is malformed) and **bypasses recovery** — re-editing won't fix it. Snowflake-side execution failures are still routed through the recovery handler as described below. Also note: P1-08 hard-codes `_DEFAULT_MAX_FIX_ATTEMPTS = 3`; P1-09 will override this from `carve/runner.toml`.
+
 The recovery agent (P1-09) participates in **three distinct deploy contexts**, each within the configured fix-attempt budget (default: 3 attempts, $1.00 cap, per `carve/runner.toml` from M1.1-04):
 
 ### 1. Pre-flight drift (Phase 1, no prod writes yet)
@@ -180,21 +182,27 @@ The recovery agent operates in all three deploy contexts — pre-flight, DDL app
 
 ### File-level changes
 
+> **Updated during implementation (2026-05-07):** Two extra hardening modules landed during the iter1 fix pass — `src/carve/core/deploy/identifiers.py` (Snowflake unquoted-identifier validator applied to every agent-emitted `database`/`schema`/`table`, both at the plan-JSON boundary and at every f-string interpolation site for defense-in-depth) and `src/carve/core/deploy/recovery.py` (the `RecoveryHandler` Protocol seam P1-09 plugs into; see "Recovery agent integration" for shape). A new `src/carve/core/targets/names.py` was hoisted from the extract_load agent's local helper and now houses the shared `validate_target_name` / `validate_artifact_name` validators (used by deploy + verify). Tests landed alongside (`tests/core/deploy/test_recovery.py`); `tests/core/deploy/test_identifiers.py` is folded into the per-module test files that exercise it.
+
 New files:
 
 - `src/carve/cli/commands/el/deploy.py` — the `carve el deploy` command (validation + pre-flight + copy + DDL apply + verify + record).
 - `src/carve/cli/commands/el/verify.py` — the `carve el verify` command (read-only checks).
 - `src/carve/core/deploy/__init__.py`
-- `src/carve/core/deploy/preflight.py` — Phase 1 logic (drift detection, manifest validation, connection check).
-- `src/carve/core/deploy/copier.py` — file-copy logic for promoting `<source>` → `<dest>` (uses `shutil.copytree` with overwrite-allowed; refuses if destination has uncommitted git changes).
-- `src/carve/core/deploy/ddl_applier.py` — applies the DDL file via the deploy role (parses statements; runs in order).
+- `src/carve/core/deploy/preflight.py` — Phase 1 logic (drift detection, manifest validation, connection check). Includes a small **type compatibility table** (TEXT/VARCHAR, NUMBER/INT*, FLOAT, BOOLEAN, DATE/TIME/TIMESTAMP families) so equivalent Snowflake aliases don't false-positive as drift.
+- `src/carve/core/deploy/copier.py` — file-copy logic for promoting `<source>` → `<dest>` (uses `shutil.copytree` with overwrite-allowed; refuses if destination has uncommitted git changes; **rejects symlinks** in the source artifact dir before any copy via `_reject_symlinks_in`).
+- `src/carve/core/deploy/ddl_applier.py` — applies the DDL file via the deploy role (parses statements; runs in order). Includes `validate_ddl_statements`, a regex-based **DDL allow-list** that pre-validates every statement against P1-06's idempotency contract (default-deny; forbids `CREATE OR REPLACE`, bare `RENAME`, `ALTER COLUMN SET DATA TYPE`, embedded DML, `DROP DATABASE`, bare `DROP` without `IF EXISTS`). Violations raise `UnsafeDdlError`, which **bypasses the recovery loop** because the failure is structural (the file is malformed; re-editing won't fix it). The error carries only `index` and `label`, never SQL text.
+- `src/carve/core/deploy/identifiers.py` — Snowflake unquoted-identifier grammar enforcement (`^[A-Za-z_][A-Za-z0-9_$]{0,254}$`) on agent-emitted `database`/`schema`/`table` values. Applied at boundary entry (`expected_destinations_from_*`) **and** at every f-string interpolation site. Closes the SQL-injection vector that an LLM-generated plan could otherwise open.
+- `src/carve/core/deploy/recovery.py` — the recovery seam: `RecoveryStage` StrEnum (`PREFLIGHT` / `DDL_APPLY` / `VERIFY`), `RecoveryContext` dataclass, `RecoveryHandler` Protocol with a single `attempt(context: RecoveryContext) -> RecoveryResult`, and `NullRecoveryHandler` (the P1-08 default — always returns `success=False, diagnosis="recovery agent not enabled"`). P1-09 plugs the real LLM-backed handler into this Protocol.
 - `src/carve/core/deploy/verifier.py` — verify logic (column comparison, grants check, optional smoke test).
+- `src/carve/core/targets/names.py` — shared `validate_target_name` / `validate_artifact_name` (hoisted from the extract_load agent's local helper so deploy + verify use the same rules).
 - `tests/cli/commands/el/test_deploy.py`
 - `tests/cli/commands/el/test_verify.py`
 - `tests/core/deploy/test_preflight.py`
 - `tests/core/deploy/test_copier.py`
 - `tests/core/deploy/test_ddl_applier.py`
 - `tests/core/deploy/test_verifier.py`
+- `tests/core/deploy/test_recovery.py`
 - `docs/deploy-from-ci.md` — short doc with the generic CLI-from-CI snippet.
 - `docs/deploy-roles.md` — explains the deploy / runtime role pattern + recommended Snowflake setup SQL.
 
@@ -204,7 +212,15 @@ Modified files:
 - `src/carve/cli/commands/deploy.py` (existing M1.1-06 stub) — wired to `el.deploy.command` for backward compatibility, with deprecation warning. Removed in v0.2.
 - `pyproject.toml` — adds `sqlparse>=0.4` runtime dep for splitting the DDL file into statements (already a dev dep for tests).
 
-No DB migration. No new `Run` columns; `Run.kind="deploy"` already exists; `Run.target` was added in P1-02's migration `0004`.
+> **Updated during implementation (2026-05-07):** `Run.target` was added in P1-07's migration `0005_runs_target`, not P1-02's `0004`. (P1-02's `0004_build_entity` only added `target` to `builds`.) P1-08 ships no new migration; it relies on the column already existing via P1-07.
+
+No DB migration. No new `Run` columns; `Run.kind="deploy"` already exists; `Run.target` was added in P1-07's migration `0005_runs_target`.
+
+**Build manifest forward-compat.** `Build.manifest_json` today only stores `{"files": [...]}`. P1-08 reads expected destinations from the upstream `Plan.task_graph_json["design"]` instead, but `expected_destinations_from_build` is written to *prefer* `manifest["destinations"]` if a future spec ever populates it — so the deploy code keeps working without a refactor when manifest evolves.
+
+**`Run.error_message` redaction.** When a DDL statement fails, the persisted `Run.error_message` records only the failing statement's *type* and *index* (e.g. `"CREATE TABLE failed at statement 3"`); raw SQL text never lands in the DB. The full SQL stays in-memory in the `RecoveryContext` for the recovery handler. Same redaction policy applies to `UnsafeDdlError`, which carries only `index` and `label`.
+
+**`git status --porcelain` semantics.** The uncommitted-changes check distinguishes "no git repo" (returns `[]`, permissive — single-developer workflows without git aren't blocked) from "git failed inside a repo" (raises — surfaces a real problem instead of swallowing it).
 
 ## Tests
 
@@ -246,9 +262,11 @@ No DB migration. No new `Run` columns; `Run.kind="deploy"` already exists; `Run.
 
 (Summary of File-level changes section.)
 
-New: `deploy` + `verify` CLI commands, preflight + copier + ddl_applier + verifier modules, two short docs (deploy-from-ci + deploy-roles), 6 test files.
+> **Updated during implementation (2026-05-07):** Three additional modules landed during the iter1 hardening pass — `core/deploy/identifiers.py` (Snowflake identifier validator), `core/deploy/recovery.py` (the `RecoveryHandler` Protocol seam P1-09 plugs into), and `core/targets/names.py` (shared target/artifact name validators hoisted out of the extract_load agent). The `validate_ddl_statements` allow-list landed inside `core/deploy/ddl_applier.py` (no new module file).
+
+New: `deploy` + `verify` CLI commands; `core/deploy` modules (preflight, copier, ddl_applier with DDL allow-list, verifier, identifiers, recovery seam); `core/targets/names.py` (shared name validators); two short docs (deploy-from-ci + deploy-roles); 7 test files.
 Modified: `el/__init__.py`, `cli/commands/deploy.py` (deprecated forward), `pyproject.toml` (`sqlparse` dep).
-No DB migration (`Run.kind="deploy"` already exists; `Run.target` from P1-02's migration 0004).
+No DB migration (`Run.kind="deploy"` already exists; `Run.target` from P1-07's migration `0005_runs_target`).
 
 ## Out of scope
 

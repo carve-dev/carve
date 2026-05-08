@@ -81,7 +81,9 @@ Always forbidden:
 - `ALTER COLUMN … SET DATA TYPE …` (lossy if data is already there)
 - Non-idempotent DML embedded in DDL (e.g. `INSERT INTO migrations_log`)
 
-The agent enforces this in its prompt's hard rules (P1-04). `carve el deploy`'s DDL-apply phase (P1-08) does *not* re-validate idempotency — it trusts the file. The PR review (in whatever git-workflow the user wraps `carve el deploy` with) is the human-driven check.
+The agent enforces this in its prompt's hard rules (P1-04).
+
+> **Updated during implementation (2026-05-07, by P1-08):** P1-08 added a regex-based **DDL allow-list** (`validate_ddl_statements` in `core/deploy/ddl_applier.py`) that runs *before* the file is applied. It enforces the contract above as a default-deny gate (forbids `CREATE OR REPLACE`, bare `RENAME`, `ALTER COLUMN SET DATA TYPE`, embedded DML, `DROP DATABASE`, bare `DROP` without `IF EXISTS`). Violations raise `UnsafeDdlError` and bypass the recovery loop. The agent's prompt-time enforcement is now backed by a second-layer code check at deploy time. The PR review remains the human-driven check on intent.
 
 ## Destructive intent: prompted at plan time
 
