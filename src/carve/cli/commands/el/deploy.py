@@ -192,6 +192,12 @@ class DeployContext:
     smoke_test: bool
     yes: bool
     max_fix_attempts: int = _DEFAULT_MAX_FIX_ATTEMPTS
+    # Set by `run_deploy` after the deploy Run row is created so the
+    # phase-level shims can link recovery-attempt children back to it
+    # via `parent_run_id`. `None` until then; the recovery shims no-op
+    # the linkage if it's missing.
+    deploy_run_id: str | None = None
+    target_id: str | None = None
 
 
 def run_deploy(
@@ -368,6 +374,13 @@ def _run_deploy_inner(
         target=dest_target,
     )
     repository.update_run_status(run_id, "running")
+
+    # Stamp the deploy_run_id on the context so the per-phase recovery
+    # shims can persist child Run rows linked via `parent_run_id`. This
+    # is what `carve runs <deploy-run-id> --recovery` reads to render
+    # the recovery tree.
+    ctx.deploy_run_id = run_id
+    ctx.target_id = build.id
 
     try:
         return _execute_phases(
@@ -557,6 +570,12 @@ def _maybe_recover(
     Returns ``None`` on successful recovery (caller proceeds), or the
     user-facing diagnosis string when the failure is unrecoverable
     (caller stops).
+
+    Also persists a child ``Run`` row linked to the deploy run via
+    ``parent_run_id``, so ``carve runs <deploy-run-id> --recovery``
+    renders the chain. The child row carries
+    ``kind="recovery_<stage>"`` (e.g. ``recovery_ddl_apply``); status
+    is ``success`` on recovered, ``failed`` on unrecovered/refused.
     """
     if not ctx.auto_fix:
         return error
@@ -573,7 +592,41 @@ def _maybe_recover(
         failing_sql=failing_sql,
         drift=drift,
     )
+
+    # Persist the recovery attempt as a child Run row BEFORE calling
+    # the handler so the row exists if the handler crashes. We update
+    # the status after the attempt completes.
+    child_run_id: str | None = None
+    if ctx.deploy_run_id is not None:
+        try:
+            child_run_id = ctx.repository.create_run(
+                kind=f"recovery_{stage.value}",
+                target_id=ctx.target_id or ctx.deploy_run_id,
+                pipeline_name=ctx.pipeline_name,
+                target=ctx.dest_target,
+                parent_run_id=ctx.deploy_run_id,
+            )
+            ctx.repository.update_run_status(child_run_id, "running")
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("failed to persist recovery child Run row")
+
     result = ctx.recovery.attempt(context)
+
+    if child_run_id is not None:
+        try:
+            if result.success:
+                ctx.repository.update_run_status(
+                    child_run_id, "success", error=result.diagnosis
+                )
+            else:
+                ctx.repository.update_run_status(
+                    child_run_id,
+                    "failed",
+                    error=result.diagnosis or error,
+                )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("failed to update recovery child Run status")
+
     if result.success:
         ctx.console.print(
             f"[yellow]recovery agent attempted fix at {stage.value} "

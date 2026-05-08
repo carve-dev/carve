@@ -1081,3 +1081,63 @@ def test_carve_deploy_legacy_alias_warns_and_forwards(
     # Banner should appear regardless of underlying success/fail.
     assert "deprecated" in result.output.lower()
     assert "carve el deploy" in result.output
+
+
+def test_deploy_recovery_persists_child_run_rows_linked_to_deploy(
+    project_dir: Path, repository_with_build: tuple[Repository, Config, str]
+) -> None:
+    """Recovery attempts during deploy land as child Run rows linked to
+    the deploy run via ``parent_run_id``. ``carve runs <id> --recovery``
+    reads this chain to render the recovery tree.
+
+    This pins the gap that existed at the end of P1-09: the unified
+    `run_with_recovery` loop creates child rows for `el run` failures,
+    but deploy's inline shims used to call the handler without
+    persisting any chain — so the deploy recovery tree was empty.
+    """
+    repo, config, _ = repository_with_build
+
+    deploy_fake = _FakeSnowflake(
+        _FakeBehavior(
+            columns=[],
+            role_rows=[{"name": "R"}],
+            ddl_fail_index=1,
+            ddl_fail_error="missing schema",
+        )
+    )
+    runtime_fake = _FakeSnowflake(
+        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
+    )
+    pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
+
+    handler = _FakeRecoveryHandler(
+        {RecoveryStage.DDL_APPLY: [RecoveryResult(False, "out of scope")]}
+    )
+
+    console = Console(record=True, width=120)
+    code = deploy_cmd.run_deploy(
+        pipeline_name="iowa",
+        source_target="dev",
+        dest_target="prod",
+        config=config,
+        project_dir=project_dir,
+        repository=repo,
+        console=console,
+        yes=True,
+        pool=pool,  # type: ignore[arg-type]
+        recovery=handler,
+    )
+    assert code == 1
+
+    # The deploy Run row exists.
+    all_runs = repo.list_runs(pipeline_name="iowa")
+    deploy_runs = [r for r in all_runs if r.kind == "deploy"]
+    assert len(deploy_runs) == 1
+    deploy_run = deploy_runs[0]
+
+    # And its recovery attempt is linked via parent_run_id.
+    children = repo.get_recovery_children(deploy_run.id)
+    assert len(children) >= 1
+    assert all(c.parent_run_id == deploy_run.id for c in children)
+    # Stage shows up in the kind for tree-rendering clarity.
+    assert any("recovery_ddl_apply" in (c.kind or "") for c in children)
