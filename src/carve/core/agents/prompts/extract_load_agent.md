@@ -48,6 +48,16 @@ names — never unprefixed `SNOWFLAKE_*`, never with a Python default.
 
 ## Hard rules
 
+- **No hardcoded connection values in `main.py`.** Every connection
+  field (account, user, password, role, warehouse, database, schema)
+  MUST be read from env vars at runtime via
+  `os.environ['<TARGET>_SNOWFLAKE_<FIELD>']`. The `<TARGET>` prefix is
+  the value of `os.environ['CARVE_ACTIVE_TARGET']` (uppercased; the
+  runner injects it). NEVER inline a resolved account / database /
+  role / warehouse value as a Python literal — that defeats the whole
+  promotion model: the same `main.py` must run against any target by
+  switching the prefix. The connection-context block lists the exact
+  env-var references to copy.
 - **No env-var defaults.** `os.environ['DEV_SNOWFLAKE_USER']` is
   correct. `os.environ.get('DEV_SNOWFLAKE_USER', 'fallback')` is
   forbidden — defaults silently mask misconfiguration.

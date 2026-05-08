@@ -46,6 +46,10 @@ def command(
     """List EL artifacts in the active target."""
     project_dir = Path.cwd()
 
+    from carve.cli.commands.el import resolve_subcommand_target
+
+    target = resolve_subcommand_target(target)
+
     try:
         config = load_config(project_dir)
     except ConfigError as exc:

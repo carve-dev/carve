@@ -641,6 +641,57 @@ def test_uses_target_prefixed_env_vars(tmp_path: Path) -> None:
     assert "DEV_SNOWFLAKE_USER" in written
 
 
+def test_connection_context_uses_env_var_references_for_script(
+    tmp_path: Path,
+) -> None:
+    """The script-side connection-context block must show env-var
+    references (`os.environ['DEV_SNOWFLAKE_ACCOUNT']`), NOT resolved
+    values like the literal account name. Surfacing resolved values
+    invited the agent to inline them as Python literals — that
+    propagated through dogfooding when `dev` creds got hardcoded into
+    a script that was meant to also run against `staging`.
+
+    Drives `_compose_system_prompt` directly so the assertion focuses
+    on the prompt's content, not the agent's behavior.
+    """
+    from carve.core.agents.extract_load.agent import _compose_system_prompt
+
+    project_dir = _project(tmp_path)
+    config = _config(target="dev")
+    task = _iowa_task()
+    prompt = _compose_system_prompt(
+        config=config,
+        active_target="dev",
+        task=task,
+        artifact_name="iowa_liquor_sales",
+        project_dir=project_dir,
+    )
+
+    # The script-side block must reference env vars, not the resolved
+    # values. The dev fixture's account is "acct"; if that string
+    # appears in the script-facing rows, the bug is back.
+    assert "os.environ['DEV_SNOWFLAKE_ACCOUNT']" in prompt
+    assert "os.environ['DEV_SNOWFLAKE_DATABASE']" in prompt
+    assert "os.environ['DEV_SNOWFLAKE_ROLE']" in prompt
+
+    # The block must explicitly forbid inlining literals.
+    assert (
+        "NEVER inline a resolved" in prompt
+        or "Never inline a" in prompt
+        or "never inline" in prompt.lower()
+    )
+
+    # The DDL-side block IS allowed to carry concrete identifiers
+    # (the .sql file is a per-target snapshot) — verify the resolved
+    # database name appears under that heading specifically.
+    assert "ANALYTICS_DEV" in prompt  # the dev fixture's database
+    # And the resolved account ("acct") MUST NOT appear in the
+    # script-side block. Easiest assertion: the literal `account="acct"`
+    # / `account = "acct"` shape doesn't appear anywhere in the prompt.
+    assert 'account="acct"' not in prompt
+    assert 'account = "acct"' not in prompt
+
+
 def test_requirements_minimality(tmp_path: Path) -> None:
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(

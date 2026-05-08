@@ -344,21 +344,68 @@ def _render_conventions_block(project_dir: Path, config: Config) -> str | None:
 
 
 def _render_connection_context(config: Config, active_target: str) -> str:
+    """Render the system-prompt connection-context block.
+
+    The block has two parts. The script-side rows show **env-var
+    references**, not resolved values — by the time `Config` reaches
+    this code, the loader has already substituted `${VAR}` placeholders
+    against `os.environ`, so any concrete value rendered here would
+    invite the agent to inline it as a literal. The DDL-side rows show
+    the resolved identifiers because P1-06's per-EL `.sql` file is a
+    target-specific snapshot that does NOT use `${VAR}` substitution.
+
+    Dogfooding surfaced the bug this rendering closes: the agent saw
+    resolved `account` / `database` values in the prompt and faithfully
+    hardcoded them in `main.py`, which then broke when the same script
+    was promoted to a different target.
+    """
+    upper = active_target.upper()
     snowflake = config.connections.snowflake.get(active_target)
     lines = [
         "## Connection context",
-        f"- **Active target:** `{active_target}`",
-        f"- **Env-var prefix:** `{active_target.upper()}_SNOWFLAKE_*`",
+        "",
+        f"Active target: `{active_target}`. The script and the DDL file "
+        "consume connection state differently — pay attention to which "
+        "block applies.",
+        "",
+        "**For `main.py` (Python script — runtime):**",
+        "Read every connection field from env vars. NEVER inline a "
+        "resolved account / database / role / warehouse value as a "
+        "Python literal. The agent MUST emit the references below "
+        "verbatim; the script is meant to run against any target by "
+        "switching the env-var prefix.",
+        "",
+        f"- account:   `os.environ['{upper}_SNOWFLAKE_ACCOUNT']`",
+        f"- user:      `os.environ['{upper}_SNOWFLAKE_USER']`",
+        f"- password:  `os.environ['{upper}_SNOWFLAKE_PASSWORD']`",
+        f"- role:      `os.environ['{upper}_SNOWFLAKE_ROLE']`",
+        f"- warehouse: `os.environ['{upper}_SNOWFLAKE_WAREHOUSE']`",
+        f"- database:  `os.environ['{upper}_SNOWFLAKE_DATABASE']`",
     ]
     if snowflake is None:
-        lines.append("- **Snowflake connection:** _(none configured)_")
+        lines.append("")
+        lines.append(
+            "_(No `[snowflake.<target>]` section is configured for this "
+            "target; the DDL file's concrete identifiers below come from "
+            "the design's `destination` block.)_"
+        )
         return "\n".join(lines)
-    lines.append(f"- **Database:** `{snowflake.database}`")
+
+    lines += [
+        "",
+        "**For the DDL file (`<artifact>.sql` — build-time snapshot):**",
+        "Concrete identifiers go straight into the SQL. No `${VAR}` "
+        "substitution; this file is a target-specific snapshot.",
+        "",
+        f"- Database: `{snowflake.database}`",
+    ]
     if snowflake.schema_:
-        lines.append(f"- **Schema:** `{snowflake.schema_}`")
-    lines.append(f"- **Warehouse:** `{snowflake.warehouse}`")
-    lines.append(f"- **Runtime role:** `{snowflake.role}`")
-    lines.append(f"- **Account:** `{snowflake.account}`")
+        lines.append(f"- Schema: `{snowflake.schema_}`")
+    lines += [
+        f"- Warehouse: `{snowflake.warehouse}`",
+        f"- Runtime role (used in GRANT): `{snowflake.role}`",
+        f"- Account: `{snowflake.account}`",
+    ]
     return "\n".join(lines)
 
 

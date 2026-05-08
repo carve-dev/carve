@@ -69,6 +69,13 @@ def command(
     """Run an EL artifact."""
     project_dir = Path.cwd()
 
+    # Combine top-level ``carve --target X`` with subcommand-level
+    # ``--target X``. Without this the subcommand-level None silently
+    # wins and ``carve --target staging el run iowa`` runs against dev.
+    from carve.cli.commands.el import resolve_subcommand_target
+
+    target = resolve_subcommand_target(target)
+
     try:
         config = load_config(project_dir)
     except ConfigError as exc:

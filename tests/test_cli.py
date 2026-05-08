@@ -46,24 +46,20 @@ def test_help_lists_all_eight_commands(runner: CliRunner) -> None:
         assert cmd in result.output, f"missing {cmd!r} in --help output:\n{result.output}"
 
 
-def test_help_hides_deprecated_run_alias(runner: CliRunner) -> None:
-    """`carve run` is hidden from the top-level --help under P1-07.
-
-    It still works (with a deprecation banner) when invoked explicitly
-    — `test_carve_run_deprecated_alias_warns_and_forwards` covers that
-    behavior. Here we just pin that the listing isn't polluted.
+def test_top_level_run_command_is_gone(runner: CliRunner) -> None:
+    """`carve run <name>` no longer exists — the deprecated alias was
+    removed in dogfooding because it silently swallowed the top-level
+    `--target` flag (the alias built its own typer signature with a
+    fresh `--target` Option that defaulted to None, which then beat
+    the parent callback's value). The replacement is `carve el run`
+    and only `carve el run`.
     """
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0, result.output
-    # "run" appears as part of the "el run" line in `el --help` (not
-    # this view). Top-level should show `el` but not a bare `run`
-    # entry. Typer renders hidden commands by suppressing them from the
-    # help table.
-    lines = [line.strip() for line in result.output.splitlines()]
-    bare_run = [
-        line for line in lines if line.startswith("run ") or line == "run"
-    ]
-    assert bare_run == [], f"unexpected `run` in top-level help:\n{result.output}"
+    result = runner.invoke(app, ["run", "iowa"])
+    # Typer's "no such command" surfaces as exit_code != 0 with the
+    # name in the error text.
+    assert result.exit_code != 0
+    output = result.output.lower()
+    assert "no such command" in output or "usage:" in output
 
 
 def test_version_command_prints_package_version(runner: CliRunner) -> None:

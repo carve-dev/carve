@@ -16,10 +16,8 @@ from typing import Any
 
 import pytest
 from rich.console import Console
-from typer.testing import CliRunner
 
 from carve.cli.commands.el import run as el_run
-from carve.cli.main import app
 from carve.cli.orchestrator.runner import run_pipeline_by_name
 from carve.core.config.schema import (
     Config,
@@ -705,75 +703,15 @@ def test_el_run_watch_picks_up_requirements_change(
 
 
 # ---------------------------------------------------------------------------
-# Deprecated alias
-# ---------------------------------------------------------------------------
-
-
-def test_carve_run_deprecated_alias_warns_and_forwards(
-    project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`carve run <name>` prints a deprecation banner and forwards.
-
-    Drives the typer CliRunner with a real (init-built) project so the
-    config loader doesn't error out; the assertion focuses on the
-    banner appearing in stdout and the alias not crashing.
-    """
-    monkeypatch.delenv("CARVE_NO_DOTENV", raising=False)
-    runner = CliRunner()
-    init_result = runner.invoke(app, ["init", str(project_dir)])
-    assert init_result.exit_code == 0, init_result.output
-
-    # Plant a small artifact under dev.
-    _plant_target_artifact(
-        project_dir,
-        target="dev",
-        name="forwarder",
-        body="print('forwarded')\n",
-    )
-
-    # Set the dev creds so `load_config` succeeds.
-    for key, value in {
-        "DEV_SNOWFLAKE_ACCOUNT": "a",
-        "DEV_SNOWFLAKE_USER": "u",
-        "DEV_SNOWFLAKE_PASSWORD": "p",
-        "DEV_SNOWFLAKE_ROLE": "r",
-        "DEV_SNOWFLAKE_WAREHOUSE": "w",
-        "DEV_SNOWFLAKE_DATABASE": "d",
-    }.items():
-        monkeypatch.setenv(key, value)
-    # Override venv dir to the module-cached path so we don't pay another
-    # `python -m venv` cost.
-    monkeypatch.chdir(project_dir)
-
-    result = runner.invoke(app, ["run", "forwarder"])
-    assert "deprecated" in result.output.lower()
-    # Either succeeded or hit a real-config issue; the banner is the key
-    # observable behavior we're pinning.
-    # Don't strictly assert exit_code == 0; the venv resolution may fail
-    # in some CI environments — but the banner must always print.
-    assert "carve el run" in result.output
-
-
-# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 
 
-def test_carve_run_alias_does_not_accept_plan_flag(
-    project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The deprecated alias drops `--plan`; passing it yields typer's error."""
-    monkeypatch.delenv("CARVE_NO_DOTENV", raising=False)
-    runner = CliRunner()
-    init_result = runner.invoke(app, ["init", str(project_dir)])
-    assert init_result.exit_code == 0
-    result = runner.invoke(
-        app,
-        ["run", "anything", "--plan", "plan_x", "--project-dir", str(project_dir)],
-    )
-    assert result.exit_code != 0
-    # Typer's own no-such-option message.
-    assert "no such option" in result.output.lower() or "unexpected" in result.output.lower()
+# The deprecated `carve run <name>` alias was removed in dogfooding
+# (it silently swallowed the top-level `--target` flag because typer
+# rebuilt the option in the alias's own signature). The replacement is
+# `carve el run` and only `carve el run`. The top-level removal is
+# pinned by `tests/test_cli.py::test_top_level_run_command_is_gone`.
 
 
 # Sanity check — the in-process os.environ shouldn't be polluted by our

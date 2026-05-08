@@ -19,7 +19,6 @@ from carve.cli.commands import (
     version,
 )
 from carve.cli.commands.el import app as el_app
-from carve.cli.commands.el import run as el_run
 from carve.cli.commands.target import app as target_app
 from carve.cli.dotenv import load_dotenv
 
@@ -89,35 +88,6 @@ app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
-
-
-@app.command(name="run", hidden=True, deprecated=True)
-def deprecated_run_alias(
-    name: str = typer.Argument(
-        ...,
-        help="EL artifact name (forwarded to `carve el run`).",
-    ),
-    target: str | None = typer.Option(None, "--target"),
-    watch: bool = typer.Option(False, "--watch"),
-) -> None:
-    """Deprecated: forwards to ``carve el run``.
-
-    P1-07 moved the runner under the ``carve el`` subgroup. This alias
-    keeps existing scripts working for one minor version with a yellow
-    deprecation banner; removed in v0.2. The M1.1-06 ``--plan`` flag is
-    not forwarded — passing it to ``carve run`` produces typer's
-    standard "no such option" error, which is the correct outcome.
-    """
-    from rich.console import Console
-
-    Console().print(
-        "[yellow]`carve run` is deprecated; use `carve el run` instead.[/yellow]\n"
-        "[yellow]This alias will be removed in v0.2.[/yellow]\n"
-        "[yellow]Note: the `--plan` flag is gone — Carve runs the files on "
-        "disk now (see CHANGELOG v0.1). Use `git checkout <sha>` to run a "
-        "historical artifact version.[/yellow]"
-    )
-    el_run.command(name=name, target=target, watch=watch)
 
 
 if __name__ == "__main__":
