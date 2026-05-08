@@ -103,6 +103,14 @@ def command(
         "--no-auto-fix",
         help="Disable the recovery agent; fail fast on the first error.",
     ),
+    max_fix_attempts: int | None = typer.Option(
+        None,
+        "--max-fix-attempts",
+        help=(
+            "Override the per-phase recovery attempt budget (default "
+            "from carve/runner.toml's [auto_fix] max_attempts)."
+        ),
+    ),
 ) -> None:
     """Promote an EL artifact from `<from>` to `<to>`."""
     # Validate the name shapes BEFORE any path is constructed. These
@@ -131,6 +139,13 @@ def command(
     session_factory = create_session_factory(engine)
     repository = Repository(session_factory)
 
+    auto_fix_enabled = (not no_auto_fix) and config.runner.auto_fix.enabled
+    attempts_resolved = (
+        max_fix_attempts
+        if max_fix_attempts is not None
+        else config.runner.auto_fix.max_attempts
+    )
+
     try:
         exit_code = run_deploy(
             pipeline_name=name,
@@ -142,7 +157,8 @@ def command(
             console=console,
             yes=yes,
             smoke_test=not no_smoke_test,
-            auto_fix=not no_auto_fix,
+            auto_fix=auto_fix_enabled,
+            max_fix_attempts=attempts_resolved,
         )
     finally:
         engine.dispose()
@@ -193,6 +209,7 @@ def run_deploy(
     pool: SnowflakePool | None = None,
     recovery: RecoveryHandler | None = None,
     confirm: Any = None,
+    max_fix_attempts: int | None = None,
 ) -> int:
     """Execute the six-phase deploy flow.
 
@@ -216,7 +233,28 @@ def run_deploy(
     # if we own it. Tests pass a fake pool that has no close_all().
     owns_pool = pool is None
     pool = pool if pool is not None else SnowflakePool(config)
-    recovery = recovery if recovery is not None else NullRecoveryHandler()
+    if recovery is None:
+        # P1-09: when auto-fix is on and the caller didn't inject a
+        # handler, use the LLM-backed one. With auto-fix off the loop
+        # never reaches `recovery.attempt(...)`, so the no-op handler
+        # is the cheap default — matches test fixtures that pass
+        # `auto_fix=False`.
+        if auto_fix:
+            recovery = _build_default_recovery_handler(
+                config=config,
+                project_dir=project_dir,
+                repository=repository,
+                pool=pool,
+                dest_target=dest_target,
+            )
+        else:
+            recovery = NullRecoveryHandler()
+
+    attempts = (
+        max_fix_attempts
+        if max_fix_attempts is not None
+        else config.runner.auto_fix.max_attempts
+    )
 
     try:
         return _run_deploy_inner(
@@ -232,6 +270,7 @@ def run_deploy(
             auto_fix=auto_fix,
             pool=pool,
             recovery=recovery,
+            max_fix_attempts=attempts,
         )
     finally:
         if owns_pool:
@@ -255,6 +294,7 @@ def _run_deploy_inner(
     auto_fix: bool,
     pool: SnowflakePool,
     recovery: RecoveryHandler,
+    max_fix_attempts: int = _DEFAULT_MAX_FIX_ATTEMPTS,
 ) -> int:
     """Inner deploy flow; ``run_deploy`` wraps this to manage pool lifetime."""
     # ---- Phase 1: Validate ------------------------------------------------
@@ -316,6 +356,7 @@ def _run_deploy_inner(
         auto_fix=auto_fix,
         smoke_test=smoke_test,
         yes=yes,
+        max_fix_attempts=max_fix_attempts,
     )
 
     # Record the deploy run row up front so failures still leave a
@@ -660,6 +701,75 @@ def _verify_with_recovery(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_default_recovery_handler(
+    *,
+    config: Config,
+    project_dir: Path,
+    repository: Repository,
+    pool: SnowflakePool,
+    dest_target: str,
+) -> RecoveryHandler:
+    """Construct the default `LLMRecoveryHandler` when auto-fix is on.
+
+    Opens BOTH the deploy-role and runtime-role connections to the
+    destination target and threads them through to the agent. This
+    preserves the spec's privilege-envelope guarantee:
+
+    * PREFLIGHT / DDL_APPLY contexts use the deploy-role connection for
+      ``run_snowflake_query`` (matching what those phases of deploy
+      themselves use).
+    * VERIFY context uses the runtime-role connection for
+      ``run_snowflake_query`` (matching what `verify` itself uses).
+    * ``run_snowflake_ddl`` (only available in DDL_APPLY / VERIFY
+      contexts) always uses the deploy role.
+
+    Without this plumbing the deploy fallback path would either silently
+    lose the inspection tools or — worse — leak deploy-role privileges
+    into the verify context.
+
+    Tests that want the no-op behavior either inject their own handler
+    explicitly or pass ``auto_fix=False``. Production callers leave
+    both unset and land here.
+
+    Loading the handler is wrapped to catch ``ConfigError`` (the
+    expected failure mode when the Anthropic key is missing) and falls
+    back to `NullRecoveryHandler` rather than blocking the deploy from
+    running at all.
+    """
+    del project_dir
+    deploy_conn: SnowflakeConnection | None = None
+    runtime_conn: SnowflakeConnection | None = None
+    try:
+        deploy_conn = pool.get(f"{dest_target}_deploy")
+    except SnowflakeError:
+        logger.warning(
+            "deploy-role connection unavailable for recovery handler; "
+            "DDL execution and DDL-apply context inspection will not be wired"
+        )
+    try:
+        runtime_conn = pool.get(dest_target)
+    except SnowflakeError:
+        logger.warning(
+            "runtime-role connection unavailable for recovery handler; "
+            "verify-context inspection will fall back to the deploy role"
+        )
+    try:
+        from carve.core.agents.recovery import LLMRecoveryHandler
+
+        return LLMRecoveryHandler(
+            config=config,
+            repository=repository,
+            deploy_query_runner=deploy_conn,
+            deploy_ddl_executor=deploy_conn,
+            runtime_query_runner=runtime_conn,
+        )
+    except ConfigError:  # pragma: no cover — defensive fallback
+        logger.exception(
+            "failed to construct LLMRecoveryHandler; falling back to no-op"
+        )
+        return NullRecoveryHandler()
 
 
 def _record_terminal_failure(

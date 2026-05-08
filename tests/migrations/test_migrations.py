@@ -821,3 +821,120 @@ def test_0005_backfills_runs_target_from_latest_build(project_dir: Path) -> None
         assert target_for_with_pipe == "staging"
         assert target_for_no_pipe is None
 
+
+# ---------------------------------------------------------------------------
+# 0006_recovery_chains
+# ---------------------------------------------------------------------------
+
+
+def test_0006_adds_runs_parent_run_id_column(project_dir: Path) -> None:
+    """After head: ``runs.parent_run_id`` exists as nullable text + index."""
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    run_cols = {c["name"]: c for c in inspector.get_columns("runs")}
+    assert "parent_run_id" in run_cols
+    assert run_cols["parent_run_id"]["nullable"] is True
+    indexes = {ix["name"] for ix in inspector.get_indexes("runs")}
+    assert "ix_runs_parent_run_id" in indexes
+
+
+def test_0006_round_trip(project_dir: Path) -> None:
+    """upgrade → downgrade → upgrade across 0006 — schema is stable."""
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    run_cols_at_head = {c["name"] for c in inspector.get_columns("runs")}
+    assert "parent_run_id" in run_cols_at_head
+
+    cfg = _alembic_config(engine)
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.downgrade(cfg, "0005_runs_target")
+
+    inspector = inspect(engine)
+    run_cols_after_downgrade = {c["name"] for c in inspector.get_columns("runs")}
+    assert "parent_run_id" not in run_cols_after_downgrade
+    indexes_after_downgrade = {
+        ix["name"] for ix in inspector.get_indexes("runs")
+    }
+    assert "ix_runs_parent_run_id" not in indexes_after_downgrade
+
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    inspector = inspect(engine)
+    run_cols_after_re_upgrade = {c["name"] for c in inspector.get_columns("runs")}
+    assert run_cols_after_re_upgrade == run_cols_at_head
+
+
+def test_0006_existing_runs_get_null_parent_run_id(project_dir: Path) -> None:
+    """Pre-existing runs still readable with parent_run_id == NULL."""
+    from alembic import command as alembic_command
+
+    from carve.core.state.database import _alembic_config
+
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    cfg = _alembic_config(engine)
+
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "0005_runs_target")
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO runs (id, kind, target_id, owner_user_id, "
+                "status, tokens_input, tokens_output, cost_usd, created_at) "
+                "VALUES (:id, 'run', 'tid', 1, 'success', 0, 0, 0.0, :now)"
+            ),
+            {"id": "run_pre_existing", "now": now},
+        )
+
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic_command.upgrade(cfg, "head")
+
+    with engine.begin() as conn:
+        parent = conn.execute(
+            text(
+                "SELECT parent_run_id FROM runs WHERE id = 'run_pre_existing'"
+            )
+        ).scalar_one()
+        assert parent is None
+
+
+def test_0006_fk_constraint_declared_against_runs_id(project_dir: Path) -> None:
+    """FK constraint on parent_run_id references runs.id.
+
+    Inspector-level check rather than INSERT-level — SQLite enforces
+    FKs only when ``PRAGMA foreign_keys=ON`` runs on the connection,
+    and the runtime listener takes care of that in production. The
+    migration's job is to declare the constraint correctly; the
+    runtime's job is to enforce it.
+    """
+    config = _make_config(project_dir)
+    engine = create_engine_from_config(config, project_dir=project_dir)
+    initialize_database(engine)
+
+    inspector = inspect(engine)
+    fks = inspector.get_foreign_keys("runs")
+    parent_fks = [
+        fk for fk in fks if fk.get("constrained_columns") == ["parent_run_id"]
+    ]
+    assert len(parent_fks) == 1, parent_fks
+    fk = parent_fks[0]
+    assert fk["referred_table"] == "runs"
+    assert fk["referred_columns"] == ["id"]
+

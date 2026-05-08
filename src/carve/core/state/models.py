@@ -45,12 +45,21 @@ class Run(Base):
 
     __tablename__ = "runs"
 
+    __table_args__ = (Index("ix_runs_parent_run_id", "parent_run_id"),)
+
     id: Mapped[str] = mapped_column(primary_key=True)
     kind: Mapped[str]
     target_id: Mapped[str]
     target: Mapped[str | None] = mapped_column(default=None)
     pipeline_name: Mapped[str | None] = mapped_column(
         ForeignKey("pipelines.name"),
+        default=None,
+    )
+    # Set on recovery-attempt runs; NULL for the original failed run and
+    # for everything created before P1-09. The chain is reachable via
+    # ``SELECT * FROM runs WHERE parent_run_id = <run_id>``.
+    parent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", name="fk_runs_parent_run_id"),
         default=None,
     )
     owner_user_id: Mapped[int] = mapped_column(default=1)

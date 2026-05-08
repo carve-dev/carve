@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from carve.core.config.schema import (
+    AutoFixConfig,
     Config,
     ConnectionsConfig,
     ModelsConfig,
@@ -150,6 +151,26 @@ class TestRunnerConfig:
         assert cfg.type == "local_venv"
         assert cfg.default_timeout_seconds == 1800
         assert cfg.max_concurrent_runs == 4
+
+
+class TestAutoFixConfig:
+    def test_defaults(self) -> None:
+        cfg = AutoFixConfig()
+        assert cfg.enabled is True
+        assert cfg.max_attempts == 3
+
+    def test_max_attempts_lower_bound(self) -> None:
+        # Zero is allowed (disables retries) but negatives are not.
+        AutoFixConfig(max_attempts=0)
+        with pytest.raises(ValidationError):
+            AutoFixConfig(max_attempts=-1)
+
+    def test_max_attempts_upper_bound(self) -> None:
+        AutoFixConfig(max_attempts=10)
+        with pytest.raises(ValidationError):
+            AutoFixConfig(max_attempts=11)
+        with pytest.raises(ValidationError):
+            AutoFixConfig(max_attempts=999)
 
 
 class TestServerConfig:

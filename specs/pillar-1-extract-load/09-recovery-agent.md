@@ -3,7 +3,9 @@
 **Milestone:** Pillar 1 — Extract & Load
 **Estimated effort:** 1.5 days
 **Dependencies:** M1.1-04 (progress observer), P1-02 (plan/build lifecycle), P1-04 (extract-load agent), P1-07 (`carve el run`), P1-08 (`carve el deploy`)
-**Lineage:** Carries forward from **M2-15** ([`specs/_archive/milestone-2-real-product/15-recovery-agent.md`](../_archive/milestone-2-real-product/15-recovery-agent.md)) which evolved continuously during M2 review (see the "Two trigger contexts" section added during the SDLC discussion). The system prompt, do-not-auto-fix categories, bounded-budget config, `parent_run_id` linking, and `AgentObserver` integration from M1.1-04 all carry forward unchanged. **Scope expansion vs M2-15:** Pillar 1's recovery agent operates in **four trigger contexts** — `carve el run` failures plus three contexts inside `carve el deploy` (pre-flight drift, DDL-apply failures, post-DDL verify failures). The "Phase 1 only" framing in M2-15 was tightened during P1-08's review; AI-editing-DDL-and-retrying is safe because the DDL contract (P1-06) is idempotent.
+**Lineage:** Carries forward from **M2-15** ([`specs/_archive/milestone-2-real-product/15-recovery-agent.md`](../_archive/milestone-2-real-product/15-recovery-agent.md)) which evolved continuously during M2 review (see the "Two trigger contexts" section added during the SDLC discussion). The system prompt, do-not-auto-fix categories, bounded-budget config, `parent_run_id` linking concept, and `AgentObserver` integration from M1.1-04 all carry forward. **Scope expansion vs M2-15:** Pillar 1's recovery agent operates in **four trigger contexts** — `carve el run` failures plus three contexts inside `carve el deploy` (pre-flight drift, DDL-apply failures, post-DDL verify failures). The "Phase 1 only" framing in M2-15 was tightened during P1-08's review; AI-editing-DDL-and-retrying is safe because the DDL contract (P1-06) is idempotent.
+
+> **Updated during implementation (2026-05-07):** M2-15 was archived without being built, so `Run.parent_run_id` is added by **this** spec rather than carried forward. The migration that lands the column is documented below.
 
 ## Purpose
 
@@ -19,6 +21,12 @@ The Pillar 1 ambition: most transient, fixable issues self-resolve without user 
 | 2 | `carve el deploy` Phase 1 (pre-flight drift) | None — read-only validation | Same as #1, plus `read_file` on the DDL file |
 | 3 | `carve el deploy` Phase 2 (DDL-apply statement failure) | Partial DDL applied to dest target | Same as #2, plus `write_file` on the DDL file (`targets/<dest>/snowflake/<name>.sql`); plus `run_snowflake_ddl(stmt)` against the dest target via the deploy role |
 | 4 | `carve el deploy` Phase 3 (post-DDL smoke verify) | DDL fully applied; verifying state | Same as #3 |
+
+> **Updated during implementation (2026-05-07):**
+> - `delegate_to_specialist` was deferred — wiring it would require a `Task` constructor for a failed run's pipeline state. The recovery agent's `write_file` covers the practical fix paths; this is tracked as a future enhancement.
+> - `request_replan` was not implemented as a tool; the agent surfaces "out of scope" via `submit_diagnosis(category="out_of_scope", ...)` instead.
+> - The shipped tool set adds two terminator/escape tools that aren't in the table above: `submit_diagnosis(category, summary, action_taken)` (terminator, exactly one call per attempt) and `request_human(reason)` (escape hatch for "needs human"). `read_run_logs` does not accept an arbitrary `run_id` — it is pinned to the failing run id (security hardening; cross-run log access is blocked).
+> - Context #1's `write_file` allow-list is `targets/<active>/el/<name>/main.py` and `requirements.txt` only. The companion DDL file is NOT writable from el-run context — DDL changes belong to the deploy phase.
 
 The agent's prompt receives the trigger context as a structured preamble. The agent decides which tools to use based on the failure shape.
 
@@ -37,10 +45,14 @@ The recovery agent uses **the role of the operation being recovered** — same c
 
 This keeps recovery within the privilege envelope the user already accepted for the original operation. Recovery can't escalate; if a failure is "this needs a more privileged role," recovery surfaces that diagnosis and the user runs the suggested SQL manually.
 
+> **Updated during implementation (2026-05-07):** The `LLMRecoveryHandler` (the concrete `RecoveryHandler` from P1-08 used in deploy contexts #2-#4) takes **separate** `deploy_query_runner` and `runtime_query_runner` connections, plus a `deploy_ddl_executor`. `attempt(context)` selects the runner per stage: PREFLIGHT / DDL_APPLY use the deploy runner; VERIFY uses the runtime runner (matching what verify itself uses). The DDL executor is the deploy role for both DDL_APPLY and VERIFY (preflight is read-only). `_build_default_recovery_handler` opens both connections from the pool. This enforces the role discipline documented above.
+
 ## Bounded budget
 
 - **`max_fix_attempts`** — default 3 per failure event. Configurable via `carve/runner.toml` (`[runner.auto_fix] max_attempts = 3`).
 - CLI overrides per invocation: `--max-fix-attempts N`, `--no-auto-fix`.
+
+> **Updated during implementation (2026-05-07):** `AutoFixConfig.max_attempts` is bounded by the schema: `Field(default=3, ge=0, le=10)`. Setting `max_attempts = 0` is equivalent to `--no-auto-fix`; values above 10 are rejected by config validation.
 
 The budget is **per failure event**, not per command. A single `carve el deploy` invocation can hit pre-flight drift (recovery), then DDL apply failure (recovery), then verify failure (recovery) — three separate budget pools, each capped at the same `max_fix_attempts`. Users wanting tighter limits lower the config; users wanting to disable recovery entirely pass `--no-auto-fix`.
 
@@ -62,13 +74,17 @@ Failures the recovery agent surfaces immediately without attempting fix:
 - **Authentication failures** (`401`, `Invalid OAuth token`, `Authentication failed`) — wrong credentials; user must fix `.env` or the Snowflake user/password.
 - **Authorization / permission failures** (`SQL access control error`, `Insufficient privileges`, `403`) — agent could in theory grant privileges, but role hierarchy changes are out of Pillar 1's scope (Pillar 2's broader Snowflake agent will handle role management). Surface "GRANT … needed" diagnosis; user runs the SQL.
 - **Resource exhaustion** (`out of memory`, warehouse-suspended, account-locked, network unreachable) — non-deterministic; auto-retry pointless.
+
+  > **Updated during implementation (2026-05-07):** The resource-exhaustion regex matches were tightened to require an accompanying status phrase (e.g. `warehouse … (suspended|stopped|not running)`) so unrelated logs containing the word "warehouse" don't accidentally trip the do-not-fix branch.
 - **User-cancellation** (Ctrl-C → `KeyboardInterrupt` → never auto-retry).
 - **Repeated identical failure** on consecutive attempts — loop-detection escape. The agent's diagnosis hasn't changed between attempts, so further attempts won't help.
 - **Out-of-scope tasks** — when the agent's `delegate_to_specialist` returns `submit_step(error=True)`, the failure is fundamentally outside Pillar 1's scope (e.g., the user's pipeline references a dbt model — Pillar 2 territory).
 
 ## Run-state persistence
 
-Each recovery attempt creates a child `Run` row linked to the original failed Run via `parent_run_id` (column added in M2-15's schema work; carries forward unchanged). The chain is reachable via:
+Each recovery attempt creates a child `Run` row linked to the original failed Run via `parent_run_id`. The chain is reachable via:
+
+> **Updated during implementation (2026-05-07):** M2-15 was archived without being built, so the `parent_run_id` column is added by THIS spec's migration (`0006_recovery_chains.py`), not carried forward from M2-15.
 
 ```sql
 SELECT * FROM runs
@@ -85,6 +101,8 @@ run_a3f29 (failed, kind=run, target=dev)
 │  └─ retry: run_b7c12 (success)
 └─ recovery summary: Recovered (1 attempt)
 ```
+
+> **Updated during implementation (2026-05-07):** The tree renderer (`_attach_children` in `cli/orchestrator/listing.py`) carries a visited-set + a 32-deep recursion cap and emits `<cycle detected: …>` / `<max depth reached>` placeholders rather than recursing forever, in case the database somehow contains a cyclic `parent_run_id` chain.
 
 Run-completion summaries distinguish four outcomes (carries from M2-15):
 
@@ -137,6 +155,8 @@ def run_with_recovery(
 
 Lives in `src/carve/cli/orchestrator/recovery.py`. Wraps the runner (`carve el run`'s execution) and the deploy orchestrator (`carve el deploy`'s phases). Each context provides its own `Invocation` shape; the recovery agent dispatches on it.
 
+> **Updated during implementation (2026-05-07):** The unification is partial. `carve el run` failures go through `run_with_recovery` directly. `carve el deploy` keeps its existing inline `_apply_ddl_with_recovery` / `_verify_with_recovery` shims and uses `LLMRecoveryHandler` (P1-09's concrete implementation of P1-08's `RecoveryHandler` Protocol) rather than calling `run_with_recovery`. Both paths exercise the same `run_recovery_agent` core; the difference is in how attempt sequencing and per-context budgeting are wired. A small `_LAST_RUN_ID` per-process slot is used to plumb the failing run id back from `_run_pipeline_dir` without changing its return type.
+
 ## System prompt structure
 
 `src/carve/core/agents/prompts/recovery_agent.md` (carries from M2-15 verbatim except the trigger-context preamble):
@@ -150,6 +170,8 @@ Lives in `src/carve/cli/orchestrator/recovery.py`. Wraps the runner (`carve el r
 3. **Diagnosis rules.** Enumerate the do-not-auto-fix categories explicitly; instruct the agent to bail with `request_human` when it sees them.
 4. **Available actions.** Describe the tools (varies by trigger context per the table above).
 5. **Hard rules.** Don't loop on identical failures; surface real-world side effects (e.g., "I'm about to apply DDL against prod") so the user sees them in `carve runs --recovery`; respect the budget.
+
+> **Updated during implementation (2026-05-07):** The shipped prompt adds **Hard Rule #6** explicitly forbidding the recovery agent from producing destructive DDL: `DROP DATABASE`; `DROP SCHEMA` (without `IF EXISTS … RESTRICT`); `CREATE OR REPLACE`; DML (`INSERT/UPDATE/DELETE/MERGE/TRUNCATE`); role-to-role `GRANT/REVOKE`; `ALTER TABLE … RENAME`; `ALTER COLUMN SET DATA TYPE`. If a fix appears to require any of these, the agent surfaces a `permission` or `out_of_scope` diagnosis instead. Independent of the prompt, the `run_snowflake_ddl` tool routes every statement through P1-08's `parse_ddl_statements` + `validate_ddl_statements` allow-list **before** calling `executor.execute`, so a malformed agent cannot bypass the rule via direct DDL execution. (Closed a Critical regression found during the iter0 security review where a prompt-only safeguard would have allowed `DROP DATABASE prod` via this tool.)
 
 ## Implementation
 
@@ -171,10 +193,12 @@ Modified files:
 - `src/carve/cli/orchestrator/runner.py` (P1-07) — wraps execution in `run_with_recovery` when `[runner.auto_fix] enabled = true` (default).
 - `src/carve/cli/commands/el/deploy.py` (P1-08) — wraps each of three phase-failure points in `run_with_recovery`.
 - `src/carve/cli/commands/runs.py` — `--recovery` flag for the recovery-chain tree view.
-- `src/carve/core/state/models.py` — `Run.parent_run_id: str | None` column (FK to runs.id). Migration `0005_recovery_chains.py`.
+- `src/carve/core/state/models.py` — `Run.parent_run_id: str | None` column (FK to runs.id). Migration `0006_recovery_chains.py`.
 - `tests/cli/commands/test_runs.py` — `--recovery` rendering.
 
-DB migration `0005_recovery_chains.py`:
+> **Updated during implementation (2026-05-07):** Migration is `0006_recovery_chains.py` (down_revision `0005_runs_target`). P1-07 already shipped at revision 0005, so P1-09 is the next slot.
+
+DB migration `0006_recovery_chains.py`:
 
 1. Add `parent_run_id` TEXT column to `runs`, FK to `runs.id`, default NULL.
 2. Add index on `(parent_run_id)` for the lookup pattern.
@@ -214,7 +238,9 @@ DB migration `0005_recovery_chains.py`:
 
 New: `recovery.py`, `failure_taxonomy.py`, recovery agent module + prompt + invocation dataclasses, 2 test files.
 Modified: `cli/orchestrator/runner.py`, `cli/commands/el/deploy.py`, `cli/commands/runs.py`, `core/state/models.py` (parent_run_id column).
-DB migration `0005_recovery_chains.py` adds `runs.parent_run_id` + index.
+DB migration `0006_recovery_chains.py` adds `runs.parent_run_id` + index.
+
+> **Updated during implementation (2026-05-07):** Migration filename is `0006_recovery_chains.py` (was listed as `0005_recovery_chains.py`); P1-07 already used 0005.
 
 ## Out of scope
 

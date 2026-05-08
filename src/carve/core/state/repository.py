@@ -71,6 +71,7 @@ class Repository:
         *,
         pipeline_name: str | None = None,
         target: str | None = None,
+        parent_run_id: str | None = None,
     ) -> str:
         """Insert a new `runs` row in the default `queued` state.
 
@@ -81,6 +82,10 @@ class Repository:
         ``target`` is the resolved active-target name (``"dev"``,
         ``"prod"``, etc.). It is nullable on the column so legacy runs
         that pre-date the Build entity stay representable.
+
+        ``parent_run_id`` (P1-09): when set, marks this row as a
+        recovery-attempt child of an earlier run. The chain is reachable
+        via :meth:`get_recovery_children`.
         """
         run_id = uuid.uuid4().hex
         with self._session_factory() as session:
@@ -91,10 +96,26 @@ class Repository:
                     target_id=target_id,
                     pipeline_name=pipeline_name,
                     target=target,
+                    parent_run_id=parent_run_id,
                 )
             )
             session.commit()
         return run_id
+
+    def get_recovery_children(self, parent_run_id: str) -> list[Run]:
+        """Return recovery-attempt runs whose ``parent_run_id`` matches.
+
+        Ordered by ``created_at`` ascending (chronological order matches
+        the recovery loop's iteration order). Used by
+        ``carve runs <id> --recovery`` to render the chain.
+        """
+        stmt = (
+            select(Run)
+            .where(Run.parent_run_id == parent_run_id)
+            .order_by(Run.created_at.asc())
+        )
+        with self._session_factory() as session:
+            return list(session.scalars(stmt).all())
 
     def update_run_status(
         self,

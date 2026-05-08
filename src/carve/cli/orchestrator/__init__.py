@@ -18,6 +18,7 @@ from carve.cli.orchestrator.listing import (
     render_logs,
     render_pipeline_detail,
     render_pipelines_table,
+    render_recovery_tree,
     render_runs_table,
 )
 from carve.cli.orchestrator.planner import (
@@ -40,6 +41,7 @@ __all__ = [
     "render_logs",
     "render_pipeline_detail",
     "render_pipelines_table",
+    "render_recovery_tree",
     "render_runs_table",
     "run_pipeline_by_name",
     "run_pipeline_by_plan",

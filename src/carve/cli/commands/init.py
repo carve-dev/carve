@@ -72,6 +72,13 @@ RUNNER_TOML_CONTENT = """\
 # venv_cache_dir = ".carve/venvs"
 # default_timeout_seconds = 1800
 # max_concurrent_runs = 4
+
+# Recovery agent (P1-09). Set `enabled = false` or pass --no-auto-fix on
+# the CLI to disable the auto-fix loop. `max_attempts` is the per-failure
+# budget — deploy phases each get their own pool.
+# [auto_fix]
+# enabled = true
+# max_attempts = 3
 """
 
 MODELS_TOML_CONTENT = """\

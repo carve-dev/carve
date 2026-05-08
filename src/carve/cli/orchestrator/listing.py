@@ -9,6 +9,7 @@ up a typer harness.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from rich.console import Group, RenderableType
 from rich.markup import escape as _escape
@@ -291,10 +292,95 @@ def _truncate(text: str, max_len: int) -> str:
     return text[: max_len - 1] + "…"
 
 
+def render_recovery_tree(
+    repository: Repository,
+    run_id: str,
+) -> tuple[RenderableType, int]:
+    """Render the recovery-attempt chain for ``run_id`` as a tree.
+
+    Returns ``(renderable, exit_code)``. Exit code is 1 when the run
+    doesn't exist, 0 otherwise. The parent run sits at the top; each
+    child (linked via ``Run.parent_run_id``) is one branch with its
+    status, error, and creation time. Children of children appear
+    nested — recovery chains are linear in the typical case (one fix
+    per attempt) but the renderer handles arbitrary depth.
+    """
+    from rich.tree import Tree
+
+    root_run = repository.get_run(run_id)
+    if root_run is None:
+        return (f"[red]✗[/red] Run not found: {_escape(run_id)}", 1)
+
+    tree = Tree(_describe_run(root_run))
+    _attach_children(tree, repository, root_run.id)
+    return (tree, 0)
+
+
+_RECOVERY_TREE_MAX_DEPTH = 32
+
+
+def _attach_children(
+    parent_node: Any,
+    repository: Repository,
+    parent_run_id: str,
+    *,
+    visited: set[str] | None = None,
+    depth: int = 0,
+) -> None:
+    """Walk ``runs.parent_run_id`` to populate the tree depth-first.
+
+    A ``visited`` set guards against cycles in the parent_run_id graph
+    (which should be impossible by construction — recovery rows
+    descend from the failing run — but a corrupted state DB or a
+    future schema change could introduce them). A hard depth cap
+    prevents pathological deep chains from blowing the stack.
+    """
+    if visited is None:
+        visited = {parent_run_id}
+    if depth >= _RECOVERY_TREE_MAX_DEPTH:
+        parent_node.add("[dim]<max depth reached>[/dim]")
+        return
+    children = repository.get_recovery_children(parent_run_id)
+    for child in children:
+        if child.id in visited:
+            parent_node.add(f"[dim]<cycle detected: {_short_id(child.id)}>[/dim]")
+            continue
+        node = parent_node.add(_describe_run(child))
+        visited.add(child.id)
+        _attach_children(
+            node,
+            repository,
+            child.id,
+            visited=visited,
+            depth=depth + 1,
+        )
+
+
+def _describe_run(run: Run) -> str:
+    """Render one run as a single tree node label."""
+    status = _status_cell(run.status)
+    started = _format_started_at(run.started_at, run.created_at)
+    err = run.error_message or ""
+    if err:
+        # Trim very long errors so the tree stays readable.
+        err = _truncate(err, 120)
+        err_part = f" — {_escape(err)}"
+    else:
+        err_part = ""
+    return (
+        f"[cyan]{_short_id(run.id)}[/cyan] "
+        f"[dim]{run.kind}[/dim] "
+        f"{status} "
+        f"[dim]{started}[/dim]"
+        f"{err_part}"
+    )
+
+
 __all__ = [
     "Run",
     "render_logs",
     "render_pipeline_detail",
     "render_pipelines_table",
+    "render_recovery_tree",
     "render_runs_table",
 ]

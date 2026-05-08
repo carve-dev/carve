@@ -42,6 +42,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape as _escape
@@ -72,6 +73,9 @@ def run_pipeline_by_name(
     console: Console | None = None,
     runner: LocalVenvRunner | None = None,
     target: str | None = None,
+    auto_fix: bool | None = None,
+    max_fix_attempts: int | None = None,
+    recovery_client: Any | None = None,
 ) -> int:
     """Run the EL artifact named ``pipeline_name`` and return an exit code.
 
@@ -164,6 +168,37 @@ def run_pipeline_by_name(
     # pipeline name (legacy / hand-built artifacts).
     target_id = latest_build.id if latest_build is not None else pipeline_name
 
+    # P1-09 wraps execution in `run_with_recovery` when auto-fix is
+    # enabled. Default-None means "use the runner.toml setting"; an
+    # explicit True / False overrides. The legacy default (no auto-fix)
+    # keeps P1-07's tests stable; the el/run command's caller flips
+    # the flag on per its own CLI args.
+    auto_fix_resolved: bool
+    if auto_fix is None:
+        auto_fix_resolved = False
+    else:
+        auto_fix_resolved = auto_fix
+    max_fix_attempts_resolved = (
+        max_fix_attempts
+        if max_fix_attempts is not None
+        else config.runner.auto_fix.max_attempts
+    )
+
+    if auto_fix_resolved:
+        return _run_pipeline_with_recovery(
+            pipeline_name=pipeline_name,
+            pipeline_dir_abs=pipeline_dir_abs,
+            target_id=target_id,
+            active_target=active_target,
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            console=console,
+            runner=runner,
+            max_fix_attempts=max_fix_attempts_resolved,
+            recovery_client=recovery_client,
+        )
+
     return _run_pipeline_dir(
         pipeline_name=pipeline_name,
         pipeline_dir_abs=pipeline_dir_abs,
@@ -248,6 +283,7 @@ def _run_pipeline_dir(
     repository: Repository,
     console: Console,
     runner: LocalVenvRunner | None,
+    parent_run_id: str | None = None,
 ) -> int:
     """Execute ``<pipeline_dir_abs>/main.py`` and tail logs.
 
@@ -299,7 +335,11 @@ def _run_pipeline_dir(
         target_id=target_id,
         pipeline_name=pipeline_name,
         target=active_target,
+        parent_run_id=parent_run_id,
     )
+    # Stash so the recovery wrapper can pick it up after this call
+    # returns. No-op when the wrapper isn't in play.
+    _LAST_RUN_ID.set(run_id)
 
     try:
         step_config = PythonStepConfig(
@@ -377,6 +417,131 @@ def _run_pipeline_dir(
     if error_message:
         console.print(f"  {error_message}")
     return 1
+
+
+# ---------------------------------------------------------------------------
+# Recovery wrapper (P1-09)
+# ---------------------------------------------------------------------------
+
+
+def _run_pipeline_with_recovery(
+    *,
+    pipeline_name: str,
+    pipeline_dir_abs: Path,
+    target_id: str,
+    active_target: str,
+    config: Config,
+    project_dir: Path,
+    repository: Repository,
+    console: Console,
+    runner: LocalVenvRunner | None,
+    max_fix_attempts: int,
+    recovery_client: Any | None,
+) -> int:
+    """Run the pipeline, wrapping failures in `run_with_recovery`.
+
+    Each retry creates a fresh Run row linked to the previous failed
+    run via ``parent_run_id``. The loop is bounded by ``max_fix_attempts``;
+    on exhaustion / refusal the original failure's exit code (1)
+    surfaces along with the agent's diagnosis.
+    """
+    from carve.cli.orchestrator.recovery import (
+        ExecutionResult,
+        Exhausted,
+        Recovered,
+        Refused,
+        run_with_recovery,
+    )
+    from carve.core.agents.recovery import ElRunInvocation
+
+    invocation = ElRunInvocation(
+        pipeline_name=pipeline_name,
+        active_target=active_target,
+        project_dir=project_dir,
+        config=config,
+        failed_run_id="",  # filled in by the orchestrator per attempt
+        error_text="",
+    )
+
+    def _execute(parent_run_id: str | None) -> ExecutionResult:
+        # Each attempt creates its own Run; pass `parent_run_id` through
+        # so the chain is reachable via Run.parent_run_id.
+        exit_code = _run_pipeline_dir(
+            pipeline_name=pipeline_name,
+            pipeline_dir_abs=pipeline_dir_abs,
+            target_id=target_id,
+            active_target=active_target,
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            console=console,
+            runner=runner,
+            parent_run_id=parent_run_id,
+        )
+        run_id = _LAST_RUN_ID.get()
+        run = repository.get_run(run_id) if run_id else None
+        return ExecutionResult(
+            run_id=run_id or "",
+            success=exit_code == 0,
+            error=(run.error_message or "") if run else "",
+        )
+
+    outcome = run_with_recovery(
+        invocation,
+        execute=_execute,
+        repository=repository,
+        max_attempts=max_fix_attempts,
+        auto_fix=True,
+        client=recovery_client,
+    )
+
+    if isinstance(outcome, Recovered):
+        if outcome.attempts > 0:
+            console.print(
+                f"[green]✓[/green] Recovered after {outcome.attempts} attempt(s)"
+            )
+        return 0
+    if isinstance(outcome, Exhausted):
+        console.print(
+            f"[red]✗[/red] Recovery exhausted after {outcome.attempts} attempt(s): "
+            f"{_escape(outcome.diagnosis)}"
+        )
+        return 1
+    if isinstance(outcome, Refused):
+        console.print(
+            f"[red]✗[/red] Failure category={outcome.category!r}: "
+            f"{_escape(outcome.diagnosis)}"
+        )
+        return 1
+    # Aborted
+    console.print(
+        f"[yellow]Aborted[/yellow] after {outcome.attempts} attempt(s)."
+    )
+    return 1
+
+
+class _LastRunIdContext:
+    """Module-local container so `_run_pipeline_dir` can hand the Run id back.
+
+    `_run_pipeline_dir` returns an exit code per its existing P1-07
+    contract. The recovery wrapper needs the run id too, but we can't
+    change the return type without breaking tests. The simplest fix is
+    a tiny per-call slot the wrapper reads after the call returns.
+    Thread-local is overkill — the recovery loop is single-threaded.
+    """
+
+    _value: str | None = None
+
+    def set(self, run_id: str) -> None:
+        self._value = run_id
+
+    def get(self) -> str | None:
+        v = self._value
+        self._value = None
+        return v
+
+
+_LAST_RUN_ID = _LastRunIdContext()
 
 
 # ---------------------------------------------------------------------------

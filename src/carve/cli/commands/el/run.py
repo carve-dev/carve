@@ -52,6 +52,19 @@ def command(
         "--watch",
         help="Re-run on filesystem changes under the artifact directory.",
     ),
+    no_auto_fix: bool = typer.Option(
+        False,
+        "--no-auto-fix",
+        help="Disable the recovery agent; fail fast on the first error.",
+    ),
+    max_fix_attempts: int | None = typer.Option(
+        None,
+        "--max-fix-attempts",
+        help=(
+            "Override the per-failure recovery attempt budget (default "
+            "from carve/runner.toml's [auto_fix] max_attempts)."
+        ),
+    ),
 ) -> None:
     """Run an EL artifact."""
     project_dir = Path.cwd()
@@ -67,6 +80,8 @@ def command(
     session_factory = create_session_factory(engine)
     repository = Repository(session_factory)
 
+    auto_fix_enabled = (not no_auto_fix) and config.runner.auto_fix.enabled
+
     try:
         if watch:
             exit_code = _run_with_watch(
@@ -75,6 +90,8 @@ def command(
                 config=config,
                 project_dir=project_dir,
                 repository=repository,
+                auto_fix=auto_fix_enabled,
+                max_fix_attempts=max_fix_attempts,
             )
         else:
             exit_code = run_pipeline_by_name(
@@ -84,6 +101,8 @@ def command(
                 repository=repository,
                 console=console,
                 target=target,
+                auto_fix=auto_fix_enabled,
+                max_fix_attempts=max_fix_attempts,
             )
     finally:
         engine.dispose()
@@ -123,6 +142,8 @@ def _run_with_watch(
     repository: Repository,
     observer_factory: Callable[[], _ObserverProtocol] | None = None,
     stop_event: threading.Event | None = None,
+    auto_fix: bool = False,
+    max_fix_attempts: int | None = None,
 ) -> int:
     """Run the artifact in a loop, re-running on filesystem changes.
 
@@ -194,6 +215,8 @@ def _run_with_watch(
                 repository=repository,
                 console=console,
                 target=target,
+                auto_fix=auto_fix,
+                max_fix_attempts=max_fix_attempts,
             )
             console.print(
                 f"[dim]\\[watching {artifact_dir.relative_to(project_dir)} — "

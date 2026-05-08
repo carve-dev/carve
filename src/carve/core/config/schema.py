@@ -113,6 +113,22 @@ class ModelsConfig(BaseModel):
     default_model: str = "claude-sonnet-4-5-20250929"
 
 
+class AutoFixConfig(BaseModel):
+    """`[runner.auto_fix]` — recovery agent's bounded budget.
+
+    Introduced by P1-09. ``enabled = true`` lets the recovery agent
+    wrap ``carve el run`` and ``carve el deploy`` failures; the CLI's
+    ``--no-auto-fix`` flag overrides it to ``false`` per invocation.
+    ``max_attempts`` is the per-failure-event budget — a single deploy
+    can burn the budget independently in each of its three phases.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    max_attempts: int = Field(default=3, ge=0, le=10)
+
+
 class RunnerConfig(BaseModel):
     """Pipeline-runner defaults. Local venv runner only for M1."""
 
@@ -122,6 +138,7 @@ class RunnerConfig(BaseModel):
     venv_cache_dir: str = ".carve/venvs"
     default_timeout_seconds: int = 1800
     max_concurrent_runs: int = 4
+    auto_fix: AutoFixConfig = Field(default_factory=AutoFixConfig)
 
 
 class ServerConfig(BaseModel):
