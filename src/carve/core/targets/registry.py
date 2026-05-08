@@ -53,6 +53,7 @@ _SNOWFLAKE_FIELDS: tuple[str, ...] = (
     "role",
     "warehouse",
     "database",
+    "schema",
 )
 
 
@@ -313,6 +314,7 @@ def _env_example_block_lines(name: str) -> list[str]:
         f"{upper}_SNOWFLAKE_ROLE=",
         f"{upper}_SNOWFLAKE_WAREHOUSE=",
         f"{upper}_SNOWFLAKE_DATABASE=",
+        f"{upper}_SNOWFLAKE_SCHEMA=",
     ]
 
 

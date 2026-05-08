@@ -382,6 +382,13 @@ def _render_connection_context(config: Config, active_target: str) -> str:
         f"- warehouse: `os.environ['{upper}_SNOWFLAKE_WAREHOUSE']`",
         f"- database:  `os.environ['{upper}_SNOWFLAKE_DATABASE']`",
     ]
+    # Schema is optional in `connections.toml` (pydantic field is
+    # `str | None`). Only show the env-var reference when the target
+    # actually has a schema configured — otherwise existing projects
+    # without `<TARGET>_SNOWFLAKE_SCHEMA` in their .env would see the
+    # agent emit a KeyError-prone reference.
+    if snowflake is not None and snowflake.schema_:
+        lines.append(f"- schema:    `os.environ['{upper}_SNOWFLAKE_SCHEMA']`")
     if snowflake is None:
         lines.append("")
         lines.append(

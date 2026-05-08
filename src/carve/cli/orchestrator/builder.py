@@ -227,6 +227,19 @@ def build_plan(
             synthesised,
         )
 
+    # Write destination.toml — the per-artifact, per-target destination
+    # config the script reads at runtime. The build flow owns this file
+    # (not the agent) so we can apply the override-vs-inherit rule
+    # consistently against the resolved env defaults.
+    destination_path = _write_destination_toml_for_build(
+        pipeline_dir_abs=pipeline_dir_abs,
+        design=design,
+        config=config,
+        active_target=active_target,
+    )
+    if destination_path is not None:
+        written_files.append(destination_path)
+
     files_written_rel = sorted(
         p.relative_to(project_dir).as_posix() for p in written_files
     )
@@ -328,6 +341,64 @@ def _extract_requirements(design: dict[str, Any]) -> list[str]:
     return ["snowflake-connector-python"]
 
 
+def _write_destination_toml_for_build(
+    *,
+    pipeline_dir_abs: Path,
+    design: dict[str, Any],
+    config: Config,
+    active_target: str,
+) -> Path | None:
+    """Emit the per-artifact ``destination.toml`` next to ``main.py``.
+
+    Reads the design's ``destination`` block and the active target's
+    connection defaults; writes a ``destination.toml`` whose
+    ``database`` / ``schema`` are commented out when they match the
+    target's defaults, and live overrides when they differ. ``table``
+    is always a literal.
+
+    Returns the path written, or ``None`` if the design lacks a
+    destination block (no destination → nothing to write; the run
+    flow surfaces the missing destination at runtime).
+    """
+    from carve.core.targets.destination import (
+        Destination,
+        write_destination_toml,
+    )
+
+    destination_block = design.get("destination")
+    if not isinstance(destination_block, dict):
+        return None
+    table = destination_block.get("table")
+    if not isinstance(table, str) or not table:
+        return None
+
+    db = destination_block.get("database")
+    schema = destination_block.get("schema")
+    destination = Destination(
+        table=table,
+        database=db if isinstance(db, str) and db else None,
+        schema=schema if isinstance(schema, str) and schema else None,
+    )
+
+    # Default db/schema for the active target (post env-var
+    # interpolation).
+    target_section = config.connections.snowflake.get(active_target)
+    env_db = target_section.database if target_section is not None else None
+    env_schema = (
+        target_section.schema_ if target_section is not None else None
+    )
+
+    path = pipeline_dir_abs / "destination.toml"
+    write_destination_toml(
+        path,
+        destination,
+        target=active_target,
+        env_database=env_db,
+        env_schema=env_schema,
+    )
+    return path.resolve()
+
+
 # ---------------------------------------------------------------------------
 # System prompt assembly
 # ---------------------------------------------------------------------------
@@ -376,18 +447,83 @@ def _render_output_path_block(active_target: str, pipeline_name: str) -> str:
 
 def _render_connection_context(config: Config, active_target: str) -> str:
     snowflake = config.connections.snowflake.get(active_target)
+    upper = active_target.upper()
     lines = [
         "## Connection context",
-        f"- **Active target:** `{active_target}`",
+        "",
+        f"Active target: `{active_target}`. The script reads the connection "
+        "from env vars at runtime — NEVER inline a resolved account / "
+        "database / role / warehouse value as a Python literal. The same "
+        "`main.py` must run against any target by switching the prefix.",
+        "",
+        "**`main.py` MUST read these via `os.environ['<KEY>']`:**",
+        "",
+        f"- account:   `os.environ['{upper}_SNOWFLAKE_ACCOUNT']`",
+        f"- user:      `os.environ['{upper}_SNOWFLAKE_USER']`",
+        f"- password:  `os.environ['{upper}_SNOWFLAKE_PASSWORD']`",
+        f"- role:      `os.environ['{upper}_SNOWFLAKE_ROLE']`",
+        f"- warehouse: `os.environ['{upper}_SNOWFLAKE_WAREHOUSE']`",
+        f"- database:  `os.environ['{upper}_SNOWFLAKE_DATABASE']`",
     ]
+    # Schema env-var ref only when the target's connections.toml has a
+    # `schema = "${...}"` entry — otherwise the agent would emit an
+    # `os.environ['DEV_SNOWFLAKE_SCHEMA']` reference that KeyErrors at
+    # runtime against a project that doesn't set the var.
+    if snowflake is not None and snowflake.schema_:
+        lines.append(
+            f"- schema:    `os.environ['{upper}_SNOWFLAKE_SCHEMA']`"
+        )
+
+    lines += [
+        "",
+        "**`main.py` MUST read the destination from `destination.toml`** "
+        "(written by the build flow, lives next to your `main.py`). "
+        "Database/schema fall back to the env vars above when not set in "
+        "destination.toml; table is always literal in destination.toml.",
+        "",
+        "Canonical pattern:",
+        "```python",
+        "import os, tomllib",
+        "from pathlib import Path",
+        "",
+        "_dest_cfg = tomllib.loads(",
+        "    (Path(__file__).parent / 'destination.toml').read_text("
+        "encoding='utf-8')",
+        ")",
+        "_target = os.environ['CARVE_ACTIVE_TARGET']",
+        "DEST_DATABASE = _dest_cfg.get('database') or os.environ[",
+        "    f'{_target}_SNOWFLAKE_DATABASE'",
+        "]",
+        "DEST_SCHEMA = _dest_cfg.get('schema') or os.environ[",
+        "    f'{_target}_SNOWFLAKE_SCHEMA'",
+        "]",
+        "DEST_TABLE = _dest_cfg['table']  # always literal",
+        "DEST_FQN = f'{DEST_DATABASE}.{DEST_SCHEMA}.{DEST_TABLE}'",
+        "```",
+    ]
+
     if snowflake is None:
-        lines.append("- **Snowflake connection:** _(none configured)_")
+        lines.append("")
+        lines.append(
+            "_(No `[snowflake.<target>]` section is configured for this "
+            "target; the DDL identifiers below come from the design.)_"
+        )
         return "\n".join(lines)
-    lines.append(f"- **Database:** `{snowflake.database}`")
+
+    lines += [
+        "",
+        "**For the DDL file (`<artifact>.sql`)** — the per-target "
+        "snapshot. Concrete identifiers go in directly; no `${VAR}` "
+        "substitution.",
+        "",
+        f"- Database: `{snowflake.database}`",
+    ]
     if snowflake.schema_:
-        lines.append(f"- **Schema:** `{snowflake.schema_}`")
-    lines.append(f"- **Warehouse:** `{snowflake.warehouse}`")
-    lines.append(f"- **Role:** `{snowflake.role}`")
+        lines.append(f"- Schema: `{snowflake.schema_}`")
+    lines += [
+        f"- Warehouse: `{snowflake.warehouse}`",
+        f"- Runtime role (used in GRANT): `{snowflake.role}`",
+    ]
     return "\n".join(lines)
 
 

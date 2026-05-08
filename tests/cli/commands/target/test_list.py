@@ -36,6 +36,7 @@ def test_target_list_marks_default(
         "DEV_SNOWFLAKE_ROLE",
         "DEV_SNOWFLAKE_WAREHOUSE",
         "DEV_SNOWFLAKE_DATABASE",
+        "DEV_SNOWFLAKE_SCHEMA",
     ):
         monkeypatch.setenv(var, "x")
 
@@ -72,6 +73,7 @@ def test_target_list_secrets_status(
         "DEV_SNOWFLAKE_ROLE",
         "DEV_SNOWFLAKE_WAREHOUSE",
         "DEV_SNOWFLAKE_DATABASE",
+        "DEV_SNOWFLAKE_SCHEMA",
     ):
         monkeypatch.setenv(var, "x")
     for var in (

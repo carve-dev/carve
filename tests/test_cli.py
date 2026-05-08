@@ -241,6 +241,7 @@ def test_init_produces_loadable_config(
     monkeypatch.setenv("DEV_SNOWFLAKE_ROLE", "r")
     monkeypatch.setenv("DEV_SNOWFLAKE_WAREHOUSE", "w")
     monkeypatch.setenv("DEV_SNOWFLAKE_DATABASE", "d")
+    monkeypatch.setenv("DEV_SNOWFLAKE_SCHEMA", "s")
 
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
