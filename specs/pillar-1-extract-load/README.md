@@ -98,3 +98,19 @@ In recommended build order. Each spec carries an explicit **Lineage** field nami
 - Acceptance criteria above met end-to-end against a real Snowflake account
 - A 3-minute screen recording of the demo flow (init → plan → build → run → target create → deploy)
 - Internal tag `v0.1.0`
+
+## Post-v0.1.0: Pillar 1.1 simplification
+
+Dogfooding v0.1.0 surfaced friction with the per-target folder model + the `--from X --to Y` deploy. See [`pillar-1.1-flat-layout/`](../pillar-1.1-flat-layout/) for the simplification specs that supersede pieces of Pillar 1:
+
+| Pillar 1 spec | Pillar 1.1 supersession |
+|---|---|
+| **P1-01** (target system) | **P1.1-01** drops per-target *folders*; target config stays. |
+| **P1-06** (DDL snapshot) | **P1.1-03** templatizes DDL (Jinja); no per-target snapshot. |
+| **P1-08** (deploy `--from X --to Y`) | **P1.1-03** rewrites deploy as single-target DDL-readiness. |
+| Pillar 1 destination.toml (commits `e4eb505` / `743daab`) | **P1.1-02** moves to `[default]` + per-target sections. |
+| **P1-09** (recovery agent) | **P1.1-04** path-updates the agent for the flat layout. |
+
+P1-02 (plan/build lifecycle), P1-03 (init), P1-04 (extract-load agent), P1-05 (skill registry + catalog), P1-07 (`el run`) survive nearly intact — only path-resolution updates.
+
+Tag target: `v0.1.1`.

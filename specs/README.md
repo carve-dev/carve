@@ -16,16 +16,17 @@ Carve is structured as four independent-but-composable pillars. Each ships as it
 
 | Pillar | Version | Status | Goal |
 |---|---|---|---|
-| 1. **Extract & Load** | v0.1 | **specs in flight** | AI authors Python EL scripts that move data from sources into Snowflake. Standalone — works for users who already have a dbt project + their own scheduler. |
+| 1. **Extract & Load** | v0.1 | **shipped** | AI authors Python EL scripts that move data from sources into Snowflake. Standalone — works for users who already have a dbt project + their own scheduler. |
+| 1.1. **Flat layout + git promotion** | v0.1.1 | **specs drafted** | Simplification pass: one code tree per artifact under `el/<name>/`, single-target deploy command, Jinja-templated DDL. Promotion via git, not file copy. |
 | 2. **Transform** | v0.2 | planned | AI maintains dbt models in a new or existing repo. |
 | 3. **Pipeline** | v0.3 | planned | Define multi-step pipelines composed of EL artifacts (Pillar 1) + dbt models (Pillar 2) + ad-hoc steps (SQL, shell, HTTP). |
 | 4. **Schedule & Execution** | v0.4 | planned | Schedule, run, monitor, and maintain pipeline executions. |
 
 **Adoption is incremental.** A team that just wants AI-authored EL scripts adopts Pillar 1 and keeps using their existing scheduler. A team that wants the whole lifecycle adopts all four. Pillars 1 and 2 work standalone; Pillars 3 and 4 build on them.
 
-### Pillar 1 — Extract & Load (v0.1, in flight)
+### Pillar 1 — Extract & Load (v0.1, shipped)
 
-The smallest end-to-end loop: AI authors EL scripts, generates DDL, runs them in dev, and deploys them to other targets. CLI only; no UI.
+The smallest end-to-end loop: AI authors EL scripts, generates DDL, runs them in dev, and deploys them to other targets. CLI only; no UI. Tagged as `v0.1.0`.
 
 - [`pillar-1-extract-load/README.md`](./pillar-1-extract-load/README.md) — overview, acceptance criteria, lineage notes
 - [`01-target-system.md`](./pillar-1-extract-load/01-target-system.md) — `targets/<name>/` layout, `carve target` subcommand, `--target` flag
@@ -37,6 +38,16 @@ The smallest end-to-end loop: AI authors EL scripts, generates DDL, runs them in
 - [`07-el-run.md`](./pillar-1-extract-load/07-el-run.md) — `carve el run` command + `carve el list`
 - [`08-el-deploy.md`](./pillar-1-extract-load/08-el-deploy.md) — `carve el deploy --from X --to Y` (single deterministic command) + `carve el verify`
 - [`09-recovery-agent.md`](./pillar-1-extract-load/09-recovery-agent.md) — auto-fix loop for run + deploy failures
+
+### Pillar 1.1 — Flat layout + git-based promotion (v0.1.1, specs drafted)
+
+Simplification pass after dogfooding v0.1.0 surfaced friction with per-target folders + `--from X --to Y` deploy. One code tree per artifact, single-target deploy command, Jinja-templated DDL, git for promotion.
+
+- [`pillar-1.1-flat-layout/README.md`](./pillar-1.1-flat-layout/README.md) — rationale, migration story, supersession table
+- [`01-flat-layout.md`](./pillar-1.1-flat-layout/01-flat-layout.md) — `targets/<X>/el/<name>/` → `el/<name>/`
+- [`02-destination-with-sections.md`](./pillar-1.1-flat-layout/02-destination-with-sections.md) — `destination.toml` with `[default]` + per-target sections
+- [`03-templated-ddl-and-deploy.md`](./pillar-1.1-flat-layout/03-templated-ddl-and-deploy.md) — Jinja-templated DDL + `carve el deploy --target X`
+- [`04-recovery-and-cicd-docs.md`](./pillar-1.1-flat-layout/04-recovery-and-cicd-docs.md) — recovery-agent path updates + CI/CD docs rewrite
 
 ### Foundation (M1, M1.1) — already shipped
 
