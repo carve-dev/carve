@@ -3,11 +3,12 @@
 The exact tree written here is consumed by `M1-02` (config loader) and several
 later specs, so the contents are intentionally fixed rather than configurable.
 
-P1-01 refactored this command to delegate the connections-section /
-env-example-block / per-target artifact-dir scaffolding to
-``add_target_to_project("dev", root)``. The single helper guarantees that
-``carve init`` and ``carve target create`` produce byte-identical artifacts
-for the parts they share.
+P1.1-01 dropped the per-target ``targets/<X>/el/`` scaffolding. ``carve init``
+now creates an empty ``el/`` tree (artifacts land there directly,
+target-agnostic) and delegates connection-section / env-example-block
+scaffolding to ``add_target_to_project("dev", root)``. The target abstraction
+survives — ``[snowflake.<name>]`` sections in ``connections.toml`` and
+``<NAME>_*`` env-var prefixes — but nothing lives under ``targets/`` anymore.
 """
 
 import json
@@ -42,7 +43,6 @@ default_target = "dev"
 [paths]
 config_dir = "carve"
 agents_dir = "carve/agents"
-targets_dir = "targets"
 """
 
 
@@ -152,28 +152,24 @@ def command(
     _write_if_missing(root / "carve" / "runner.toml", RUNNER_TOML_CONTENT)
     _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
+    _ensure_dir(root / "el")
     _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER)
     _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
 
-    # Add the default "dev" target — creates carve/connections.toml's
-    # [snowflake.dev] section, appends the # === dev target === block to
-    # .env.example, and creates targets/dev/el/. The same helper backs
-    # `carve target create`, so init's output for these three artifacts
-    # is byte-identical to what a user would get by running
-    # `carve target create dev` in a fresh repo. Init is idempotent: a
-    # re-run on an already-initialised project leaves the existing
-    # ``[snowflake.dev]`` section untouched.
+    # Add the default "dev" target — creates the [snowflake.dev]
+    # section in carve/connections.toml and appends the
+    # `# === dev target ===` block to .env.example. Since P1.1-01
+    # the helper no longer creates `targets/dev/el/`; artifacts live
+    # directly under `el/` (created above). The target abstraction
+    # is now purely connection config.
     try:
         add_target_to_project("dev", root)
         console.print(f"[green]+[/green] {root / 'carve' / 'connections.toml'}")
-        console.print(f"[green]+[/green] {root / 'targets' / 'dev' / 'el'}/")
     except TargetExistsError:
         console.print(
             f"[yellow]![/yellow] {root / 'carve' / 'connections.toml'} "
             "already has [snowflake.dev], skipping"
         )
-        # Still ensure the artifact dir exists (cheap, idempotent).
-        (root / "targets" / "dev" / "el").mkdir(parents=True, exist_ok=True)
 
     _initialize_state_store(root)
 

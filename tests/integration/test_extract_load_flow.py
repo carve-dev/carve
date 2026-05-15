@@ -3,7 +3,7 @@
 Drives `run_extract_load_agent` end-to-end with a mocked Anthropic
 client (the same harness style used in
 `tests/core/skills/test_plan_agent_integration.py`), verifies that
-file output lands under `targets/<active>/`, and asserts the
+file output lands under `el/<name>/`, and asserts the
 `submit_step` payload's `file_list` matches the task's
 `expected_outputs`.
 
@@ -96,12 +96,12 @@ def _task() -> dict[str, Any]:
             ],
         },
         "expected_outputs": [
-            {"path": "targets/dev/el/events_ingest/main.py", "kind": "create"},
+            {"path": "el/events_ingest/main.py", "kind": "create"},
             {
-                "path": "targets/dev/el/events_ingest/requirements.txt",
+                "path": "el/events_ingest/requirements.txt",
                 "kind": "create",
             },
-            {"path": "targets/dev/snowflake/events_ingest.sql", "kind": "create"},
+            {"path": "el/events_ingest/snowflake.sql", "kind": "create"},
         ],
     }
 
@@ -151,7 +151,7 @@ def _scripted_client() -> MagicMock:
     def resp(content: list[Any]) -> SimpleNamespace:
         return SimpleNamespace(content=content, stop_reason="tool_use", usage=_usage())
 
-    base = "targets/dev/el/events_ingest"
+    base = "el/events_ingest"
     responses = [
         resp([tu("write_file", {"path": f"{base}/main.py", "content": main_py}, "tu_1")]),
         resp(
@@ -171,7 +171,7 @@ def _scripted_client() -> MagicMock:
                 tu(
                     "write_file",
                     {
-                        "path": "targets/dev/snowflake/events_ingest.sql",
+                        "path": "el/events_ingest/snowflake.sql",
                         "content": ddl_sql,
                     },
                     "tu_3",
@@ -186,7 +186,7 @@ def _scripted_client() -> MagicMock:
                         "file_list": [
                             f"{base}/main.py",
                             f"{base}/requirements.txt",
-                            "targets/dev/snowflake/events_ingest.sql",
+                            "el/events_ingest/snowflake.sql",
                         ],
                         "summary": "Wrote events_ingest extractor + DDL.",
                         "error": False,
@@ -211,8 +211,7 @@ def _scripted_client() -> MagicMock:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "targets" / "dev" / "snowflake").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "el").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -227,11 +226,11 @@ def test_extract_load_flow_end_to_end(project_dir: Path) -> None:
         client=client,
         max_turns=10,
     )
-    # File output lands under targets/dev/.
-    base = project_dir / "targets/dev"
-    assert (base / "el/events_ingest/main.py").is_file()
-    assert (base / "el/events_ingest/requirements.txt").is_file()
-    assert (base / "snowflake/events_ingest.sql").is_file()
+    # File output lands under the flat el/ tree (P1.1-01).
+    base = project_dir / "el/events_ingest"
+    assert (base / "main.py").is_file()
+    assert (base / "requirements.txt").is_file()
+    assert (base / "snowflake.sql").is_file()
 
     # submit_step payload matches expected_outputs (modulo ordering).
     expected_paths = {

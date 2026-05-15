@@ -103,9 +103,8 @@ def _config(target: str = "dev") -> Config:
 
 
 def _project(tmp_path: Path) -> Path:
-    """Set up a project with the targets/dev directory pre-created."""
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "targets" / "dev" / "snowflake").mkdir(parents=True, exist_ok=True)
+    """Set up a project with the flat ``el/`` directory pre-created."""
+    (tmp_path / "el").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -248,12 +247,12 @@ def _iowa_task() -> dict[str, Any]:
             ],
         },
         "expected_outputs": [
-            {"path": "targets/dev/el/iowa_liquor_sales/main.py", "kind": "create"},
+            {"path": "el/iowa_liquor_sales/main.py", "kind": "create"},
             {
-                "path": "targets/dev/el/iowa_liquor_sales/requirements.txt",
+                "path": "el/iowa_liquor_sales/requirements.txt",
                 "kind": "create",
             },
-            {"path": "targets/dev/snowflake/iowa_liquor_sales.sql", "kind": "create"},
+            {"path": "el/iowa_liquor_sales/snowflake.sql", "kind": "create"},
         ],
     }
 
@@ -272,8 +271,8 @@ def _scripted_run(
     """Build a mock client whose responses simulate the agent writing the
     three files (or rejecting via `submit_step(error=True)`).
     """
-    base = f"targets/dev/el/{artifact}"
-    ddl_path = f"targets/dev/snowflake/{artifact}.sql"
+    base = f"el/{artifact}"
+    ddl_path = f"el/{artifact}/snowflake.sql"
     responses: list[Any] = []
     skill_calls = skill_calls or []
     extra_pre_calls = extra_pre_calls or []
@@ -428,15 +427,15 @@ def test_emits_three_files_for_socrata_merge_upsert(tmp_path: Path) -> None:
     assert result.error is False
     assert sorted(result.file_list) == sorted(
         [
-            "targets/dev/el/iowa_liquor_sales/main.py",
-            "targets/dev/el/iowa_liquor_sales/requirements.txt",
-            "targets/dev/snowflake/iowa_liquor_sales.sql",
+            "el/iowa_liquor_sales/main.py",
+            "el/iowa_liquor_sales/requirements.txt",
+            "el/iowa_liquor_sales/snowflake.sql",
         ]
     )
     # Files actually landed on disk under the active-target tree.
-    assert (project_dir / "targets/dev/el/iowa_liquor_sales/main.py").is_file()
+    assert (project_dir / "el/iowa_liquor_sales/main.py").is_file()
     assert (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).is_file()
 
 
@@ -475,9 +474,9 @@ def test_dict_binding_regression(tmp_path: Path) -> None:
         ddl_sql=_ddl_text(),
     )
     result = _run(project_dir, client)
-    main_py_path = project_dir / "targets/dev/el/iowa_liquor_sales/main.py"
+    main_py_path = project_dir / "el/iowa_liquor_sales/main.py"
     written = main_py_path.read_text(encoding="utf-8")
-    ddl_path = project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+    ddl_path = project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ddl_text = ddl_path.read_text(encoding="utf-8")
     # Regression assertion: dict-shaped columns must be stringified or
     # routed through VARIANT/PARSE_JSON.
@@ -495,7 +494,7 @@ def test_emits_ddl_companion_file(tmp_path: Path) -> None:
         ddl_sql=_ddl_text(),
     )
     result = _run(project_dir, client)
-    ddl_rel = "targets/dev/snowflake/iowa_liquor_sales.sql"
+    ddl_rel = "el/iowa_liquor_sales/snowflake.sql"
     assert ddl_rel in result.file_list
     ddl_text = (project_dir / ddl_rel).read_text(encoding="utf-8")
     assert "CREATE SCHEMA IF NOT EXISTS" in ddl_text
@@ -544,7 +543,7 @@ def test_write_file_path_allowlist(tmp_path: Path) -> None:
         block_id += 1
         return f"tu_{block_id}"
 
-    base = "targets/dev/el/iowa_liquor_sales"
+    base = "el/iowa_liquor_sales"
     main_py = _iowa_main_py()
     bad_response = _response(
         content=[
@@ -584,7 +583,7 @@ def test_write_file_path_allowlist(tmp_path: Path) -> None:
             _tool_use_block(
                 "write_file",
                 {
-                    "path": "targets/dev/snowflake/iowa_liquor_sales.sql",
+                    "path": "el/iowa_liquor_sales/snowflake.sql",
                     "content": _ddl_text(),
                 },
                 tool_id=nid(),
@@ -600,7 +599,7 @@ def test_write_file_path_allowlist(tmp_path: Path) -> None:
                     "file_list": [
                         f"{base}/main.py",
                         f"{base}/requirements.txt",
-                        "targets/dev/snowflake/iowa_liquor_sales.sql",
+                        "el/iowa_liquor_sales/snowflake.sql",
                     ],
                     "summary": "wrote.",
                     "error": False,
@@ -636,7 +635,7 @@ def test_uses_target_prefixed_env_vars(tmp_path: Path) -> None:
     )
     _run(project_dir, client)
     written = (
-        project_dir / "targets/dev/el/iowa_liquor_sales/main.py"
+        project_dir / "el/iowa_liquor_sales/main.py"
     ).read_text(encoding="utf-8")
     assert "DEV_SNOWFLAKE_USER" in written
 
@@ -701,7 +700,7 @@ def test_requirements_minimality(tmp_path: Path) -> None:
     )
     _run(project_dir, client)
     requirements = (
-        project_dir / "targets/dev/el/iowa_liquor_sales/requirements.txt"
+        project_dir / "el/iowa_liquor_sales/requirements.txt"
     ).read_text(encoding="utf-8")
     assert "snowflake-connector-python" in requirements
     # No pandas (we don't use write_pandas), no pyarrow (no parquet).
@@ -765,7 +764,7 @@ def test_ddl_idempotent_create_table_if_not_exists(tmp_path: Path) -> None:
     )
     _run(project_dir, client)
     on_disk = (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
     assert "CREATE SCHEMA IF NOT EXISTS" in on_disk
     assert "CREATE TABLE IF NOT EXISTS" in on_disk
@@ -815,7 +814,7 @@ def test_ddl_never_uses_bare_rename(tmp_path: Path) -> None:
     assert "rename" in result.summary.lower()
     # The on-disk DDL never appeared — the agent didn't write any files.
     assert not (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).exists()
 
 
@@ -834,7 +833,7 @@ def test_ddl_destructive_intent_surfaces_in_tradeoffs(tmp_path: Path) -> None:
     )
     result = _run(project_dir, client, task=task)
     on_disk = (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
     assert "DROP COLUMN IF EXISTS foo" in on_disk
     assert result.success is True
@@ -858,7 +857,7 @@ def test_ddl_modify_path_emits_alter_add_column(tmp_path: Path) -> None:
     )
     _run(project_dir, client, task=task)
     on_disk = (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
     assert "ADD COLUMN IF NOT EXISTS CITY_NAME" in on_disk
 
@@ -873,7 +872,7 @@ def test_ddl_grants_runtime_role(tmp_path: Path) -> None:
     )
     _run(project_dir, client)
     on_disk = (
-        project_dir / "targets/dev/snowflake/iowa_liquor_sales.sql"
+        project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
     # The config fixture sets role=TRANSFORMER_DEV.
     assert "TO ROLE TRANSFORMER_DEV" in on_disk
@@ -889,7 +888,7 @@ def test_build_manifest_includes_ddl_file(tmp_path: Path) -> None:
     )
     result = _run(project_dir, client)
     assert any(
-        f.endswith("snowflake/iowa_liquor_sales.sql") for f in result.file_list
+        f.endswith("iowa_liquor_sales/snowflake.sql") for f in result.file_list
     )
     # The build flow records the manifest as a serializable list.
     assert json.dumps({"files": result.file_list})

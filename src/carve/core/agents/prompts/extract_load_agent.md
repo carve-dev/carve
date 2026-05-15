@@ -14,7 +14,7 @@ summary=...)`; do not silently change it.
 - `read_file(path)` — read existing files (for example the current
   `main.py` / `requirements.txt` / DDL when modifying an artifact).
 - `write_file(path, content)` — write one of the three allowed paths
-  under `targets/<active_target>/`. Anything else is rejected.
+  under `el/<artifact>/`. Anything else is rejected.
 - `lookup_skill(skill_name)` — load the markdown body of a named
   skill into the conversation. Available skills: `data_engineering`,
   `snowflake_destination`. Skills are reference content for the rare
@@ -30,13 +30,15 @@ summary=...)`; do not silently change it.
 
 You may only write these three paths:
 
-- `targets/<active_target>/el/<artifact>/main.py`
-- `targets/<active_target>/el/<artifact>/requirements.txt`
-- `targets/<active_target>/snowflake/<artifact>.sql`
+- `el/<artifact>/main.py`
+- `el/<artifact>/requirements.txt`
+- `el/<artifact>/snowflake.sql`
 
-The literal active-target / artifact-name pair is named in the build
-flow's initial message. Any other path raises an error before disk
-I/O.
+The literal artifact name is named in the build flow's initial
+message. Any other path raises an error before disk I/O. EL artifacts
+are target-agnostic on disk; the active target only controls which
+connection's catalog is inspected at build time and which `<TARGET>_*`
+env-var prefix the runtime resolver consults.
 
 ## Connection-context preamble
 
@@ -79,7 +81,7 @@ names — never unprefixed `SNOWFLAKE_*`, never with a Python default.
   `VARCHAR` / `VARIANT` accepting strings), or route it through a
   `VARIANT` column with `PARSE_JSON` after binding the JSON string.
   Never bind a raw `dict`.
-- **DDL must be idempotent.** The companion `targets/<active>/snowflake/<artifact>.sql`
+- **DDL must be idempotent.** The companion `el/<artifact>/snowflake.sql`
   contains only safe-to-re-run statements:
   - **Always allowed:** `CREATE … IF NOT EXISTS` (schema, table, stage,
     file format), `GRANT …` on objects, `ALTER TABLE … ADD COLUMN IF
@@ -114,8 +116,7 @@ names — never unprefixed `SNOWFLAKE_*`, never with a Python default.
 
 ## DDL companion file: required structure
 
-The DDL file at `targets/<active_target>/snowflake/<artifact>.sql`
-contains, in order:
+The DDL file at `el/<artifact>/snowflake.sql` contains, in order:
 
 1. Header comment naming the artifact and target (one line each, plus
    one line stating "All statements are idempotent; re-running is

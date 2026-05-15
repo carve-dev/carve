@@ -135,7 +135,7 @@ def repo_with_build(tmp_path: Path) -> tuple[Repository, Config, Path]:
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
     repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="targets/dev/el/iowa"
+        name="iowa", description="", pipeline_dir="el/iowa"
     )
     plan = Plan(
         id="plan_1",

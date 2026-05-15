@@ -70,12 +70,12 @@ def test_render_pipelines_table_shows_each_row(repository: Repository) -> None:
     repository.create_or_update_pipeline(
         name="alpha",
         description="Alpha pipeline.",
-        pipeline_dir="targets/dev/el/alpha",
+        pipeline_dir="el/alpha",
     )
     repository.create_or_update_pipeline(
         name="beta",
         description="Beta pipeline.",
-        pipeline_dir="targets/dev/el/beta",
+        pipeline_dir="el/beta",
     )
     renderable = render_pipelines_table(repository)
     console = Console(record=True, width=120)
@@ -111,7 +111,7 @@ def test_render_pipeline_detail_shows_lineage_and_runs(
     repository.create_or_update_pipeline(
         name="ingest",
         description="Daily ingest.",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     # The lineage view resolves "current_plan" through the pinned Build.
     build = repository.create_build(
@@ -154,7 +154,7 @@ def test_render_pipeline_detail_no_runs_yet(repository: Repository) -> None:
     repository.create_or_update_pipeline(
         name="fresh",
         description="",
-        pipeline_dir="targets/dev/el/fresh",
+        pipeline_dir="el/fresh",
     )
     renderable, exit_code = render_pipeline_detail(repository, "fresh")
     assert exit_code == 0

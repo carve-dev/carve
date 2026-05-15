@@ -184,7 +184,13 @@ def _make_config(
 
 
 def _plant_artifact(project_dir: Path, target: str, name: str) -> Path:
-    artifact = project_dir / "targets" / target / "el" / name
+    """Plant an artifact under the flat `el/<name>/` tree (P1.1-01).
+
+    ``target`` is accepted on the signature so the test bodies keep
+    their pre-flat call shape — the on-disk path is target-agnostic.
+    """
+    del target
+    artifact = project_dir / "el" / name
     artifact.mkdir(parents=True, exist_ok=True)
     (artifact / "main.py").write_text("print('hello')\n")
     (artifact / "requirements.txt").write_text("")
@@ -192,9 +198,11 @@ def _plant_artifact(project_dir: Path, target: str, name: str) -> Path:
 
 
 def _plant_ddl(project_dir: Path, target: str, name: str, sql: str) -> Path:
-    snow = project_dir / "targets" / target / "snowflake"
-    snow.mkdir(parents=True, exist_ok=True)
-    path = snow / f"{name}.sql"
+    """Plant the DDL companion file at `el/<name>/snowflake.sql` (P1.1-01)."""
+    del target
+    artifact = project_dir / "el" / name
+    artifact.mkdir(parents=True, exist_ok=True)
+    path = artifact / "snowflake.sql"
     path.write_text(sql)
     return path
 
@@ -234,8 +242,7 @@ def _good_columns() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
-    (tmp_path / "targets" / "prod" / "el").mkdir(parents=True)
+    (tmp_path / "el").mkdir(parents=True)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
 
@@ -251,7 +258,7 @@ def repository_with_build(
     repo = Repository(create_session_factory(engine))
 
     repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="targets/dev/el/iowa"
+        name="iowa", description="", pipeline_dir="el/iowa"
     )
     plan = Plan(
         id="plan_1",
@@ -363,7 +370,7 @@ def test_deploy_missing_deploy_connection(
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
     repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="targets/dev/el/iowa"
+        name="iowa", description="", pipeline_dir="el/iowa"
     )
     plan = Plan(
         id="plan_1",
@@ -628,7 +635,7 @@ def test_deploy_copies_files_to_dest_target(
         pool=pool,  # type: ignore[arg-type]
     )
     assert code == 0
-    dst_main = project_dir / "targets" / "prod" / "el" / "iowa" / "main.py"
+    dst_main = project_dir / "el" / "iowa" / "main.py"
     assert dst_main.is_file()
     assert dst_main.read_text() == "print('hello')\n"
 
@@ -656,9 +663,8 @@ def test_deploy_copies_ddl_file(
         pool=pool,  # type: ignore[arg-type]
     )
     assert code == 0
-    assert (
-        project_dir / "targets" / "prod" / "snowflake" / "iowa.sql"
-    ).is_file()
+    # P1.1-01: DDL companion file lives in the flat artifact tree.
+    assert (project_dir / "el" / "iowa" / "snowflake.sql").is_file()
 
 
 def test_deploy_applies_ddl_in_order(
@@ -715,7 +721,7 @@ def test_deploy_idempotent(
     assert code1 == 0
 
     # Snapshot destination file mtimes.
-    dst_main = project_dir / "targets" / "prod" / "el" / "iowa" / "main.py"
+    dst_main = project_dir / "el" / "iowa" / "main.py"
     contents_before = dst_main.read_text()
 
     code2 = deploy_cmd.run_deploy(
@@ -769,8 +775,8 @@ def test_deploy_dest_uncommitted_changes_refused(
         check=True,
         capture_output=True,
     )
-    # Dirty the destination after commit.
-    (project_dir / "targets" / "prod" / "el" / "iowa" / "main.py").write_text(
+    # Dirty the (flat) artifact tree after commit.
+    (project_dir / "el" / "iowa" / "main.py").write_text(
         "print('user edits')\n"
     )
 

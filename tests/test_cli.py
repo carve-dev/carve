@@ -145,8 +145,10 @@ def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None
     assert (tmp_path / "carve" / "runner.toml").is_file()
     assert (tmp_path / "carve" / "models.toml").is_file()
     assert (tmp_path / "carve" / "agents").is_dir()
-    assert (tmp_path / "targets" / "dev" / "el").is_dir()
+    # P1.1-01: flat `el/` tree, no `targets/` filesystem subtree.
+    assert (tmp_path / "el").is_dir()
     assert not (tmp_path / "pipelines").exists()
+    assert not (tmp_path / "targets").exists()
     assert (tmp_path / ".env.example").is_file()
     assert (tmp_path / ".gitignore").is_file()
 
@@ -266,7 +268,10 @@ def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
     assert 'default_target = "dev"' in content
     assert 'config_dir = "carve"' in content
     assert 'agents_dir = "carve/agents"' in content
-    assert 'targets_dir = "targets"' in content
+    # P1.1-01: `targets_dir` is no longer emitted by `carve init`. The
+    # field stays in `PathsConfig` with a default so existing carve.toml
+    # files keep loading, but new projects don't see it.
+    assert "targets_dir" not in content
 
 
 def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path) -> None:
@@ -296,7 +301,8 @@ def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> N
     this regression test pins the contract by initialising one project with
     ``init`` and another by stitching together ``init`` + a fresh
     ``target create``, then comparing the dev section + dev env-example
-    block + ``targets/dev/el/`` byte-for-byte.
+    block byte-for-byte. P1.1-01 removed the per-target filesystem tree;
+    the flat ``el/`` tree from init is the same in both flows.
     """
     init_dir = tmp_path / "init"
     create_dir = tmp_path / "create"
@@ -343,9 +349,11 @@ def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> N
     create_env = (create_dir / ".env.example").read_text()
     assert _extract_env_block(init_env, "dev") == _extract_env_block(create_env, "dev")
 
-    # targets/dev/el/ exists in both.
-    assert (init_dir / "targets" / "dev" / "el").is_dir()
-    assert (create_dir / "targets" / "dev" / "el").is_dir()
+    # Flat el/ tree exists in both (created by init); no targets/ tree.
+    assert (init_dir / "el").is_dir()
+    assert (create_dir / "el").is_dir()
+    assert not (init_dir / "targets").exists()
+    assert not (create_dir / "targets").exists()
 
 
 def _extract_section(content: str, header: str) -> list[str]:

@@ -4,10 +4,11 @@ Five tools:
 
 1. ``read_file(path)`` — re-read existing files when modifying.
 2. ``write_file(path, content)`` — scoped to a per-build allow-list.
-   Only the three sub-paths under ``targets/<active_target>/``
-   (``el/<artifact>/main.py``, ``el/<artifact>/requirements.txt``,
-   ``snowflake/<artifact>.sql``) are accepted; anything else raises
-   `ToolExecutionError` *before* the file system is touched.
+   Only the sub-paths under ``el/<artifact>/`` (``main.py``,
+   ``requirements.txt``, ``snowflake.sql``) are accepted; anything
+   else raises `ToolExecutionError` *before* the file system is
+   touched. (Pre-P1.1-01 the allow-list lived under
+   ``targets/<active_target>/``; the flat layout collapsed it.)
 3. ``lookup_skill(skill_name)`` — returns the markdown body of a named
    skill (`data_engineering` or `snowflake_destination`). Skills are
    *content* the agent appends to the conversation, not callable
@@ -66,7 +67,7 @@ WRITE_FILE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Path relative to the project root. Must be one of the "
-                "three allowed sub-paths under targets/<active_target>/."
+                "three allowed sub-paths under el/<artifact>/."
             ),
         },
         "content": {
@@ -133,8 +134,7 @@ def make_write_file_tool(
         name="write_file",
         description=(
             "Write contents to one of the three allowed paths under "
-            "targets/<active_target>/: el/<artifact>/main.py, "
-            "el/<artifact>/requirements.txt, snowflake/<artifact>.sql. "
+            "el/<artifact>/: main.py, requirements.txt, snowflake.sql. "
             "Any other path is rejected. Creates parent directories as "
             "needed; overwrites if the file exists."
         ),

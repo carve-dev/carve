@@ -38,7 +38,9 @@ el/
 
 ## What stays unchanged
 
-- `carve target create`, `carve target list`, `carve target show`, `carve target rename`, `carve target delete` — they operate on `connections.toml` sections + `.env.example` blocks. Nothing target-related lives under `targets/` anymore, but the target *abstraction* survives intact.
+> **Updated during implementation (2026-05-14):** `carve target show` no longer enumerates EL artifacts — it points the user at `carve el list` instead (redundant once artifacts are flat). `carve target delete` and `carve target rename` no longer touch `targets/<name>/` at all; any legacy tree is left in place for the user to clean up manually. The "refuse delete on non-empty target dir" safety rail is therefore gone (its premise is moot under the flat layout). The target subcommand family is now purely connection-config; nothing under `targets/` is touched by any of them.
+
+- `carve target create`, `carve target list`, `carve target show`, `carve target rename`, `carve target delete` — they operate on `connections.toml` sections + `.env.example` blocks. Nothing target-related lives under `targets/` anymore, but the target *abstraction* survives intact. `carve target show` now prints connection config only and refers the user to `carve el list` for artifacts. `carve target delete` / `rename` do not touch any legacy `targets/<name>/` tree; the user is responsible for cleaning up the legacy filesystem if they want to.
 - `[snowflake.<target>]` sections in `carve/connections.toml`.
 - `<TARGET>_SNOWFLAKE_*` env-var prefix convention.
 - `--target X` flag resolution (CLI flag → `CARVE_TARGET` env → `default_target` → `"dev"`).
@@ -68,6 +70,8 @@ el/
 
 - All test fixtures that plant artifacts under `targets/<X>/el/<name>/` — retargeted to `el/<name>/`.
 - The `targets_dir` config field in `carve.toml`'s `[paths]` section is dropped from new templates (`carve init` no longer emits it). Existing projects' `carve.toml` keeps it (pydantic schema retains the field with a default) but it's a no-op.
+
+> **Known deviation (2026-05-14):** `_CARVE_TOML_TEMPLATE` in `src/carve/cli/commands/init.py:46` still emits `targets_dir = "targets"`. This was missed during implementation; spec intent is unchanged. Tracked as a small follow-up — `carve init` should stop emitting this line. The field stays in `core/config/schema.py` (pydantic schema retains it as a no-op default for existing projects), as the spec describes; only the template emission needs to be dropped.
 
 **Added:**
 

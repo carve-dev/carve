@@ -1,9 +1,11 @@
-"""Target system — per-target folder convention and registry helpers.
+"""Target system — connection-config registry helpers.
 
 A target is an environment (dev, staging, prod, …). Connection structure
 lives centrally in ``carve/connections.toml`` (one ``[snowflake.<target>]``
 section per target); secrets live in the root ``.env`` with target-prefixed
-variable names; deployable artifacts live under ``targets/<name>/``.
+variable names. P1.1-01 dropped the per-target ``targets/<name>/``
+filesystem tree — EL artifacts live in the flat ``el/<name>/`` tree,
+target-agnostic.
 
 This package contains:
 

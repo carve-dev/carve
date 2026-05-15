@@ -2,8 +2,7 @@
 
 Consumes a saved `Plan` (produced by `generate_plan` with
 ``phase='drafted'``) and runs the build agent to materialise
-``targets/<active_target>/el/<name>/main.py`` and ``requirements.txt``.
-On success:
+``el/<name>/main.py`` and ``requirements.txt``. On success:
 
 * Inserts/updates the `Pipeline` row keyed by name.
 * Creates a `Build` row binding the plan to the active target.
@@ -20,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +36,10 @@ from carve.core.agents import (
 )
 from carve.core.config import Config, ConfigError
 from carve.core.state import Plan, Repository
+from carve.core.targets.names import (
+    InvalidArtifactNameError,
+    validate_artifact_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +100,10 @@ def build_plan(
         repository: State-store repository.
         target: Optional target override. When None, falls through to
             ``CARVE_TARGET`` then ``config.project.default_target``
-            (per `resolve_active_target`). The resolved value lands the
-            build files under ``targets/<target>/el/<name>/`` and is
-            persisted on the Build row.
+            (per `resolve_active_target`). The resolved value is
+            persisted on the Build row (recording which target's
+            catalog this build was inspected against); files always
+            land in the flat ``el/<name>/`` tree.
         client: Optional pre-built Anthropic client (used in tests).
         max_turns: Cap on agent turns.
         observer: Optional progress observer.
@@ -156,7 +159,7 @@ def build_plan(
 
     anthropic_client = _build_client(config, client)
 
-    pipeline_dir_rel = f"targets/{active_target}/el/{pipeline_name}"
+    pipeline_dir_rel = f"el/{pipeline_name}"
     pipeline_dir_abs = project_dir / pipeline_dir_rel
     snapshot = _snapshot_pipeline_dir(pipeline_dir_abs)
 
@@ -308,9 +311,6 @@ def build_plan(
 # ---------------------------------------------------------------------------
 
 
-_PIPELINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-
-
 def _load_plan_design(plan_row: Plan) -> dict[str, Any]:
     """Pull the design dict out of the plan's stored task_graph JSON."""
     try:
@@ -338,11 +338,17 @@ def _pipeline_name_from(plan_row: Plan, design: dict[str, Any]) -> str:
     2. The design's ``pipeline_name``.
     """
     candidate = plan_row.pipeline_name or design.get("pipeline_name")
-    if not isinstance(candidate, str) or not _PIPELINE_NAME_RE.match(candidate):
+    if not isinstance(candidate, str):
         raise BuildError(
             "Could not resolve a valid pipeline name for this build. "
             f"Got {candidate!r}."
         )
+    try:
+        validate_artifact_name(candidate)
+    except InvalidArtifactNameError as exc:
+        raise BuildError(
+            f"Pipeline name {candidate!r} is not a valid artifact name: {exc}"
+        ) from exc
     return candidate
 
 
@@ -449,14 +455,16 @@ def _compose_build_system_prompt(
 
 
 def _render_output_path_block(active_target: str, pipeline_name: str) -> str:
-    """Pin the build agent to the per-target output directory.
+    """Pin the build agent to the flat output directory.
 
-    The base prompt still refers to ``pipelines/<name>/``, but P1-02
-    moved the build output under ``targets/<target>/el/<name>/``. This
-    appended section tells the agent the canonical paths so it doesn't
-    fall back to the prompt's older guidance.
+    P1.1-01 moved the build output from
+    ``targets/<target>/el/<name>/`` to the flat ``el/<name>/`` tree
+    (one artifact tree per pipeline, target-agnostic). The block pins
+    the agent to those paths.
     """
-    base = f"targets/{active_target}/el/{pipeline_name}"
+    del active_target  # retained in signature for parity with the
+    # build-flow caller; the flat layout no longer encodes target.
+    base = f"el/{pipeline_name}"
     return (
         "## Output paths\n"
         f"- Write `{base}/main.py` and `{base}/requirements.txt`. "
@@ -629,7 +637,9 @@ def _render_existing_pipeline_section(
     *,
     active_target: str,
 ) -> str | None:
-    rel_dir = f"targets/{active_target}/el/{pipeline_name}"
+    del active_target  # signature retained for parity; flat layout
+    # is target-agnostic.
+    rel_dir = f"el/{pipeline_name}"
     pipeline_dir = project_dir / rel_dir
     main_py = pipeline_dir / "main.py"
     requirements = pipeline_dir / "requirements.txt"

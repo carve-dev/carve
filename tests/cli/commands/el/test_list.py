@@ -1,4 +1,4 @@
-"""Tests for `carve el list` (P1-07)."""
+"""Tests for `carve el list` (P1-07 / P1.1-01)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _make_config(state_db: str) -> Config:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
+    (tmp_path / "el").mkdir(parents=True)
     (tmp_path / ".carve").mkdir(exist_ok=True)
     return tmp_path
 
@@ -49,20 +49,23 @@ def repository(project_dir: Path) -> Repository:
 
 
 def _plant_artifact(project_dir: Path, *, target: str, name: str) -> None:
-    artifact_dir = project_dir / "targets" / target / "el" / name
+    """P1.1-01 flat layout: artifacts live under `el/<name>/`."""
+    del target
+    artifact_dir = project_dir / "el" / name
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "main.py").write_text("print('x')\n")
 
 
 def test_el_list_table_format(project_dir: Path, repository: Repository) -> None:
-    """`carve el list` renders the documented columns: Name/Built/Last run/Status."""
+    """`carve el list` renders the documented columns: Name/Built/Last
+    run/Per-target status."""
     _plant_artifact(project_dir, target="dev", name="iowa_liquor_sales")
     _plant_artifact(project_dir, target="dev", name="salesforce_opps")
 
     repository.create_or_update_pipeline(
         name="iowa_liquor_sales",
         description="",
-        pipeline_dir="targets/dev/el/iowa_liquor_sales",
+        pipeline_dir="el/iowa_liquor_sales",
     )
     # Seed a build to populate the "Built" column.
     repository.save_plan(_make_plan("plan_iowa", "iowa_liquor_sales"))  # type: ignore[arg-type]
@@ -72,7 +75,7 @@ def test_el_list_table_format(project_dir: Path, repository: Repository) -> None
         target="dev",
     )
     repository.set_pipeline_current_build("iowa_liquor_sales", build.id)
-    # Stamp a last_run_status so the Status column has content.
+    # Stamp a last_run_status so the rollup column has content.
     run_id = repository.create_run(
         kind="run",
         target_id=build.id,
@@ -89,15 +92,56 @@ def test_el_list_table_format(project_dir: Path, repository: Repository) -> None
         project_dir=project_dir,
         active_target="dev",
     )
-    console = Console(record=True, width=140)
+    console = Console(record=True, width=160)
     console.print(renderable)
     output = console.export_text()
     assert "iowa_liquor_sales" in output
     assert "salesforce_opps" in output
-    assert "Name" in output and "Built" in output and "Last run" in output and "Status" in output
-    assert "success" in output
-    # No-build artifact has "-" in built, "never" in last run.
+    assert "Name" in output and "Built" in output and "Last run" in output
+    assert "Per-target status" in output
+    # The per-target rollup column shows `dev=success` for iowa.
+    assert "dev=success" in output
+    # No-build artifact has "never" in last run.
     assert "never" in output
+
+
+def test_list_shows_per_target_rollup(
+    project_dir: Path, repository: Repository
+) -> None:
+    """P1.1-01: the "Last run" column shows a per-target rollup like
+    `dev=success prod=failed staging=failed` so users can see all
+    targets' state for an artifact at a glance."""
+    _plant_artifact(project_dir, target="dev", name="iowa")
+
+    repository.create_or_update_pipeline(
+        name="iowa",
+        description="",
+        pipeline_dir="el/iowa",
+    )
+    # Three runs against three different targets with different outcomes.
+    for target, status in (("dev", "success"), ("prod", "success"), ("staging", "failed")):
+        run_id = repository.create_run(
+            kind="run",
+            target_id="iowa",
+            pipeline_name="iowa",
+            target=target,
+        )
+        repository.update_run_status(run_id, status)
+        repository.record_pipeline_run(
+            pipeline_name="iowa", run_id=run_id, status=status
+        )
+
+    renderable = render_el_list(
+        repository=repository,
+        project_dir=project_dir,
+        active_target="dev",
+    )
+    console = Console(record=True, width=200)
+    console.print(renderable)
+    output = console.export_text()
+    assert "dev=success" in output
+    assert "prod=success" in output
+    assert "staging=failed" in output
 
 
 def test_el_list_empty_state(project_dir: Path, repository: Repository) -> None:

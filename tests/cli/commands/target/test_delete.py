@@ -64,9 +64,21 @@ def test_target_delete_removes_env_example_block(
     assert "STAGING_SNOWFLAKE_ACCOUNT=" not in content
 
 
-def test_target_delete_removes_artifacts_dir(runner: CliRunner, tmp_path: Path) -> None:
+def test_target_delete_does_not_touch_targets_tree(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """P1.1-01: target delete operates only on connection config.
+
+    If a legacy ``targets/<name>/`` directory exists from a pre-P1.1
+    project, the delete leaves it in place — the user can ``rm -rf``
+    it themselves.
+    """
     _init_project(runner, tmp_path)
     runner.invoke(app, ["target", "create", "staging", "--project-dir", str(tmp_path)])
+    # Pre-create a stale targets/staging/ tree (legacy from pre-P1.1).
+    legacy_dir = tmp_path / "targets" / "staging" / "el"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "sentinel.txt").write_text("legacy")
 
     result = runner.invoke(
         app,
@@ -80,7 +92,11 @@ def test_target_delete_removes_artifacts_dir(runner: CliRunner, tmp_path: Path) 
         ],
     )
     assert result.exit_code == 0, result.output
-    assert not (tmp_path / "targets" / "staging").exists()
+    # Connection-config section removed.
+    conn = (tmp_path / "carve" / "connections.toml").read_text()
+    assert "[snowflake.staging]" not in conn
+    # Legacy targets/<name>/ tree is untouched.
+    assert (legacy_dir / "sentinel.txt").is_file()
 
 
 def test_target_delete_default_target_refused(
@@ -114,27 +130,6 @@ def test_target_delete_default_target_force_succeeds(
         ],
     )
     assert result.exit_code == 0, result.output
-
-
-def test_target_delete_non_empty_refused(runner: CliRunner, tmp_path: Path) -> None:
-    """A target with EL artifacts in it requires ``--force``."""
-    _init_project(runner, tmp_path)
-    runner.invoke(app, ["target", "create", "staging", "--project-dir", str(tmp_path)])
-    # Pop an artifact in to make the dir non-empty.
-    (tmp_path / "targets" / "staging" / "el" / "iowa_liquor").mkdir()
-
-    result = runner.invoke(
-        app,
-        [
-            "target",
-            "delete",
-            "staging",
-            "--yes",
-            "--project-dir",
-            str(tmp_path),
-        ],
-    )
-    assert result.exit_code == 2, result.output
 
 
 def test_target_delete_nonexistent(runner: CliRunner, tmp_path: Path) -> None:

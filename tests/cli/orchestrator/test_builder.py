@@ -2,7 +2,7 @@
 
 The Anthropic client is fully mocked; the build agent's `write_file`
 tool is the real one, so each tool_use ends up writing a file under
-`tmp_path/targets/<target>/el/<name>/`. The test then verifies that:
+`tmp_path/el/<name>/` (flat layout — P1.1-01). The test then verifies that:
 
 * `Pipeline` row is upserted.
 * The plan's `phase` flips to "built".
@@ -104,7 +104,7 @@ def _config(state_db: str) -> Config:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
+    (tmp_path / "el").mkdir(parents=True)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
 
@@ -164,8 +164,11 @@ def _success_responses(
     pipeline_name: str = "csv_ingest",
     target: str = "dev",
 ) -> tuple[Any, ...]:
-    """Two write_file calls + an end_turn summary, scoped to the per-target dir."""
-    base = f"targets/{target}/el/{pipeline_name}"
+    """Two write_file calls + an end_turn summary, scoped to the flat
+    ``el/<name>/`` dir (target retained on signature for parity with
+    pre-P1.1 callers)."""
+    del target  # flat layout — file location no longer encodes target.
+    base = f"el/{pipeline_name}"
     return (
         _response(
             content=[
@@ -229,9 +232,9 @@ def test_build_writes_files_and_marks_plan_built(
     assert artifact.success is True
     assert artifact.pipeline_name == "csv_ingest"
     assert artifact.target == "dev"
-    assert artifact.pipeline_dir == "targets/dev/el/csv_ingest"
-    assert (project_dir / "targets/dev/el/csv_ingest" / "main.py").is_file()
-    assert (project_dir / "targets/dev/el/csv_ingest" / "requirements.txt").is_file()
+    assert artifact.pipeline_dir == "el/csv_ingest"
+    assert (project_dir / "el/csv_ingest" / "main.py").is_file()
+    assert (project_dir / "el/csv_ingest" / "requirements.txt").is_file()
 
     # Build artifact carries the new build id.
     assert artifact.build_id is not None
@@ -242,7 +245,7 @@ def test_build_writes_files_and_marks_plan_built(
     assert pipeline is not None
     assert pipeline.current_build_id == artifact.build_id
     assert pipeline.description == "Daily ingest."
-    assert pipeline.pipeline_dir == "targets/dev/el/csv_ingest"
+    assert pipeline.pipeline_dir == "el/csv_ingest"
 
     # Build row carries the plan + target binding and the manifest.
     build = repository.get_build(artifact.build_id)
@@ -304,7 +307,7 @@ def test_build_marks_failed_when_main_py_not_written(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "targets/dev/el/csv_ingest/requirements.txt",
+                        "path": "el/csv_ingest/requirements.txt",
                         "content": "snowflake-connector-python\n",
                     },
                     tool_id="tu_1",
@@ -378,7 +381,7 @@ def test_build_force_rebuilds_a_built_plan(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "targets/dev/el/csv_ingest/main.py",
+                        "path": "el/csv_ingest/main.py",
                         "content": "# rebuilt\nprint('rebuild')\n",
                     },
                     tool_id="tu_1",
@@ -391,7 +394,7 @@ def test_build_force_rebuilds_a_built_plan(
                 _tool_use_block(
                     "write_file",
                     {
-                        "path": "targets/dev/el/csv_ingest/requirements.txt",
+                        "path": "el/csv_ingest/requirements.txt",
                         "content": "snowflake-connector-python\n",
                     },
                     tool_id="tu_2",
@@ -410,7 +413,7 @@ def test_build_force_rebuilds_a_built_plan(
         force=True,
     )
     assert artifact.success is True
-    rebuilt_main = (project_dir / "targets/dev/el/csv_ingest" / "main.py").read_text()
+    rebuilt_main = (project_dir / "el/csv_ingest" / "main.py").read_text()
     assert "rebuild" in rebuilt_main
 
 
@@ -423,8 +426,8 @@ def test_build_for_existing_pipeline_replaces_files(
     """Building a plan that targets an existing pipeline overwrites the files."""
     config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
 
-    # Plant the existing pipeline files + row under the per-target layout.
-    pipeline_dir = project_dir / "targets" / "dev" / "el" / "csv_ingest"
+    # Plant the existing pipeline files + row under the flat layout.
+    pipeline_dir = project_dir / "el" / "csv_ingest"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "main.py").write_text("# old version\n")
     (pipeline_dir / "requirements.txt").write_text("snowflake-connector-python\n")
@@ -433,7 +436,7 @@ def test_build_for_existing_pipeline_replaces_files(
     repository.create_or_update_pipeline(
         name="csv_ingest",
         description="seed",
-        pipeline_dir="targets/dev/el/csv_ingest",
+        pipeline_dir="el/csv_ingest",
     )
     seed_build = repository.create_build(
         pipeline_name="csv_ingest",
@@ -485,10 +488,13 @@ def test_build_unknown_plan_raises(project_dir: Path, repository: Repository) ->
 # ---------------------------------------------------------------- per-target
 
 
-def test_build_writes_to_active_target_path(
+def test_build_target_column_records_active_target(
     project_dir: Path, repository: Repository
 ) -> None:
-    """`carve build <id> --target staging` lands files under the staging dir."""
+    """`carve build <id> --target staging` lands files under the flat
+    `el/<name>/` tree but the Build row still stamps `target = staging`.
+    P1.1-01: the target column reflects the catalog/runtime context the
+    build was inspected against, not where the files live."""
     config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000010_aaaaaa")
 
@@ -503,10 +509,16 @@ def test_build_writes_to_active_target_path(
     )
     assert artifact.success is True
     assert artifact.target == "staging"
-    assert artifact.pipeline_dir == "targets/staging/el/csv_ingest"
-    assert (project_dir / "targets/staging/el/csv_ingest/main.py").is_file()
-    # Default `dev` target directory is untouched.
-    assert not (project_dir / "targets/dev/el/csv_ingest/main.py").is_file()
+    # Flat layout — files always land here regardless of target.
+    assert artifact.pipeline_dir == "el/csv_ingest"
+    assert (project_dir / "el/csv_ingest/main.py").is_file()
+    # No `targets/` tree gets created by the build flow either.
+    assert not (project_dir / "targets").exists()
+    # The Build row records the active target stamping.
+    assert artifact.build_id is not None
+    build = repository.get_build(artifact.build_id)
+    assert build is not None
+    assert build.target == "staging"
 
 
 def test_build_creates_build_row_with_correct_fields(
@@ -531,8 +543,8 @@ def test_build_creates_build_row_with_correct_fields(
     assert build.plan_id == plan.id
     assert build.target == "dev"
     # Manifest references the per-target paths the build wrote.
-    assert "targets/dev/el/csv_ingest/main.py" in build.manifest_json
-    assert "targets/dev/el/csv_ingest/requirements.txt" in build.manifest_json
+    assert "el/csv_ingest/main.py" in build.manifest_json
+    assert "el/csv_ingest/requirements.txt" in build.manifest_json
 
 
 def test_build_sets_current_build_id_on_pipeline(
@@ -572,7 +584,7 @@ def test_build_default_target_falls_through_to_config(
     )
     assert artifact.success is True
     assert artifact.target == "production"
-    assert (project_dir / "targets/production/el/csv_ingest/main.py").is_file()
+    assert (project_dir / "el/csv_ingest/main.py").is_file()
 
 
 def test_build_invalid_pipeline_name_rejected(
@@ -585,7 +597,7 @@ def test_build_invalid_pipeline_name_rejected(
         plan_id="plan_20260101_000014_aaaaaa",
         pipeline_name="Bad-Name",
     )
-    with pytest.raises(BuildError, match=r"valid pipeline name"):
+    with pytest.raises(BuildError, match=r"not a valid artifact name"):
         build_plan(
             plan_id=plan.id,
             config=config,
@@ -598,7 +610,10 @@ def test_build_invalid_pipeline_name_rejected(
 def test_two_builds_against_different_targets(
     project_dir: Path, repository: Repository
 ) -> None:
-    """Two builds against dev/prod produce two Build rows; current_build_id ends at the latest."""
+    """Two builds against dev/prod produce two Build rows; current_build_id
+    ends at the latest. P1.1-01: both builds write to the SAME flat
+    `el/<name>/` path — last build wins on disk (the pre-P1.1-02 transient
+    behaviour the spec acknowledges)."""
     config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000015_aaaaaa")
 
@@ -637,14 +652,36 @@ def test_two_builds_against_different_targets(
     assert pipeline is not None
     assert pipeline.current_build_id == artifact_prod.build_id
 
-    # Each target's directory got its own files.
-    assert (project_dir / "targets/dev/el/csv_ingest/main.py").is_file()
-    assert (project_dir / "targets/prod/el/csv_ingest/main.py").is_file()
+    # Flat layout: one directory holds the artifact regardless of target.
+    assert (project_dir / "el/csv_ingest/main.py").is_file()
 
 
 # ---------------------------------------------------------------------------
 # destination.toml emission + override application
 # ---------------------------------------------------------------------------
+
+
+def test_build_writes_to_flat_el_path(
+    project_dir: Path, repository: Repository
+) -> None:
+    """P1.1-01: ``carve build <plan>`` writes to ``el/<name>/main.py``,
+    not ``targets/dev/el/<name>/main.py``."""
+    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000017_flat01")
+
+    client = _client_returning(*_success_responses())
+    artifact = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=client,
+    )
+    assert artifact.success is True
+    assert artifact.pipeline_dir == "el/csv_ingest"
+    assert (project_dir / "el" / "csv_ingest" / "main.py").is_file()
+    # Per-target tree is NOT created by the build flow.
+    assert not (project_dir / "targets").exists()
 
 
 def test_build_writes_destination_toml(
@@ -673,7 +710,7 @@ def test_build_writes_destination_toml(
         client=client,
     )
 
-    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    dest_path = project_dir / "el/csv_ingest/destination.toml"
     assert dest_path.is_file()
     content = dest_path.read_text(encoding="utf-8")
     # Table is always live.
@@ -703,7 +740,7 @@ def test_build_destination_override_applies_before_agent_runs(
         destination_override={"table": "OVERRIDDEN_TABLE", "schema": "STAGING"},
     )
 
-    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    dest_path = project_dir / "el/csv_ingest/destination.toml"
     assert dest_path.is_file()
     content = dest_path.read_text(encoding="utf-8")
     assert 'table = "OVERRIDDEN_TABLE"' in content
@@ -736,7 +773,7 @@ def test_build_destination_override_empty_string_clears_field(
         destination_override={"database": ""},
     )
 
-    dest_path = project_dir / "targets/dev/el/csv_ingest/destination.toml"
+    dest_path = project_dir / "el/csv_ingest/destination.toml"
     content = dest_path.read_text(encoding="utf-8")
     # database now matches env (None); should NOT be a live line.
     live_db_lines = [

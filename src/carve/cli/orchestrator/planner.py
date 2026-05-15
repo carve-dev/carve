@@ -11,7 +11,7 @@ M1.1-06 split the original "plan = design + code" agent into two:
 - `generate_plan` (this module) — runs the plan agent. Tools:
   `read_file`, `run_snowflake_query`, `submit_plan`. Produces a Plan
   row with `phase="drafted"`. **No files are written under
-  ``targets/<target>/el/`` (or any other artifact path).**
+  ``el/<name>/`` (or any other artifact path).**
 - `build_plan` (`builder.py`) — runs the build agent against a saved
   draft plan to materialise the pipeline directory.
 
@@ -21,10 +21,10 @@ The planner also handles two refinement modes triggered from the CLI:
   goal + design as agent context; the new user message is the user's
   feedback. The new plan is persisted with ``parent_plan_id``.
 - ``pipeline_name`` (without ``parent_plan_id``) loads existing
-  ``targets/<active>/el/<name>/main.py`` and ``requirements.txt`` into
-  the agent context so the design proposes a delta consistent with the
-  live code (with a transitional fallback to legacy ``pipelines/<name>/``
-  for builds produced before P1-02).
+  ``el/<name>/main.py`` and ``requirements.txt`` into the agent
+  context so the design proposes a delta consistent with the live
+  code (with a one-version fallback to the legacy P1-02
+  ``targets/<active>/el/<name>/`` layout — removed in v0.2).
 """
 
 from __future__ import annotations
@@ -63,6 +63,10 @@ from carve.core.skills import (
     load_builtin_skills,
 )
 from carve.core.state import Plan, Repository
+from carve.core.targets.names import (
+    InvalidArtifactNameError,
+    validate_artifact_name,
+)
 from carve.version import __version__ as CARVE_VERSION
 
 logger = logging.getLogger(__name__)
@@ -72,10 +76,6 @@ logger = logging.getLogger(__name__)
 # (the producer) and is re-exported to the runner for an explicit
 # format check at the run-by-plan boundary.
 PLAN_ID_RE = re.compile(r"^plan_\d{8}_\d{6}_[0-9a-f]{6}$")
-
-# Allowed shape for `design.pipeline_name`. snake_case, ASCII letters
-# and digits only. Mirrors the directory naming convention.
-_PIPELINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass
@@ -451,30 +451,33 @@ def _render_existing_pipeline_section(
 ) -> str | None:
     """Inline existing ``main.py`` / ``requirements.txt`` for delta mode.
 
-    Reads from ``targets/<active_target>/el/<name>/`` per P1-02. Falls
-    back to the legacy ``pipelines/<name>/`` layout when the target
-    directory has nothing yet, so refines initiated against a pipeline
-    built before the per-target migration still pick up the existing
-    files.
+    Reads from ``el/<name>/`` (P1.1-01's flat layout). Falls back to
+    the per-target ``targets/<active_target>/el/<name>/`` layout from
+    P1-02 as a one-version compatibility shim — to be removed in v0.2.
+    The older ``pipelines/<name>/`` fallback from M1.1-06 is gone.
     """
-    rel_dir = f"targets/{active_target}/el/{pipeline_name}"
+    rel_dir = f"el/{pipeline_name}"
     pipeline_dir = project_dir / rel_dir
     main_py = pipeline_dir / "main.py"
     requirements = pipeline_dir / "requirements.txt"
     if not main_py.is_file():
-        legacy_dir = project_dir / "pipelines" / pipeline_name
+        legacy_dir = (
+            project_dir / "targets" / active_target / "el" / pipeline_name
+        )
         legacy_main = legacy_dir / "main.py"
         if not legacy_main.is_file():
             return None
         logger.warning(
             "Pipeline %r has no files under %s; falling back to legacy "
-            "pipelines/%s/. Rebuild with `carve build` to land it under the "
-            "active target.",
+            "targets/%s/el/%s/. Run `git mv targets/%s/el el && rm -rf targets/` "
+            "to migrate (removed in v0.2).",
             pipeline_name,
             rel_dir,
+            active_target,
             pipeline_name,
+            active_target,
         )
-        rel_dir = f"pipelines/{pipeline_name}"
+        rel_dir = f"targets/{active_target}/el/{pipeline_name}"
         pipeline_dir = legacy_dir
         main_py = legacy_main
         requirements = legacy_dir / "requirements.txt"
@@ -656,12 +659,12 @@ def _validate_pipeline_name(
         raise PlanGenerationError(
             "design.pipeline_name is missing or not a string."
         )
-    if not _PIPELINE_NAME_RE.match(candidate):
+    try:
+        validate_artifact_name(candidate)
+    except InvalidArtifactNameError as exc:
         raise PlanGenerationError(
-            f"design.pipeline_name {candidate!r} is invalid; must be "
-            "snake_case (lowercase letters, digits, underscores; first "
-            "char a letter)."
-        )
+            f"design.pipeline_name {candidate!r} is invalid: {exc}"
+        ) from exc
     if target_pipeline is not None and candidate != target_pipeline:
         raise PlanGenerationError(
             f"design.pipeline_name {candidate!r} does not match the "

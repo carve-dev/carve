@@ -2,7 +2,7 @@
 
 The build flow (P1-02 / `builder.py`) hands this agent a `Task` from
 the plan task graph; the agent writes the three artifact files under
-`targets/<active_target>/` and terminates via `submit_step(...)`.
+`el/<artifact_name>/` and terminates via `submit_step(...)`.
 
 Inputs (the build flow assembles these from the plan):
 
@@ -236,7 +236,7 @@ def _resolve_artifact_name(task: dict[str, Any]) -> str:
     1. `task["inputs"]["artifact_name"]` (an explicit name from the
        build flow).
     2. The pipeline-name extracted from any of the `expected_outputs`
-       paths (`targets/<t>/el/<name>/main.py`).
+       paths (`el/<name>/main.py`).
 
     The resolved name is validated against the snake_case naming regex
     before being interpolated into filesystem paths — this is the only
@@ -253,10 +253,13 @@ def _resolve_artifact_name(task: dict[str, Any]) -> str:
         if not isinstance(path, str):
             continue
         parts = path.split("/")
-        # targets/<t>/el/<name>/...
+        # el/<name>/...
+        if len(parts) >= 3 and parts[0] == "el":
+            return _validated_artifact_name(parts[1])
+        # Legacy (P1-02): targets/<t>/el/<name>/...
         if len(parts) >= 4 and parts[0] == "targets" and parts[2] == "el":
             return _validated_artifact_name(parts[3])
-        # targets/<t>/snowflake/<name>.sql
+        # Legacy (P1-02): targets/<t>/snowflake/<name>.sql
         if len(parts) == 4 and parts[0] == "targets" and parts[2] == "snowflake":
             return _validated_artifact_name(parts[3].removesuffix(".sql"))
 
@@ -284,12 +287,19 @@ def _allow_listed_paths(
     active_target: str,
     artifact_name: str,
 ) -> set[Path]:
-    """Compute the three resolved paths the `write_file` tool will accept."""
-    base = project_dir / "targets" / active_target
+    """Compute the three resolved paths the `write_file` tool will accept.
+
+    P1.1-01 flattened the layout: the three writable paths live under
+    ``el/<artifact_name>/``, target-agnostic. ``active_target`` is
+    accepted for signature parity with the build flow (the connection-
+    context block in the system prompt still reflects the target).
+    """
+    del active_target
+    base = project_dir / "el" / artifact_name
     return {
-        (base / "el" / artifact_name / "main.py").resolve(),
-        (base / "el" / artifact_name / "requirements.txt").resolve(),
-        (base / "snowflake" / f"{artifact_name}.sql").resolve(),
+        (base / "main.py").resolve(),
+        (base / "requirements.txt").resolve(),
+        (base / "snowflake.sql").resolve(),
     }
 
 
@@ -417,12 +427,13 @@ def _render_connection_context(config: Config, active_target: str) -> str:
 
 
 def _render_output_paths_block(active_target: str, artifact_name: str) -> str:
-    base = f"targets/{active_target}"
+    del active_target  # flat layout; signature kept for parity.
+    base = f"el/{artifact_name}"
     return (
         "## Output paths (this build)\n"
-        f"- `{base}/el/{artifact_name}/main.py`\n"
-        f"- `{base}/el/{artifact_name}/requirements.txt`\n"
-        f"- `{base}/snowflake/{artifact_name}.sql`\n"
+        f"- `{base}/main.py`\n"
+        f"- `{base}/requirements.txt`\n"
+        f"- `{base}/snowflake.sql`\n"
         "Writing any other path raises an error."
     )
 

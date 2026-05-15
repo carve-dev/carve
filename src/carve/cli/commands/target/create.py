@@ -1,10 +1,13 @@
 """``carve target create`` — add a new target.
 
-Adds a ``[snowflake.<name>]`` section to ``carve/connections.toml``, appends
-a ``# === <name> target ===`` block to ``.env.example``, and creates
-``targets/<name>/el/``. All three are produced by the single
-``add_target_to_project`` helper, so ``carve init`` (which creates ``dev``)
-and this command produce byte-identical artifacts.
+Adds a ``[snowflake.<name>]`` section to ``carve/connections.toml`` and
+appends a ``# === <name> target ===`` block to ``.env.example``. Both are
+produced by the single ``add_target_to_project`` helper, so ``carve init``
+(which creates ``dev``) and this command produce byte-identical artifacts.
+
+P1.1-01 dropped the per-target filesystem tree: this command no longer
+creates ``targets/<name>/`` — EL artifacts live in the flat ``el/<name>/``
+tree, target-agnostic.
 """
 
 from __future__ import annotations

@@ -160,8 +160,8 @@ SUBMIT_DIAGNOSIS_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Short imperative description of the fix you applied "
-                "(e.g. 'edited targets/dev/el/iowa/main.py to json.dumps "
-                "the location field') or 'none' when no fix was applied."
+                "(e.g. 'edited el/iowa/main.py to json.dumps the "
+                "location field') or 'none' when no fix was applied."
             ),
         },
     },
@@ -465,12 +465,14 @@ def build_tools_for_invocation(
 def _allowed_write_paths(invocation: Invocation) -> set[Path] | None:
     """Resolved-absolute path set passed to the write_file allow-list.
 
+    P1.1-01 flattened the layout: every writable path lives under
+    ``el/<name>/`` rather than ``targets/<t>/...``.
+
     * Phase 1 (preflight) — read-only: returns ``None`` to signal "no
       write_file tool".
-    * `el run` failure — three EL paths under the active target.
-    * Phase 2 / Phase 3 — DDL file under the dest target, plus the
-      three EL paths under the dest target (so the agent can fix
-      either the SQL or the script).
+    * `el run` failure — the EL script + requirements file.
+    * Phase 2 / Phase 3 — same files plus the companion DDL so the
+      agent can fix either the SQL or the script.
     """
     pd = invocation.project_dir.resolve()
 
@@ -478,24 +480,22 @@ def _allowed_write_paths(invocation: Invocation) -> set[Path] | None:
         return None
 
     if isinstance(invocation, ElRunInvocation):
-        # Spec table row #1: allow-list is `targets/<active>/el/<name>/`
-        # only. The companion DDL file is NOT writable from el-run
-        # context — DDL changes belong to the deploy phase, not to the
-        # runtime-failure recovery loop.
-        target = invocation.active_target
+        # Spec table row #1: allow-list is `el/<name>/` only. The
+        # companion DDL file is NOT writable from el-run context — DDL
+        # changes belong to the deploy phase, not to the runtime-
+        # failure recovery loop.
         name = invocation.pipeline_name
         return {
-            (pd / "targets" / target / "el" / name / "main.py").resolve(),
-            (pd / "targets" / target / "el" / name / "requirements.txt").resolve(),
+            (pd / "el" / name / "main.py").resolve(),
+            (pd / "el" / name / "requirements.txt").resolve(),
         }
 
     if isinstance(invocation, DeployDdlApplyInvocation | DeployVerifyInvocation):
-        target = invocation.dest_target
         name = invocation.pipeline_name
         return {
-            (pd / "targets" / target / "snowflake" / f"{name}.sql").resolve(),
-            (pd / "targets" / target / "el" / name / "main.py").resolve(),
-            (pd / "targets" / target / "el" / name / "requirements.txt").resolve(),
+            (pd / "el" / name / "snowflake.sql").resolve(),
+            (pd / "el" / name / "main.py").resolve(),
+            (pd / "el" / name / "requirements.txt").resolve(),
         }
 
     return None  # pragma: no cover — exhaustiveness defensive branch

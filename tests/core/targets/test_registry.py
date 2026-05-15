@@ -288,18 +288,20 @@ def test_rename_env_example_block(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_add_target_to_project_writes_three_artifacts(tmp_path: Path) -> None:
-    """The orchestrator touches connections.toml, .env.example, and targets/."""
+def test_add_target_to_project_writes_two_config_artifacts(tmp_path: Path) -> None:
+    """P1.1-01: the orchestrator touches connections.toml and
+    .env.example only. The pre-flat ``targets/<name>/el/`` mkdir is
+    gone — artifacts live under the flat ``el/`` tree."""
     add_target_to_project("dev", tmp_path)
     conn = tmp_path / "carve" / "connections.toml"
     env = tmp_path / ".env.example"
-    el_dir = tmp_path / "targets" / "dev" / "el"
 
     assert conn.is_file()
     assert "[snowflake.dev]" in conn.read_text(encoding="utf-8")
     assert env.is_file()
     assert "# === dev target ===" in env.read_text(encoding="utf-8")
-    assert el_dir.is_dir()
+    # No `targets/` tree is created by the registry helper.
+    assert not (tmp_path / "targets").exists()
 
 
 def test_add_target_to_project_invalid_name_raises(tmp_path: Path) -> None:

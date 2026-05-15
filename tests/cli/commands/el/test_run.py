@@ -83,8 +83,9 @@ def _make_config(
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
-    (tmp_path / "targets" / "prod" / "el").mkdir(parents=True)
+    # Flat layout — P1.1-01.
+    (tmp_path / "el").mkdir(parents=True)
+    # `pipelines/` dir survives as the legacy-removed sentinel target.
     (tmp_path / "pipelines").mkdir()
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
@@ -114,7 +115,13 @@ def _plant_target_artifact(
     name: str,
     body: str,
 ) -> Path:
-    artifact_dir = project_dir / "targets" / target / "el" / name
+    """Plant an artifact under the flat `el/<name>/` tree (P1.1-01).
+
+    ``target`` is accepted for signature parity with pre-P1.1 tests;
+    the on-disk path is target-agnostic now.
+    """
+    del target
+    artifact_dir = project_dir / "el" / name
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "main.py").write_text(body)
     (artifact_dir / "requirements.txt").write_text("")
@@ -142,7 +149,8 @@ def _plant_legacy_pipelines_artifact(
 def test_el_run_resolves_artifact_in_active_target(
     project_dir: Path, repository: Repository, venv_cache_dir: Path
 ) -> None:
-    """`carve el run iowa_liquor` reads from `targets/dev/el/iowa_liquor/main.py`."""
+    """`carve el run iowa_liquor` reads from `el/iowa_liquor/main.py`
+    (P1.1-01 flat layout)."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
         state_db=f"sqlite:///{project_dir}/.carve/state.db",
@@ -166,28 +174,25 @@ def test_el_run_resolves_artifact_in_active_target(
     assert "iowa from dev" in console.export_text()
 
 
-def test_el_run_target_flag_overrides_default(
+def test_el_run_target_flag_stamps_run_row(
     project_dir: Path, repository: Repository, venv_cache_dir: Path
 ) -> None:
-    """`--target prod` reads from `targets/prod/el/<name>/main.py`."""
+    """`--target prod` does NOT change the on-disk path (flat layout)
+    but still flows through to the runtime: the run row records
+    `target=prod` and the subprocess sees `CARVE_ACTIVE_TARGET=PROD`."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
         state_db=f"sqlite:///{project_dir}/.carve/state.db",
         targets=("dev", "prod"),
     )
-    # The dev artifact prints something different so we can prove we
-    # didn't read it.
     _plant_target_artifact(
         project_dir,
         target="dev",
         name="iowa_liquor",
-        body="print('iowa from dev')\n",
-    )
-    _plant_target_artifact(
-        project_dir,
-        target="prod",
-        name="iowa_liquor",
-        body="print('iowa from prod')\n",
+        body=(
+            "import os\n"
+            "print('CARVE_ACTIVE_TARGET=' + os.environ['CARVE_ACTIVE_TARGET'])\n"
+        ),
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -200,8 +205,11 @@ def test_el_run_target_flag_overrides_default(
     )
     assert exit_code == 0
     output = console.export_text()
-    assert "iowa from prod" in output
-    assert "iowa from dev" not in output
+    assert "CARVE_ACTIVE_TARGET=PROD" in output
+
+    runs = repository.list_runs(pipeline_name="iowa_liquor")
+    assert len(runs) == 1
+    assert runs[0].target == "prod"
 
 
 def test_el_run_carve_active_target_env_var_uppercase(
@@ -242,10 +250,14 @@ def test_el_run_carve_active_target_env_var_uppercase(
     assert "CARVE_PIPELINE_NAME=env_check" in output
 
 
-def test_el_run_legacy_pipelines_fallback_warns_and_runs(
+def test_el_run_legacy_pipelines_fallback_removed(
     project_dir: Path, repository: Repository, venv_cache_dir: Path
 ) -> None:
-    """`pipelines/<name>/main.py` exists, primary path doesn't → fallback fires."""
+    """P1.1-01: the M1.1-06 `pipelines/<name>/` fallback is GONE.
+
+    A script planted only under `pipelines/<name>/` is not recognized;
+    the runner exits 2 with "no such artifact".
+    """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
         state_db=f"sqlite:///{project_dir}/.carve/state.db",
@@ -254,7 +266,7 @@ def test_el_run_legacy_pipelines_fallback_warns_and_runs(
     _plant_legacy_pipelines_artifact(
         project_dir,
         name="legacy_only",
-        body="print('legacy ran')\n",
+        body="print('should never run')\n",
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -264,12 +276,10 @@ def test_el_run_legacy_pipelines_fallback_warns_and_runs(
         repository=repository,
         console=console,
     )
-    assert exit_code == 0
+    assert exit_code == 2
     output = console.export_text()
-    assert "legacy ran" in output
-    # The deprecation warning should be visible.
-    assert "legacy" in output.lower()
-    assert "Migrate" in output or "migrate" in output
+    assert "should never run" not in output
+    assert "No EL artifact" in output
 
 
 def test_el_run_missing_artifact_exits_2(
@@ -387,7 +397,7 @@ def test_el_run_target_id_references_most_recent_build(
     # Seed a Plan + Build so `latest_build_for` returns something.
     repository.save_plan(_make_plan("plan_target_id", "with_build"))
     repository.create_or_update_pipeline(
-        name="with_build", description="", pipeline_dir="targets/dev/el/with_build"
+        name="with_build", description="", pipeline_dir="el/with_build"
     )
     build = repository.create_build(
         pipeline_name="with_build", plan_id="plan_target_id", target="dev"
@@ -678,14 +688,14 @@ def test_el_run_watch_picks_up_requirements_change(
     assert len(repository.list_runs(pipeline_name="reqs_watched")) >= 1
 
     # Change requirements.txt and fire a synthetic event referring to it.
-    (project_dir / "targets" / "dev" / "el" / "reqs_watched" / "requirements.txt").write_text(
+    (project_dir / "el" / "reqs_watched" / "requirements.txt").write_text(
         "# bumped\n"
     )
 
     class _FakeEvent:
         is_directory = False
         src_path = str(
-            project_dir / "targets" / "dev" / "el" / "reqs_watched" / "requirements.txt"
+            project_dir / "el" / "reqs_watched" / "requirements.txt"
         )
 
     sync_observer.fire(_FakeEvent())
@@ -768,7 +778,7 @@ def test_el_run_watch_refuses_symlinked_artifact_dir_outside_project(
     aliases tmp_path, so we can't reuse it for the "outside" target.
     """
     project_root = tmp_path_factory.mktemp("project")
-    (project_root / "targets" / "dev" / "el").mkdir(parents=True)
+    (project_root / "el").mkdir(parents=True)
     (project_root / ".carve" / "plans").mkdir(parents=True)
 
     # A second tmp root, truly outside the project root.
@@ -778,7 +788,7 @@ def test_el_run_watch_refuses_symlinked_artifact_dir_outside_project(
     (outside / "main.py").write_text("print('escape')\n", encoding="utf-8")
     (outside / "requirements.txt").write_text("", encoding="utf-8")
 
-    el_root = project_root / "targets" / "dev" / "el"
+    el_root = project_root / "el"
     link = el_root / "escape"
     link.symlink_to(outside)
 

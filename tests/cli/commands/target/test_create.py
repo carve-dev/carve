@@ -59,14 +59,19 @@ def test_target_create_appends_block_to_env_example(
     assert "STAGING_SNOWFLAKE_USER=" in content
 
 
-def test_target_create_creates_artifact_dir(runner: CliRunner, tmp_path: Path) -> None:
+def test_target_create_does_not_create_targets_dir(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """P1.1-01: ``carve target create staging`` adds the connections.toml
+    section and .env.example block, but does NOT create ``targets/staging/``.
+    EL artifacts live in the flat ``el/<name>/`` tree, target-agnostic."""
     _init_project(runner, tmp_path)
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "targets" / "staging" / "el").is_dir()
+    assert not (tmp_path / "targets").exists()
 
 
 def test_target_create_refuses_existing_section(

@@ -68,8 +68,8 @@ description carefully — write authority and target connection differ.
    diagnosis matches what you're about to write, set
    `category="repeated_identical"` and bail.
 3. **Surface real-world side effects in your diagnosis.** "I appended
-   a GRANT to targets/prod/snowflake/iowa.sql and re-applied" is more
-   useful than "fixed grant issue."
+   a GRANT to el/iowa/snowflake.sql and re-applied" is more useful
+   than "fixed grant issue."
 4. **One `submit_diagnosis` per attempt.** Multiple submissions in the
    same response are rejected. Pick the most actionable summary.
 5. **Respect the budget.** You are one attempt of N; the orchestrator

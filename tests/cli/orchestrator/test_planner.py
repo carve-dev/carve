@@ -266,7 +266,7 @@ def test_plan_rejects_invalid_pipeline_name(
         _response(content=[_text_block("done")], stop_reason="end_turn"),
     )
 
-    with pytest.raises(PlanGenerationError, match=r"snake_case"):
+    with pytest.raises(PlanGenerationError, match=r"Invalid artifact name"):
         generate_plan(
             goal="g",
             config=config,
@@ -412,7 +412,7 @@ def test_pipeline_mode_includes_existing_files_in_context(
     repository.create_or_update_pipeline(
         name="existing_pl",
         description="seed",
-        pipeline_dir="targets/dev/el/existing_pl",
+        pipeline_dir="el/existing_pl",
     )
 
     client = _client_returning(
@@ -478,7 +478,7 @@ def test_pipeline_mode_locks_pipeline_name_in_design(
     repository.create_or_update_pipeline(
         name="existing_pl",
         description="",
-        pipeline_dir="targets/dev/el/existing_pl",
+        pipeline_dir="el/existing_pl",
     )
 
     client = _client_returning(

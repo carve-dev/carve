@@ -34,17 +34,19 @@ def test_target_show_uses_from_var_for_substituted(
     assert "topsecret-shibboleth" not in result.output
 
 
-def test_target_show_lists_el_artifacts(runner: CliRunner, tmp_path: Path) -> None:
-    """Counts subdirectories under ``targets/<name>/el/``."""
+def test_target_show_points_at_carve_el_list_for_artifacts(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """P1.1-01: target show no longer enumerates per-target EL artifacts —
+    the flat layout means artifacts are shared across targets. The
+    output points users at `carve el list` instead."""
     _init_project(runner, tmp_path)
-    el_dir = tmp_path / "targets" / "dev" / "el"
-    (el_dir / "iowa_liquor").mkdir(parents=True)
-    (el_dir / "salesforce_opps").mkdir(parents=True)
 
     result = runner.invoke(app, ["target", "show", "dev", "--project-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert "iowa_liquor" in result.output
-    assert "salesforce_opps" in result.output
+    assert "carve el list" in result.output
+    # No per-target artifact listing in the output.
+    assert "iowa_liquor" not in result.output
 
 
 def test_target_show_marks_default(runner: CliRunner, tmp_path: Path) -> None:

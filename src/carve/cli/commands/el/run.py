@@ -1,8 +1,9 @@
-"""``carve el run`` — execute an EL artifact in the active target.
+"""``carve el run`` — execute an EL artifact against the active target.
 
-Resolves the artifact under ``targets/<active>/el/<name>/`` and runs
-it through ``LocalVenvRunner``. ``--target X`` overrides the active
-target; ``--watch`` re-runs on filesystem changes (debounced ~300ms).
+Resolves the artifact under ``el/<name>/`` (flat layout, P1.1-01) and
+runs it through ``LocalVenvRunner``. ``--target X`` overrides the
+active target; ``--watch`` re-runs on filesystem changes (debounced
+~300ms).
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ _WATCH_DEBOUNCE_SECONDS: float = 0.3
 def command(
     name: str = typer.Argument(
         ...,
-        help="EL artifact name (directory under targets/<active>/el/).",
+        help="EL artifact name (directory under el/).",
     ),
     target: str | None = typer.Option(
         None,
@@ -167,15 +168,15 @@ def _run_with_watch(
         resolve_active_target,
     )
 
+    # Validate the active-target resolution up front so the watcher
+    # doesn't spin up before we know the target is configured.
     try:
-        active_target = resolve_active_target(target, config)
+        resolve_active_target(target, config)
     except TargetResolutionError as exc:
         console.print(f"[red]✗[/red] {exc}")
         return 2
 
-    artifact_dir = (
-        project_dir / "targets" / active_target / "el" / name
-    ).resolve()
+    artifact_dir = (project_dir / "el" / name).resolve()
 
     # `last_exit_code = -1` is the sentinel for "watch loop broke before
     # any iteration ran" (e.g. tests that prime ``stop_event`` before
@@ -193,9 +194,9 @@ def _run_with_watch(
         # Defense-in-depth: refuse to schedule the watcher on a path that
         # — after symlink resolution — has escaped the project root. The
         # path is already resolved above; this guard catches the case
-        # where ``targets/<t>/el/<name>/`` is itself a symlink to
-        # somewhere outside the repo. Each loop iteration re-validates
-        # via ``run_pipeline_by_name``, so an escape here is benign in
+        # where ``el/<name>/`` is itself a symlink to somewhere outside
+        # the repo. Each loop iteration re-validates via
+        # ``run_pipeline_by_name``, so an escape here is benign in
         # practice — but the watcher would still fire on out-of-tree
         # file events, and the cheaper fix is to refuse up front.
         try:

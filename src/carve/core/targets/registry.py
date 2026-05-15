@@ -1,6 +1,6 @@
 """Target registry helpers — single source of truth for adding/removing/listing targets.
 
-The registry mediates three artifacts:
+The registry mediates two artifacts (P1.1-01 removed the third):
 
 * ``carve/connections.toml`` — one ``[snowflake.<name>]`` section per target.
   Edited via ``tomlkit`` so comments and key order are preserved.
@@ -8,9 +8,10 @@ The registry mediates three artifacts:
   block per target listing the ``<NAME>_*`` env vars referenced by the section.
   Edited via plain text manipulation (regex / line splitting); ``.env.example``
   isn't TOML.
-* ``targets/<name>/`` — the per-target artifact directory. ``el/`` is created
-  by this spec; ``pipelines/`` and ``schedules/`` are reserved for later
-  pillars and not pre-created.
+
+Pre-P1.1-01 the registry also created ``targets/<name>/el/``; this directory
+no longer exists. EL artifacts live under the flat ``el/<name>/`` tree
+(created by ``carve init`` / ``carve build``), target-agnostic.
 
 The high-level entry point is :func:`add_target_to_project`, which is called
 by both ``carve init`` (for ``dev``) and ``carve target create`` (for any
@@ -425,28 +426,6 @@ def rename_env_example_block(
 
 
 # ---------------------------------------------------------------------------
-# Artifact directory
-# ---------------------------------------------------------------------------
-
-
-def target_artifact_dir(root: Path, name: str, *, targets_dir: str = "targets") -> Path:
-    """Return the path to ``<root>/<targets_dir>/<name>/``."""
-    return root / targets_dir / name
-
-
-def create_target_artifact_dir(
-    root: Path,
-    name: str,
-    *,
-    targets_dir: str = "targets",
-) -> Path:
-    """Create ``<root>/<targets_dir>/<name>/el/`` and return the parent dir."""
-    base = target_artifact_dir(root, name, targets_dir=targets_dir)
-    (base / "el").mkdir(parents=True, exist_ok=True)
-    return base
-
-
-# ---------------------------------------------------------------------------
 # High-level orchestrator
 # ---------------------------------------------------------------------------
 
@@ -455,34 +434,29 @@ def add_target_to_project(
     name: str,
     root: Path,
     *,
-    targets_dir: str = "targets",
     config_dir: str = "carve",
     force: bool = False,
-) -> Path:
-    """Add a target to the project, in three places.
+) -> None:
+    """Add a target to the project's connection config.
 
     1. Append a ``[snowflake.<name>]`` section to ``carve/connections.toml``.
     2. Append a ``# === <name> target ===`` block to ``.env.example``.
-    3. Create ``targets/<name>/el/``.
 
     Used by both ``carve init`` (for ``dev``) and ``carve target create``
     (for any other target name) — the single helper guarantees that both
-    verbs produce byte-identical artifacts.
+    verbs produce byte-identical artifacts. P1.1-01 dropped the
+    ``targets/<name>/el/`` directory creation: EL artifacts live in the
+    flat ``el/<name>/`` tree, target-agnostic.
 
     Args:
         name: Target name. Validated against :data:`TARGET_NAME_RE`.
         root: Project root (the directory containing ``carve.toml``).
-        targets_dir: Override for the ``targets/`` directory name (rare;
-            comes from ``PathsConfig.targets_dir``).
         config_dir: Override for the ``carve/`` config directory name.
         force: Pass through to :func:`add_target_section`. The
-            ``.env.example`` block is appended unconditionally either way
-            (duplicate blocks are visually obvious to the user); the
-            ``targets/<name>/el/`` directory is created with
-            ``exist_ok=True``.
-
-    Returns:
-        The created (or existing) ``targets/<name>/`` directory.
+            ``.env.example`` block is appended only when missing
+            (duplicate blocks are visually obvious to the user, but the
+            helper guards against an idempotent re-run producing
+            doubles).
 
     Raises:
         InvalidTargetNameError: If ``name`` fails validation.
@@ -497,6 +471,3 @@ def add_target_to_project(
     env_example_path = root / ".env.example"
     if not env_example_has_block(name, env_example_path):
         add_env_example_block(name, env_example_path)
-
-    base = create_target_artifact_dir(root, name, targets_dir=targets_dir)
-    return base

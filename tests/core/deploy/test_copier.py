@@ -1,5 +1,11 @@
 """Unit tests for ``carve.core.deploy.copier``.
 
+P1.1-01 flattened the artifact layout: source and dest in
+``copy_artifact``/``copy_ddl_file`` both resolve to ``el/<name>/``, so
+the copy is a no-op (the file already exists at the target path).
+The tests still exercise the symlink rejection + git-status guards
+the copier carries.
+
 The git-status guard is exercised against a real `git init` repo in
 ``tmp_path``; everything else uses plain filesystem assertions.
 """
@@ -29,17 +35,23 @@ git_required = pytest.mark.skipif(
 
 
 def _plant_artifact(project_dir: Path, target: str, name: str) -> Path:
-    artifact = project_dir / "targets" / target / "el" / name
-    artifact.mkdir(parents=True)
+    """Plant artifact under flat el/<name>/. ``target`` is accepted on
+    the signature for parity with pre-P1.1 callers and idempotent
+    re-runs (multiple targets pointing at the same path)."""
+    del target
+    artifact = project_dir / "el" / name
+    artifact.mkdir(parents=True, exist_ok=True)
     (artifact / "main.py").write_text("print('hello')\n")
     (artifact / "requirements.txt").write_text("requests\n")
     return artifact
 
 
 def _plant_ddl(project_dir: Path, target: str, name: str) -> Path:
-    snowflake_dir = project_dir / "targets" / target / "snowflake"
-    snowflake_dir.mkdir(parents=True)
-    sql_path = snowflake_dir / f"{name}.sql"
+    """Plant the DDL companion file at el/<name>/snowflake.sql."""
+    del target
+    artifact = project_dir / "el" / name
+    artifact.mkdir(parents=True, exist_ok=True)
+    sql_path = artifact / "snowflake.sql"
     sql_path.write_text("CREATE TABLE foo (id INT);")
     return sql_path
 
@@ -84,6 +96,8 @@ def _git_init_clean(project_dir: Path) -> None:
 
 
 def test_copy_artifact_creates_destination(tmp_path: Path) -> None:
+    """Flat layout: source==dest. The copier returns the file list
+    sitting under `el/<name>/`."""
     _plant_artifact(tmp_path, "dev", "iowa")
     files = copy_artifact(
         project_dir=tmp_path,
@@ -92,10 +106,10 @@ def test_copy_artifact_creates_destination(tmp_path: Path) -> None:
         dest_target="prod",
         check_git=False,
     )
-    dst = tmp_path / "targets" / "prod" / "el" / "iowa"
+    dst = tmp_path / "el" / "iowa"
     assert dst.is_dir()
     assert (dst / "main.py").is_file()
-    assert any("targets/prod/el/iowa/main.py" in f for f in files)
+    assert any("el/iowa/main.py" in f for f in files)
 
 
 def test_copy_artifact_idempotent(tmp_path: Path) -> None:
@@ -107,7 +121,7 @@ def test_copy_artifact_idempotent(tmp_path: Path) -> None:
         dest_target="prod",
         check_git=False,
     )
-    # Re-run; should overwrite without error.
+    # Re-run; should be a no-op without error.
     copy_artifact(
         project_dir=tmp_path,
         pipeline_name="iowa",
@@ -115,7 +129,7 @@ def test_copy_artifact_idempotent(tmp_path: Path) -> None:
         dest_target="prod",
         check_git=False,
     )
-    dst = tmp_path / "targets" / "prod" / "el" / "iowa"
+    dst = tmp_path / "el" / "iowa"
     assert (dst / "main.py").read_text() == "print('hello')\n"
 
 
@@ -133,11 +147,11 @@ def test_copy_artifact_missing_source(tmp_path: Path) -> None:
 @git_required
 def test_copy_artifact_refuses_uncommitted_destination(tmp_path: Path) -> None:
     _plant_artifact(tmp_path, "dev", "iowa")
-    _plant_artifact(tmp_path, "prod", "iowa")
     _git_init_clean(tmp_path)
 
-    # Modify the destination's main.py so git status flags it.
-    (tmp_path / "targets" / "prod" / "el" / "iowa" / "main.py").write_text(
+    # Modify the destination's main.py (== source under flat layout)
+    # so git status flags it.
+    (tmp_path / "el" / "iowa" / "main.py").write_text(
         "print('user edits')\n"
     )
 
@@ -153,16 +167,13 @@ def test_copy_artifact_refuses_uncommitted_destination(tmp_path: Path) -> None:
 
 @git_required
 def test_copy_artifact_clean_destination_proceeds(tmp_path: Path) -> None:
+    """Source == dest under the flat layout, so a clean tree is the
+    only state in which the copy proceeds. Reaffirms that the no-op
+    copy does not raise."""
     _plant_artifact(tmp_path, "dev", "iowa")
-    _plant_artifact(tmp_path, "prod", "iowa")
     _git_init_clean(tmp_path)
 
-    # Modify the source file. Destination is clean.
-    (tmp_path / "targets" / "dev" / "el" / "iowa" / "main.py").write_text(
-        "print('updated source')\n"
-    )
-
-    # No exception expected.
+    # No exception expected; the no-op copy succeeds.
     copy_artifact(
         project_dir=tmp_path,
         pipeline_name="iowa",
@@ -170,8 +181,8 @@ def test_copy_artifact_clean_destination_proceeds(tmp_path: Path) -> None:
         dest_target="prod",
     )
     assert (
-        (tmp_path / "targets" / "prod" / "el" / "iowa" / "main.py").read_text()
-        == "print('updated source')\n"
+        (tmp_path / "el" / "iowa" / "main.py").read_text()
+        == "print('hello')\n"
     )
 
 
@@ -189,8 +200,8 @@ def test_copy_ddl_file_copies(tmp_path: Path) -> None:
         dest_target="prod",
         check_git=False,
     )
-    assert rel == "targets/prod/snowflake/iowa.sql"
-    dest = tmp_path / "targets" / "prod" / "snowflake" / "iowa.sql"
+    assert rel == "el/iowa/snowflake.sql"
+    dest = tmp_path / "el" / "iowa" / "snowflake.sql"
     assert dest.read_text() == "CREATE TABLE foo (id INT);"
 
 
@@ -208,9 +219,10 @@ def test_copy_ddl_file_returns_none_when_source_missing(tmp_path: Path) -> None:
 @git_required
 def test_copy_ddl_file_refuses_uncommitted(tmp_path: Path) -> None:
     _plant_ddl(tmp_path, "dev", "iowa")
-    _plant_ddl(tmp_path, "prod", "iowa")
     _git_init_clean(tmp_path)
-    (tmp_path / "targets" / "prod" / "snowflake" / "iowa.sql").write_text(
+    # Under the flat layout, source == dest. Modifying the file after
+    # commit makes the destination dirty.
+    (tmp_path / "el" / "iowa" / "snowflake.sql").write_text(
         "-- modified after commit\n"
     )
     with pytest.raises(UncommittedChangesError):
@@ -234,7 +246,7 @@ def test_copier_refuses_symlinks_in_source(tmp_path: Path) -> None:
     secret = elsewhere / "secret.txt"
     secret.write_text("secret-content\n")
 
-    artifact = tmp_path / "targets" / "dev" / "el" / "iowa"
+    artifact = tmp_path / "el" / "iowa"
     artifact.mkdir(parents=True)
     (artifact / "main.py").write_text("print('hi')\n")
     # Place a symlink inside the artifact dir pointing at the secret.
@@ -250,9 +262,6 @@ def test_copier_refuses_symlinks_in_source(tmp_path: Path) -> None:
             check_git=False,
         )
     assert "linked.txt" in str(excinfo.value)
-    # Critically, the secret content must NOT have been written to the dest.
-    dst = tmp_path / "targets" / "prod" / "el" / "iowa" / "linked.txt"
-    assert not dst.exists()
 
 
 def test_copier_refuses_symlinked_subdir_in_source(tmp_path: Path) -> None:
@@ -261,7 +270,7 @@ def test_copier_refuses_symlinked_subdir_in_source(tmp_path: Path) -> None:
     elsewhere.mkdir()
     (elsewhere / "secret.txt").write_text("x")
 
-    artifact = tmp_path / "targets" / "dev" / "el" / "iowa"
+    artifact = tmp_path / "el" / "iowa"
     artifact.mkdir(parents=True)
     (artifact / "main.py").write_text("print('hi')\n")
     (artifact / "linked_dir").symlink_to(elsewhere, target_is_directory=True)

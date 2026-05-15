@@ -36,7 +36,7 @@ class TriggerContext(StrEnum):
     The four contexts share most of their tool surface but differ in
     write authority and connection role:
 
-    * ``EL_RUN_FAILURE`` — runtime role; can edit ``targets/<active>/el/<name>/``.
+    * ``EL_RUN_FAILURE`` — runtime role; can edit ``el/<name>/``.
     * ``DEPLOY_PREFLIGHT`` — deploy role; read-only on the DDL file.
     * ``DEPLOY_DDL_APPLY`` — deploy role; writes DDL + can run DDL stmts.
     * ``DEPLOY_VERIFY`` — runtime role; same write authority as DDL apply.
@@ -53,8 +53,8 @@ class ElRunInvocation:
     """``carve el run`` failed at runtime.
 
     The agent has runtime-role access (the same connection the script
-    used). It can edit the script, requirements file, and companion
-    DDL under ``targets/<active>/`` and re-run.
+    used). It can edit the script and requirements file under
+    ``el/<name>/`` and re-run.
     """
 
     trigger: TriggerContext = field(
@@ -98,9 +98,9 @@ class DeployPreflightInvocation:
 class DeployDdlApplyInvocation:
     """``carve el deploy`` Phase 2 — a DDL statement failed mid-apply.
 
-    The agent runs under the deploy role, can edit the destination DDL
-    file (``targets/<dest>/snowflake/<name>.sql``), and can re-run
-    individual DDL statements via :func:`run_snowflake_ddl`.
+    The agent runs under the deploy role, can edit the companion DDL
+    file (``el/<name>/snowflake.sql``), and can re-run individual DDL
+    statements via :func:`run_snowflake_ddl`.
     """
 
     trigger: TriggerContext = field(

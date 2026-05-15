@@ -1,21 +1,21 @@
 """File-copy logic for ``carve el deploy`` (Phase 5).
 
-Promotes ``targets/<source>/el/<name>/`` and
-``targets/<source>/snowflake/<name>.sql`` into the equivalent
-destination paths. Two safety rails:
+P1.1-01: with the flat ``el/<name>/`` layout the copy is a no-op
+(source and dest paths are identical), but we still walk the tree to
+exercise the symlink rejection + git-status guards. P1.1-03 removes
+this module's reason to exist along with ``--from / --to``.
 
-1. Refuse if the destination paths already have **uncommitted** git
-   changes — overwriting a hand-edit a user forgot to commit is the
-   highest-cost regression we can ship. Checked via
-   ``git status --porcelain`` against each destination path.
-2. ``shutil.copytree`` with ``dirs_exist_ok=True`` so re-running on a
-   destination that already mirrors the source is a no-op (idempotent
-   per the deploy contract).
+Two safety rails kept from P1-08:
+
+1. Refuse if the artifact tree contains symlinks — they have no
+   legitimate use in an EL artifact and ``shutil.copytree`` would
+   follow them.
+2. ``git status --porcelain`` against the destination tree to refuse
+   when there are uncommitted changes (the user might have edited the
+   file post-build and forgotten to commit).
 
 The git check uses the project's working tree only — repos that don't
-init git get a pass with a logged note. The deploy command in CI
-typically runs in a freshly-cloned tree where this guard is a no-op
-anyway; the guard exists for the local-dev case.
+init git get a pass with a logged note.
 """
 
 from __future__ import annotations
@@ -67,19 +67,24 @@ def copy_artifact(
     dest_target: str,
     check_git: bool = True,
 ) -> list[str]:
-    """Copy ``targets/<source>/el/<name>/`` into ``targets/<dest>/el/<name>/``.
+    """Copy the artifact tree.
 
-    Returns the destination-relative file list (POSIX-style) for the
-    copy result. Raises:
+    P1.1-01: source and dest both resolve to ``el/<name>/`` so the
+    copy is a no-op in practice; the function still runs the symlink
+    rejection and git-status checks. ``source_target`` / ``dest_target``
+    are accepted to preserve the P1-08 signature for the calling code
+    until P1.1-03 rewrites deploy.
 
-    * ``FileNotFoundError`` if the source artifact directory is
-      missing (this normally fails earlier in deploy validation, but
-      defending here keeps the copier callable in isolation).
+    Returns the destination-relative file list (POSIX-style). Raises:
+
+    * ``FileNotFoundError`` if the artifact directory is missing.
     * ``UncommittedChangesError`` when ``check_git`` is true and the
-      destination tree has uncommitted edits in the artifact dir.
+      destination tree has uncommitted edits.
     """
-    source_dir = project_dir / "targets" / source_target / "el" / pipeline_name
-    dest_dir = project_dir / "targets" / dest_target / "el" / pipeline_name
+    del source_target, dest_target  # flat layout — file location no
+    # longer encodes target. Kept on the signature for the caller.
+    source_dir = project_dir / "el" / pipeline_name
+    dest_dir = source_dir
 
     if not source_dir.is_dir():
         raise FileNotFoundError(
@@ -99,7 +104,11 @@ def copy_artifact(
             raise UncommittedChangesError(dirty)
 
     dest_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_dir, dest_dir, dirs_exist_ok=True)
+    # P1.1-01: when source == dest (the flat layout), skip the
+    # copytree call entirely; copytree would otherwise recurse into
+    # the same path it's writing into.
+    if source_dir.resolve() != dest_dir.resolve():
+        shutil.copytree(source_dir, dest_dir, dirs_exist_ok=True)
 
     # Return the list of files now on disk under the destination, in
     # project-relative POSIX form. Used by the caller for logs and
@@ -126,19 +135,20 @@ def copy_ddl_file(
     dest_target: str,
     check_git: bool = True,
 ) -> str | None:
-    """Copy ``targets/<source>/snowflake/<name>.sql`` to its destination.
+    """Copy the DDL companion file.
 
-    Returns the destination-relative path on success, or ``None`` when
-    the source DDL file doesn't exist (some pipelines may legitimately
-    not emit one). Raises ``UncommittedChangesError`` if the
-    destination DDL has uncommitted edits.
+    P1.1-01: the DDL file lives next to ``main.py`` in
+    ``el/<name>/snowflake.sql``; source and dest both resolve to the
+    same path so this is a no-op (idempotent). ``source_target`` /
+    ``dest_target`` are accepted to preserve the P1-08 signature.
+
+    Returns the destination-relative path, or ``None`` when no DDL
+    file exists. Raises ``UncommittedChangesError`` if the destination
+    has uncommitted edits.
     """
-    source_path = (
-        project_dir / "targets" / source_target / "snowflake" / f"{pipeline_name}.sql"
-    )
-    dest_path = (
-        project_dir / "targets" / dest_target / "snowflake" / f"{pipeline_name}.sql"
-    )
+    del source_target, dest_target
+    source_path = project_dir / "el" / pipeline_name / "snowflake.sql"
+    dest_path = source_path
 
     if not source_path.is_file():
         return None
@@ -149,7 +159,9 @@ def copy_ddl_file(
             raise UncommittedChangesError(dirty)
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, dest_path)
+    # P1.1-01: when source == dest (the flat layout), skip the copy.
+    if source_path.resolve() != dest_path.resolve():
+        shutil.copy2(source_path, dest_path)
     return dest_path.relative_to(project_dir).as_posix()
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import typer
@@ -37,10 +36,7 @@ def command(
     force: bool = typer.Option(
         False,
         "--force",
-        help=(
-            "Allow deleting a target even if its artifacts directory is "
-            "non-empty, or if it is the default target (with --no-default-warning)."
-        ),
+        help="Allow deleting the default target (with --no-default-warning).",
     ),
     no_default_warning: bool = typer.Option(
         False,
@@ -48,7 +44,13 @@ def command(
         help="Together with --force, allows deleting the default target.",
     ),
 ) -> None:
-    """Remove a target's section, env-example block, and artifacts directory."""
+    """Remove a target's connections.toml section and .env.example block.
+
+    P1.1-01 removed the per-target filesystem tree, so this command no
+    longer touches ``targets/<name>/``. If a legacy ``targets/<name>/``
+    directory exists from a pre-P1.1 project, it's left in place; users
+    can ``rm -rf`` it themselves.
+    """
     try:
         validate_target_name(name)
     except InvalidTargetNameError as exc:
@@ -58,20 +60,16 @@ def command(
     root = project_dir.resolve()
 
     default_target = "dev"
-    targets_dir_name = "targets"
     config_dir_name = "carve"
     try:
         config = load_config(root)
         default_target = config.project.default_target
         config_dir_name = config.paths.config_dir
-        targets_dir_name = config.paths.targets_dir
     except ConfigError:
         pass
 
     conn_path = root / config_dir_name / "connections.toml"
     env_example_path = root / ".env.example"
-    targets_root = root / targets_dir_name
-    artifacts_dir = targets_root / name
 
     if name not in list_target_sections(conn_path):
         console.print(f'[red]Error:[/red] target "{name}" not defined in {conn_path}.')
@@ -86,18 +84,10 @@ def command(
         )
         raise typer.Exit(code=2)
 
-    # Safety rail: refuse non-empty artifacts directory without --force.
-    if not force and _artifacts_non_empty(artifacts_dir):
-        console.print(
-            f'[red]Error:[/red] {artifacts_dir}/ is non-empty (artifacts present). '
-            f"Pass [bold]--force[/bold] to delete anyway."
-        )
-        raise typer.Exit(code=2)
-
     if not yes:
         message = (
-            f'Delete target "{name}" — section in connections.toml, '
-            f"lines in .env.example, and {targets_dir_name}/{name}/?"
+            f'Delete target "{name}" — section in connections.toml and '
+            f"lines in .env.example?"
         )
         if not typer.confirm(message, default=False):
             console.print("Aborted.")
@@ -113,24 +103,9 @@ def command(
     # 2) Remove the .env.example block.
     remove_env_example_block(name, env_example_path)
 
-    # 3) Remove the artifacts directory.
-    if artifacts_dir.exists():
-        shutil.rmtree(artifacts_dir)
-
     console.print(f'[green]Deleted target "{name}".[/green]')
     console.print(
         f"\n[yellow]Reminder:[/yellow] remove {name.upper()}_* lines from your "
         f"local .env (Carve does not edit .env)."
     )
     raise typer.Exit(code=0)
-
-
-def _artifacts_non_empty(artifacts_dir: Path) -> bool:
-    """True if any of ``el/``, ``pipelines/``, ``schedules/`` has children."""
-    if not artifacts_dir.is_dir():
-        return False
-    for sub in ("el", "pipelines", "schedules"):
-        d = artifacts_dir / sub
-        if d.is_dir() and any(d.iterdir()):
-            return True
-    return False

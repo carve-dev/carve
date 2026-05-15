@@ -84,8 +84,8 @@ class RecoveryResult:
     `success=True` means the handler made on-disk changes (or otherwise
     addressed the failure) and the deploy should retry the stage. The
     deploy re-reads the DDL file from disk before retry, so the handler
-    can edit ``targets/<dest>/snowflake/<name>.sql`` freely — provided
-    it stays within the write-authority scope documented on
+    can edit ``el/<name>/snowflake.sql`` freely — provided it stays
+    within the write-authority scope documented on
     :class:`RecoveryContext`.
 
     `success=False` means the handler exhausted its budget or judged

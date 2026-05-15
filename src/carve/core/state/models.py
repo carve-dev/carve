@@ -134,10 +134,12 @@ class Plan(Base):
 class Pipeline(Base):
     """A first-class pipeline asset.
 
-    The directory under ``targets/<active_target>/el/<name>/`` is the
-    source of truth for code; this row exists so the CLI/UI can list
-    pipelines, filter their runs, and walk plan/build lineage without
-    re-reading every file.
+    The directory under ``el/<name>/`` is the source of truth for
+    code (P1.1-01 flattened the layout — pre-flat builds may still
+    reference ``targets/<X>/el/<name>/`` in ``pipeline_dir``; runner
+    has a one-version fallback). This row exists so the CLI/UI can
+    list pipelines, filter their runs, and walk plan/build lineage
+    without re-reading every file.
 
     The ``last_run_*`` columns are denormalised from `runs` so that
     ``carve pipelines`` doesn't need a per-row JOIN. They are updated by

@@ -56,21 +56,29 @@ def test_target_rename_renames_env_example_lines(
     assert "# === qa target ===" in content
 
 
-def test_target_rename_renames_artifacts_dir(
+def test_target_rename_does_not_touch_targets_tree(
     runner: CliRunner, tmp_path: Path
 ) -> None:
+    """P1.1-01: target rename operates only on configuration —
+    connections.toml section, .env.example block, and (when matching)
+    carve.toml's default_target. No filesystem rename under
+    ``targets/`` (which no longer exists)."""
     _init_project(runner, tmp_path)
     runner.invoke(app, ["target", "create", "staging", "--project-dir", str(tmp_path)])
-    # Ensure the directory exists (init/create creates it).
-    assert (tmp_path / "targets" / "staging").is_dir()
+    # P1.1-01: no targets/ tree is created by init or target create.
+    assert not (tmp_path / "targets").exists()
 
     result = runner.invoke(
         app,
         ["target", "rename", "staging", "qa", "--project-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
-    assert not (tmp_path / "targets" / "staging").exists()
-    assert (tmp_path / "targets" / "qa" / "el").is_dir()
+    # Connection-config section flipped.
+    conn = (tmp_path / "carve" / "connections.toml").read_text()
+    assert "[snowflake.qa]" in conn
+    assert "[snowflake.staging]" not in conn
+    # No targets/ tree touched on either side.
+    assert not (tmp_path / "targets").exists()
 
 
 def test_target_rename_updates_default_target(

@@ -1,8 +1,9 @@
-"""``carve el list`` — table view of EL artifacts in the active target.
+"""``carve el list`` — table view of EL artifacts.
 
-One row per directory under ``targets/<active>/el/``. Pulls last-build
-and last-run state from the state store; relative-time columns make
-the output skim-friendly for daily-driver use.
+One row per directory under ``el/``. Pulls last-build and last-run
+state from the state store; the "Last run" column rolls up the per-
+target results so a single artifact can show
+``dev=success prod=failed`` at a glance.
 """
 
 from __future__ import annotations
@@ -26,13 +27,13 @@ from carve.core.state.database import (
 console = Console()
 
 
-_STATUS_GLYPHS: dict[str, str] = {
-    "success": "[green]✓ success[/green]",
-    "failed": "[red]✗ failed[/red]",
-    "cancelled": "[magenta]⊘ cancelled[/magenta]",
-    "crashed": "[red]✗ crashed[/red]",
-    "running": "[cyan]⟳ running[/cyan]",
-    "queued": "[yellow]queued[/yellow]",
+_PLAIN_STATUS_LABELS: dict[str, str] = {
+    "success": "success",
+    "failed": "failed",
+    "cancelled": "cancelled",
+    "crashed": "crashed",
+    "running": "running",
+    "queued": "queued",
 }
 
 
@@ -92,9 +93,13 @@ def render_el_list(
     """Build the table (or empty-state string) for the listing.
 
     Pulled out of `command` so tests can drive it without the typer
-    harness or a real engine.
+    harness or a real engine. ``active_target`` is retained for build-
+    age relative-time display (the "Built" column shows the most
+    recent build for the active target); the rollup column iterates
+    every distinct target observed in the `runs` table for each
+    artifact.
     """
-    el_dir = project_dir / "targets" / active_target / "el"
+    el_dir = project_dir / "el"
     artifact_names: list[str] = []
     if el_dir.is_dir():
         for entry in sorted(el_dir.iterdir()):
@@ -103,15 +108,15 @@ def render_el_list(
 
     if not artifact_names:
         return (
-            f"No EL artifacts in target '{active_target}'. "
-            f"Run carve plan ... to create one."
+            "No EL artifacts under el/. "
+            "Run carve plan ... to create one."
         )
 
-    table = Table(title=f'EL artifacts in target "{active_target}"')
+    table = Table(title="EL artifacts")
     table.add_column("Name", style="bold cyan", no_wrap=True)
     table.add_column("Built")
     table.add_column("Last run")
-    table.add_column("Status")
+    table.add_column("Per-target status")
 
     now = datetime.now(UTC).replace(tzinfo=None)
     for name in artifact_names:
@@ -124,23 +129,65 @@ def render_el_list(
 
         pipeline = repository.get_pipeline(name)
         last_run_at: datetime | None = None
-        last_run_status: str | None = None
         if pipeline is not None:
             last_run_at = pipeline.last_run_at
-            last_run_status = pipeline.last_run_status
         last_run_str = (
             _format_relative(last_run_at, now) if last_run_at is not None else "never"
         )
-        status_str = _STATUS_GLYPHS.get(last_run_status or "", "-")
+
+        rollup = _per_target_rollup(repository, name)
 
         table.add_row(
             _escape(name),
             built_str,
             last_run_str,
-            status_str,
+            rollup,
         )
 
     return table
+
+
+def _per_target_rollup(repository: Repository, name: str) -> str:
+    """Return a ``dev=success prod=failed`` per-target last-run string.
+
+    Walks the artifact's run history (kind=``run``) and picks the
+    latest status per ``runs.target``. Targets are listed alphabetically
+    for a stable display order. Returns ``"-"`` when no runs exist.
+    """
+    # Pull a generous slice; the per-target rollup uses each target's
+    # latest entry, so 200 covers normal usage even for hot artifacts.
+    runs = repository.list_runs(limit=200, pipeline_name=name)
+    latest_per_target: dict[str, str] = {}
+    # list_runs returns newest first; the first hit for each target is
+    # the latest run for that target.
+    for run in runs:
+        if run.kind != "run":
+            continue
+        target = run.target
+        if not target:
+            continue
+        if target in latest_per_target:
+            continue
+        latest_per_target[target] = run.status
+
+    if not latest_per_target:
+        return "-"
+
+    parts: list[str] = []
+    for target in sorted(latest_per_target):
+        status = latest_per_target[target]
+        label = _PLAIN_STATUS_LABELS.get(status, status)
+        if status == "success":
+            parts.append(f"[green]{target}={label}[/green]")
+        elif status in ("failed", "crashed"):
+            parts.append(f"[red]{target}={label}[/red]")
+        elif status == "cancelled":
+            parts.append(f"[magenta]{target}={label}[/magenta]")
+        elif status == "running":
+            parts.append(f"[cyan]{target}={label}[/cyan]")
+        else:
+            parts.append(f"{target}={label}")
+    return " ".join(parts)
 
 
 def _format_relative(when: datetime, now: datetime) -> str:

@@ -237,7 +237,7 @@ def test_recovery_deploy_phase1_drift_recovered(
         config=_make_config(project_dir),
         failed_run_id="",
         error_text="",
-        ddl_path=project_dir / "targets/prod/snowflake/iowa.sql",
+        ddl_path=project_dir / "el/iowa/snowflake.sql",
         drift=("STORE column type mismatch",),
     )
     _patch_agent(
@@ -275,7 +275,7 @@ def test_recovery_deploy_phase2_ddl_failure_recovered(
         config=_make_config(project_dir),
         failed_run_id="",
         error_text="",
-        ddl_path=project_dir / "targets/prod/snowflake/iowa.sql",
+        ddl_path=project_dir / "el/iowa/snowflake.sql",
         failing_statement_index=2,
         failing_sql="GRANT INSERT ON TABLE iowa TO ROLE r;",
     )
@@ -314,7 +314,7 @@ def test_recovery_deploy_phase3_verify_failure_recovered(
         config=_make_config(project_dir),
         failed_run_id="",
         error_text="",
-        ddl_path=project_dir / "targets/prod/snowflake/iowa.sql",
+        ddl_path=project_dir / "el/iowa/snowflake.sql",
     )
     _patch_agent(
         monkeypatch,
@@ -573,7 +573,7 @@ def test_recovery_per_context_budgets_independent(
     is the layer that drives them sequentially.
     """
     config = _make_config(project_dir)
-    ddl_path = project_dir / "targets/prod/snowflake/iowa.sql"
+    ddl_path = project_dir / "el/iowa/snowflake.sql"
     phase_invocations: list[Invocation] = [
         DeployPreflightInvocation(
             pipeline_name="iowa",
@@ -716,7 +716,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
             dest_target="dev",
             project_dir=project_dir,
             error="verify failed",
-            ddl_path=project_dir / "targets/dev/snowflake/iowa.sql",
+            ddl_path=project_dir / "el/iowa/snowflake.sql",
         )
         handler.attempt(ctx)
         assert recorded["query_runner"] is runtime_runner
@@ -775,7 +775,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
             dest_target="dev",
             project_dir=project_dir,
             error="ddl failed",
-            ddl_path=project_dir / "targets/dev/snowflake/iowa.sql",
+            ddl_path=project_dir / "el/iowa/snowflake.sql",
             failing_statement_index=2,
             failing_sql="CREATE TABLE IF NOT EXISTS X (A INT);",
         )

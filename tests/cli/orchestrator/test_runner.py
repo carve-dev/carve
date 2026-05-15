@@ -1,17 +1,18 @@
-"""Unit tests for `cli.orchestrator.runner` (P1-07).
+"""Unit tests for `cli.orchestrator.runner` (P1-07 / P1.1-01).
 
-Each test plants a real script under ``targets/dev/el/<name>/main.py``
-and the corresponding `Pipeline` row, then runs the script through
-`LocalVenvRunner`. Requirements lists are empty so no pip work happens
-during the test — only venv creation, which is amortised through a
-module-scoped cache fixture.
+Each test plants a real script under ``el/<name>/main.py`` (flat
+layout) and the corresponding `Pipeline` row, then runs the script
+through `LocalVenvRunner`. Requirements lists are empty so no pip work
+happens during the test — only venv creation, which is amortised
+through a module-scoped cache fixture.
 
 Replay-guard tests from the M1 applier are gone; the new contract is:
 re-runs are first-class.
 
-P1-07 retargeted path resolution to ``targets/<active>/el/<name>/``;
-``pipelines/<name>/`` is checked as a transitional fallback. The
-fallback path is exercised by `tests/cli/commands/el/test_run.py`.
+P1.1-01 retargeted path resolution to ``el/<name>/``; the per-target
+``targets/<active>/el/<name>/`` layout is checked as a one-version
+legacy fallback (removed in v0.2). The older ``pipelines/<name>/``
+fallback from M1.1-06 / P1-07 is gone.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ def _config(*, venv_cache_dir: Path, state_db: str) -> Config:
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
-    (tmp_path / "targets" / "dev" / "el").mkdir(parents=True)
+    (tmp_path / "el").mkdir(parents=True)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     return tmp_path
 
@@ -94,8 +95,14 @@ def _plant_pipeline(
     plan_id: str | None = None,
     target: str = "dev",
 ) -> str:
-    """Write `targets/<target>/el/<name>/main.py` + the corresponding rows."""
-    pipeline_dir = project_dir / "targets" / target / "el" / pipeline_name
+    """Write `el/<name>/main.py` + the corresponding rows.
+
+    ``target`` controls the value persisted on the Build row (the
+    `target` column still records which target's catalog the build was
+    inspected against), not the on-disk path — the flat layout is
+    target-agnostic.
+    """
+    pipeline_dir = project_dir / "el" / pipeline_name
     pipeline_dir.mkdir(parents=True, exist_ok=True)
     (pipeline_dir / "main.py").write_text(script_body)
 
@@ -115,7 +122,7 @@ def _plant_pipeline(
     repository.create_or_update_pipeline(
         name=pipeline_name,
         description="",
-        pipeline_dir=f"targets/{target}/el/{pipeline_name}",
+        pipeline_dir=f"el/{pipeline_name}",
     )
     if plan_id is not None:
         # Pin a Build so lookups via current_build_id work.
@@ -267,7 +274,7 @@ def test_run_by_plan_resolves_to_pipeline(
     repository.create_or_update_pipeline(
         name="from_plan",
         description="",
-        pipeline_dir="pipelines/from_plan",
+        pipeline_dir="el/from_plan",
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_plan(
@@ -351,9 +358,9 @@ def test_run_by_plan_drafted_plan_exits_2(
 def test_run_by_name_missing_main_py_exits_2(
     project_dir: Path, repository: Repository, venv_cache_dir: Path
 ) -> None:
-    """Pipeline row exists but neither targets/<active>/el/<name> nor
-    pipelines/<name> has main.py. P1-07: this is exit 2 (artifact not
-    found), with a hint to `carve el list`.
+    """Pipeline row exists but neither `el/<name>/` nor the legacy
+    `targets/<active>/el/<name>/` fallback has main.py. P1.1-01: this
+    is exit 2 (artifact not found), with a hint to `carve el list`.
     """
     config = _config(
         venv_cache_dir=venv_cache_dir,
@@ -362,7 +369,7 @@ def test_run_by_name_missing_main_py_exits_2(
     repository.create_or_update_pipeline(
         name="orphan",
         description="",
-        pipeline_dir="targets/dev/el/orphan",
+        pipeline_dir="el/orphan",
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -374,6 +381,105 @@ def test_run_by_name_missing_main_py_exits_2(
     )
     assert exit_code == 2
     assert "No EL artifact" in console.export_text()
+
+
+def test_run_resolves_from_flat_el_path(
+    project_dir: Path, repository: Repository, venv_cache_dir: Path
+) -> None:
+    """P1.1-01: ``carve el run <name>`` reads ``el/<name>/main.py``."""
+    config = _config(
+        venv_cache_dir=venv_cache_dir,
+        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+    )
+    _plant_pipeline(
+        project_dir,
+        repository,
+        pipeline_name="flat_pipe",
+        script_body="print('flat layout resolved')\n",
+    )
+    # Sanity: only `el/<name>/` exists; no `targets/` tree.
+    assert (project_dir / "el" / "flat_pipe" / "main.py").is_file()
+    assert not (project_dir / "targets").exists()
+
+    console = Console(record=True, width=120)
+    exit_code = run_pipeline_by_name(
+        pipeline_name="flat_pipe",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        console=console,
+    )
+    assert exit_code == 0
+    assert "flat layout resolved" in console.export_text()
+
+
+def test_run_legacy_targets_path_fallback_warns(
+    project_dir: Path, repository: Repository, venv_cache_dir: Path
+) -> None:
+    """P1.1-01: when `el/<name>/` is absent but the legacy
+    `targets/<active>/el/<name>/` tree has main.py, the runner falls
+    back and emits a deprecation warning naming the migration."""
+    config = _config(
+        venv_cache_dir=venv_cache_dir,
+        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+    )
+    # Plant only under the legacy per-target tree; no `el/<name>/`.
+    legacy_dir = project_dir / "targets" / "dev" / "el" / "legacy_pipe"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "main.py").write_text("print('legacy-fallback')\n")
+    repository.create_or_update_pipeline(
+        name="legacy_pipe",
+        description="",
+        pipeline_dir="targets/dev/el/legacy_pipe",
+    )
+
+    console = Console(record=True, width=120)
+    exit_code = run_pipeline_by_name(
+        pipeline_name="legacy_pipe",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        console=console,
+    )
+    assert exit_code == 0
+    output = console.export_text()
+    assert "legacy-fallback" in output
+    # Deprecation warning + migration recipe surfaced.
+    assert "legacy" in output.lower()
+    assert "git mv" in output
+
+
+def test_run_legacy_pipelines_path_removed(
+    project_dir: Path, repository: Repository, venv_cache_dir: Path
+) -> None:
+    """P1.1-01: the M1.1-06 `pipelines/<name>/` fallback is GONE. A
+    script planted only there is not recognized — exit 2 with the
+    standard 'no such artifact' error."""
+    config = _config(
+        venv_cache_dir=venv_cache_dir,
+        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+    )
+    legacy_dir = project_dir / "pipelines" / "old_pipe"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "main.py").write_text("print('should never run')\n")
+    repository.create_or_update_pipeline(
+        name="old_pipe",
+        description="",
+        pipeline_dir="pipelines/old_pipe",
+    )
+
+    console = Console(record=True, width=120)
+    exit_code = run_pipeline_by_name(
+        pipeline_name="old_pipe",
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        console=console,
+    )
+    assert exit_code == 2
+    output = console.export_text()
+    assert "No EL artifact" in output
+    assert "should never run" not in output
 
 
 def test_runner_module_does_not_export_apply_plan() -> None:

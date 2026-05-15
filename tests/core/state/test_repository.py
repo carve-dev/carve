@@ -254,7 +254,7 @@ def test_create_or_update_pipeline_round_trip(repo: Repository) -> None:
     pipeline = repo.create_or_update_pipeline(
         name="iowa_liquor_sales",
         description="Daily ingest.",
-        pipeline_dir="targets/dev/el/iowa_liquor_sales",
+        pipeline_dir="el/iowa_liquor_sales",
     )
     assert pipeline.name == "iowa_liquor_sales"
     # current_build_id is left None until a Build is explicitly created
@@ -267,7 +267,7 @@ def test_create_or_update_pipeline_round_trip(repo: Repository) -> None:
     updated = repo.create_or_update_pipeline(
         name="iowa_liquor_sales",
         description="Daily ingest, refined.",
-        pipeline_dir="targets/dev/el/iowa_liquor_sales",
+        pipeline_dir="el/iowa_liquor_sales",
     )
     assert updated.description == "Daily ingest, refined."
     assert updated.created_at == first_created
@@ -284,13 +284,13 @@ def test_list_pipelines_orders_recently_updated_first(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="alpha",
         description="",
-        pipeline_dir="targets/dev/el/alpha",
+        pipeline_dir="el/alpha",
     )
     time.sleep(0.01)
     repo.create_or_update_pipeline(
         name="beta",
         description="",
-        pipeline_dir="targets/dev/el/beta",
+        pipeline_dir="el/beta",
     )
     listed = repo.list_pipelines()
     assert [p.name for p in listed] == ["beta", "alpha"]
@@ -307,7 +307,7 @@ def test_get_pipeline_lineage_walks_parent_chain_and_children(
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     # Lineage's `current_plan` resolves through the pinned Build now.
     build = repo.create_build(
@@ -334,7 +334,7 @@ def test_record_pipeline_run_updates_denorms(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     run_id = repo.create_run(
         kind="run",
@@ -381,7 +381,7 @@ def test_mark_plan_built_sets_phase_and_pipeline(
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     repo.mark_plan_built(plan_id="plan-1", pipeline_name="ingest")
     plan = repo.get_plan("plan-1")
@@ -418,7 +418,7 @@ def test_list_runs_filters_by_pipeline_name(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
     b = repo.create_run(kind="run", target_id="other", pipeline_name=None)
@@ -434,7 +434,7 @@ def test_pipeline_run_target_id_can_be_reused(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     a = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
     b = repo.create_run(kind="run", target_id="plan-1", pipeline_name="ingest")
@@ -449,7 +449,7 @@ def test_pipeline_model_round_trip(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="iowa",
         description="d",
-        pipeline_dir="targets/dev/el/iowa",
+        pipeline_dir="el/iowa",
     )
     pipeline = repo.get_pipeline("iowa")
     assert isinstance(pipeline, Pipeline)
@@ -466,7 +466,7 @@ def test_create_build_returns_row_with_prefixed_id(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     build = repo.create_build(
         pipeline_name="ingest",
@@ -488,7 +488,7 @@ def test_create_build_default_manifest_is_empty_files_list(repo: Repository) -> 
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     build = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
     assert build.manifest_json == '{"files": []}'
@@ -503,7 +503,7 @@ def test_set_pipeline_current_build_pins_fk(repo: Repository) -> None:
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     build = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
     repo.set_pipeline_current_build("ingest", build.id)
@@ -527,7 +527,7 @@ def test_get_pipeline_current_build_returns_none_when_unset(repo: Repository) ->
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     assert repo.get_pipeline_current_build("ingest") is None
     assert repo.get_pipeline_current_build("missing") is None
@@ -538,7 +538,7 @@ def test_latest_build_for_returns_most_recent_per_target(repo: Repository) -> No
     repo.create_or_update_pipeline(
         name="ingest",
         description="",
-        pipeline_dir="targets/dev/el/ingest",
+        pipeline_dir="el/ingest",
     )
     older = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
     time.sleep(0.005)

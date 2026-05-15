@@ -1,9 +1,13 @@
-"""``carve target rename`` — rename a target across all locations."""
+"""``carve target rename`` — rename a target across all locations.
+
+P1.1-01 removed the per-target filesystem tree, so this command now
+operates purely on configuration: the section in ``connections.toml``,
+the ``.env.example`` block, and (if applicable) ``carve.toml``'s
+``default_target``.
+"""
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
 
 import tomlkit
@@ -33,7 +37,7 @@ def command(
     ),
 ) -> None:
     """Rename ``<old>`` to ``<new>`` across connections.toml, .env.example,
-    targets/, and (if applicable) carve.toml's ``default_target``."""
+    and (if applicable) carve.toml's ``default_target``."""
     root = project_dir.resolve()
 
     try:
@@ -45,9 +49,6 @@ def command(
 
     conn_path = root / "carve" / "connections.toml"
     env_example_path = root / ".env.example"
-    targets_root = root / "targets"
-    old_dir = targets_root / old
-    new_dir = targets_root / new
     carve_toml = root / "carve.toml"
 
     existing = list_target_sections(conn_path)
@@ -61,11 +62,6 @@ def command(
             f'[red]Error:[/red] target "{new}" already exists in {conn_path}.'
         )
         raise typer.Exit(code=2)
-    if new_dir.exists():
-        console.print(
-            f'[red]Error:[/red] {new_dir} already exists; refusing to overwrite.'
-        )
-        raise typer.Exit(code=2)
 
     # 1) Rename the section in connections.toml.
     try:
@@ -77,25 +73,7 @@ def command(
     # 2) Rewrite the .env.example block.
     rename_env_example_block(old, new, env_example_path)
 
-    # 3) Move the artifacts directory if it exists.
-    moved_dir = False
-    if old_dir.exists():
-        if (root / ".git").is_dir():
-            try:
-                subprocess.run(
-                    ["git", "mv", str(old_dir), str(new_dir)],
-                    cwd=str(root),
-                    check=True,
-                    capture_output=True,
-                )
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                # Fall back to plain mv if git mv fails (e.g. file not tracked).
-                shutil.move(str(old_dir), str(new_dir))
-        else:
-            shutil.move(str(old_dir), str(new_dir))
-        moved_dir = True
-
-    # 4) Update default_target in carve.toml if applicable.
+    # 3) Update default_target in carve.toml if applicable.
     updated_default = False
     if carve_toml.is_file():
         text = carve_toml.read_text(encoding="utf-8")
@@ -110,8 +88,6 @@ def command(
     console.print(f"  - connections.toml: [snowflake.{old}] → [snowflake.{new}]")
     if env_example_path.is_file():
         console.print(f"  - .env.example: {old.upper()}_* → {new.upper()}_*")
-    if moved_dir:
-        console.print(f"  - targets/{old}/ → targets/{new}/")
     if updated_default:
         console.print(f'  - carve.toml: default_target = "{new}"')
     console.print(

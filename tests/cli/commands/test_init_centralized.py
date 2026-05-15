@@ -1,9 +1,10 @@
-"""Tests for the centralized + per-target layout that ``carve init`` produces.
+"""Tests for the flat-layout filesystem shape that ``carve init`` produces.
 
-P1-03 finalised the shape: a single ``carve/connections.toml`` (one
-``[snowflake.<target>]`` section per target), a single project-root
-``.env.example`` with ``# === Project-wide ===`` and ``# === dev target ===``
-blocks, and ``targets/dev/el/`` for per-target artifacts.
+P1.1-01 dropped the per-target ``targets/<X>/el/`` tree. ``carve init``
+now writes a single ``carve/connections.toml`` (one ``[snowflake.<target>]``
+section per target), a single project-root ``.env.example`` with
+``# === Project-wide ===`` and ``# === dev target ===`` blocks, and an
+empty ``el/`` tree (artifacts land there directly, target-agnostic).
 
 The companion regression test in ``tests/test_cli.py``
 (``test_init_uses_add_target_to_project``) pins the single-helper
@@ -27,8 +28,8 @@ def runner() -> CliRunner:
 
 
 def test_init_creates_centralized_layout(runner: CliRunner, tmp_path: Path) -> None:
-    """``carve init`` produces the centralized layout — single connections.toml,
-    root-level .env.example, per-target ``targets/dev/el/`` artifact dir."""
+    """``carve init`` produces the flat layout — single connections.toml,
+    root-level .env.example, empty ``el/`` artifact dir."""
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
 
@@ -36,28 +37,32 @@ def test_init_creates_centralized_layout(runner: CliRunner, tmp_path: Path) -> N
     assert (tmp_path / "carve" / "connections.toml").is_file()
     assert (tmp_path / ".env.example").is_file()
 
-    # Per-target artifact dir exists; legacy ``pipelines/`` does not.
-    assert (tmp_path / "targets" / "dev" / "el").is_dir()
+    # Flat artifact tree exists; legacy ``pipelines/`` does not, and
+    # P1.1-01 removed ``targets/``.
+    assert (tmp_path / "el").is_dir()
     assert not (tmp_path / "pipelines").exists()
-
-    # No per-target connections file got written.
-    assert not (tmp_path / "targets" / "dev" / "connections.toml").exists()
-    assert not (tmp_path / "targets" / "dev" / ".env").exists()
+    assert not (tmp_path / "targets").exists()
 
 
 def test_init_writes_carve_toml_with_default_target(
     runner: CliRunner, tmp_path: Path
 ) -> None:
-    """``carve.toml`` has ``[project] default_target = "dev"`` and the new
-    ``[paths]`` keys (``targets_dir``, ``agents_dir``)."""
+    """``carve.toml`` has ``[project] default_target = "dev"`` and the
+    ``[paths]`` keys (``agents_dir``, ``config_dir``).
+
+    P1.1-01 dropped `targets_dir` from new templates — artifacts live
+    at `el/<name>/`, not under any `targets/` subtree. The field is
+    still accepted by `PathsConfig` with a default so existing
+    carve.toml files keep loading.
+    """
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve.toml").read_text()
     assert "[project]" in content
     assert 'default_target = "dev"' in content
-    assert 'targets_dir = "targets"' in content
     assert 'agents_dir = "carve/agents"' in content
+    assert "targets_dir" not in content
     # Project name is detected from the directory name.
     assert f'name = "{tmp_path.name}"' in content
 
@@ -232,9 +237,10 @@ def test_init_then_target_create_produces_two_sections(
     assert "# === dev target ===" in env_content
     assert "# === staging target ===" in env_content
 
-    # Both artifact dirs present.
-    assert (tmp_path / "targets" / "dev" / "el").is_dir()
-    assert (tmp_path / "targets" / "staging" / "el").is_dir()
+    # P1.1-01: target create no longer creates a `targets/<name>/`
+    # filesystem tree. The flat `el/` tree from init suffices.
+    assert (tmp_path / "el").is_dir()
+    assert not (tmp_path / "targets").exists()
 
 
 def test_init_escapes_directory_name_with_quotes(
@@ -268,3 +274,66 @@ def test_init_refuses_filesystem_root(
     result = runner.invoke(app, ["init", "/"])
     assert result.exit_code == 2, result.output
     assert "no directory name" in result.output
+
+
+def test_init_no_longer_creates_targets_subtree(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """P1.1-01: ``carve init`` creates ``el/`` (empty) and does NOT create
+    ``targets/``. The target abstraction survives via connections.toml,
+    but the per-target filesystem tree is gone."""
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    # `el/` is created (empty); builds populate it.
+    assert (tmp_path / "el").is_dir()
+    assert not any((tmp_path / "el").iterdir())
+
+    # `targets/` is NOT created.
+    assert not (tmp_path / "targets").exists()
+
+
+def test_existing_targets_dir_left_alone(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """When the project already has a ``targets/`` directory (pre-P1.1
+    layout), ``carve init`` does not touch it — neither delete it nor
+    mkdir under it."""
+    # Pre-create a stale targets/ tree with sentinel content.
+    legacy_dir = tmp_path / "targets" / "dev" / "el"
+    legacy_dir.mkdir(parents=True)
+    sentinel = legacy_dir / "_sentinel.txt"
+    sentinel.write_text("pre-P1.1 content\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    # Stale tree preserved verbatim.
+    assert sentinel.is_file()
+    assert sentinel.read_text() == "pre-P1.1 content\n"
+    # No mkdir under it either.
+    dev_dir = tmp_path / "targets" / "dev"
+    assert sorted(child.name for child in dev_dir.iterdir()) == ["el"]
+
+
+def test_target_create_does_not_create_targets_dir(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """``carve target create staging`` adds the connections.toml section
+    and .env.example block; does NOT create ``targets/staging/``."""
+    init_result = runner.invoke(app, ["init", str(tmp_path)])
+    assert init_result.exit_code == 0, init_result.output
+
+    result = runner.invoke(
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.output
+
+    # Config got the new section / env-example block.
+    conn = (tmp_path / "carve" / "connections.toml").read_text()
+    assert "[snowflake.staging]" in conn
+    env = (tmp_path / ".env.example").read_text()
+    assert "# === staging target ===" in env
+
+    # Filesystem: no targets/ tree.
+    assert not (tmp_path / "targets").exists()

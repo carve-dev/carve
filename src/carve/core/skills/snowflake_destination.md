@@ -128,14 +128,13 @@ separated, and the daily-run path must use the runtime role from
 ## DDL emission patterns (Pillar 1)
 
 This is the contract for the per-EL companion file at
-`targets/<active_target>/snowflake/<artifact>.sql`. The extract-load
-agent emits this file on every build; `carve el deploy`'s DDL-apply
-phase executes it.
+`el/<artifact>/snowflake.sql`. The extract-load agent emits this file
+on every build; `carve el deploy`'s DDL-apply phase executes it.
 
 ### File location and naming
 
 ```
-targets/<active_target>/snowflake/<artifact_name>.sql
+el/<artifact_name>/snowflake.sql
 ```
 
 One DDL file per artifact. The artifact name matches the EL pipeline

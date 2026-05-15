@@ -1,16 +1,17 @@
 """`carve el run` orchestration — target-aware artifact execution.
 
-Reads an EL artifact by name from ``targets/<active>/el/<name>/``,
-builds a `PythonStep` from the live files, runs it through
-`LocalVenvRunner`, and tails the streaming logs to stdout. Returns a
-process-style exit code so the typer command module can hand it to
+Reads an EL artifact by name from ``el/<name>/``, builds a
+`PythonStep` from the live files, runs it through `LocalVenvRunner`,
+and tails the streaming logs to stdout. Returns a process-style exit
+code so the typer command module can hand it to
 `raise typer.Exit(code=...)`.
 
-P1-07 retargeted path resolution: primary lookup is
-``targets/<active>/el/<name>/main.py``. The legacy
-``pipelines/<name>/main.py`` path from M1.1-06 is checked as a
-transitional fallback with a one-line deprecation warning, then removed
-in v0.2.
+P1.1-01 flipped path resolution to the flat tree: primary lookup is
+``el/<name>/main.py``. The per-target ``targets/<active>/el/<name>/``
+layout from P1-02 is checked as a one-version legacy fallback with a
+deprecation warning, then removed in v0.2. The older
+``pipelines/<name>/`` fallback from M1.1-06 / P1-07 was dropped at
+the same time.
 
 Two entry points:
 
@@ -83,8 +84,8 @@ def run_pipeline_by_name(
     explicit ``target`` arg → ``CARVE_TARGET`` env → ``carve.toml``
     default_target → ``"dev"``). ``run_pipeline_by_name`` does *not*
     require a `Pipeline` row to exist — the on-disk artifact under
-    ``targets/<active>/el/<name>/`` is the source of truth. A missing
-    artifact maps to exit 2.
+    ``el/<name>/`` is the source of truth. A missing artifact maps
+    to exit 2.
     """
     from carve.core.targets.resolution import (
         TargetResolutionError,
@@ -117,8 +118,10 @@ def run_pipeline_by_name(
     # paths are resolved and verified to live under ``project_dir`` so
     # a pathological pipeline name (e.g. ``..`` or absolute path) can't
     # escape the project root.
-    primary_dir = (project_dir / "targets" / active_target / "el" / pipeline_name).resolve()
-    legacy_dir = (project_dir / "pipelines" / pipeline_name).resolve()
+    primary_dir = (project_dir / "el" / pipeline_name).resolve()
+    legacy_dir = (
+        project_dir / "targets" / active_target / "el" / pipeline_name
+    ).resolve()
     project_root = project_dir.resolve()
     for candidate in (primary_dir, legacy_dir):
         try:
@@ -135,16 +138,17 @@ def run_pipeline_by_name(
         pipeline_dir_abs = primary_dir
     elif (legacy_dir / "main.py").is_file():
         console.print(
-            f"[yellow]![/yellow] Found legacy 'pipelines/{_escape(pipeline_name)}/main.py' "
-            f"at the project root. Migrate to "
-            f"'targets/{_escape(active_target)}/el/{_escape(pipeline_name)}/' "
-            f"(see CHANGELOG v0.1.0). Falling back for now."
+            f"[yellow]![/yellow] Found legacy "
+            f"'targets/{_escape(active_target)}/el/{_escape(pipeline_name)}/main.py'. "
+            f"Run `git mv targets/{_escape(active_target)}/el el && rm -rf targets/` "
+            "to migrate (see CHANGELOG v0.1.1). Falling back for now; "
+            "this fallback is removed in v0.2."
         )
         logger.warning(
-            "legacy 'pipelines/%s/main.py' fallback used; migrate to "
-            "'targets/%s/el/%s/' (removed in v0.2).",
-            pipeline_name,
+            "legacy 'targets/%s/el/%s/main.py' fallback used; migrate to "
+            "'el/%s/' (removed in v0.2).",
             active_target,
+            pipeline_name,
             pipeline_name,
         )
         pipeline_dir_abs = legacy_dir
@@ -325,7 +329,7 @@ def _run_pipeline_dir(
         repository.create_or_update_pipeline(
             name=pipeline_name,
             description="",
-            pipeline_dir=str(pipeline_dir_abs.relative_to(project_dir)),
+            pipeline_dir=pipeline_dir_abs.relative_to(project_dir).as_posix(),
         )
 
     # Reserve the run id ahead of `PythonStepConfig` construction so we

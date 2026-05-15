@@ -112,9 +112,18 @@ def command(
         ),
     ),
 ) -> None:
-    """Promote an EL artifact from `<from>` to `<to>`."""
+    """Promote an EL artifact from `<from>` to `<to>`.
+
+    P1.1-01 note: with the flat ``el/<name>/`` layout, files live at
+    one location regardless of target. The ``--from / --to`` flags
+    retain their P1-08 semantics (catalog inspection runs against
+    ``<from>``; DDL apply + verify run against ``<to>``) but the
+    file-copy step is a no-op when the source and destination tree
+    point at the same path. P1.1-03 rewrites this command around git
+    promotion and removes ``--from / --to`` entirely.
+    """
     # Validate the name shapes BEFORE any path is constructed. These
-    # values flow directly into ``targets/<t>/el/<name>/`` paths and a
+    # values flow directly into ``el/<name>/`` paths and a
     # malformed value (``..`` segments, spaces, punctuation) could
     # traverse out of the project tree before the connection lookup
     # would even fire.
@@ -328,13 +337,15 @@ def _run_deploy_inner(
         )
         return 2
 
-    source_artifact = (
-        project_dir / "targets" / source_target / "el" / pipeline_name
-    )
+    # P1.1-01 shim: artifacts live in the flat ``el/<name>/`` tree
+    # regardless of source target. The ``--from`` flag still governs
+    # catalog-inspection context; the on-disk path no longer encodes
+    # it.
+    source_artifact = project_dir / "el" / pipeline_name
     if not (source_artifact / "main.py").is_file():
         console.print(
-            f"[red]✗[/red] No EL artifact named {pipeline_name!r} in target "
-            f"{source_target!r}. Run carve build first."
+            f"[red]✗[/red] No EL artifact named {pipeline_name!r} on disk "
+            f"at el/{pipeline_name}/. Run carve build first."
         )
         return 2
 
@@ -425,12 +436,11 @@ def _execute_phases(
     if runtime_section is not None:
         runtime_role = runtime_section.role
 
+    # P1.1-01 shim: the DDL companion file lives next to main.py in
+    # the flat artifact tree (``el/<name>/snowflake.sql``). P1.1-03
+    # will rename to ``.sql.j2`` and templatize.
     ddl_path = (
-        ctx.project_dir
-        / "targets"
-        / ctx.dest_target
-        / "snowflake"
-        / f"{ctx.pipeline_name}.sql"
+        ctx.project_dir / "el" / ctx.pipeline_name / "snowflake.sql"
     )
 
     preflight = run_preflight(
@@ -460,12 +470,12 @@ def _execute_phases(
             f"from {ctx.source_target} → {ctx.dest_target}"
         )
         ctx.console.print(
-            f"  Files: targets/{ctx.source_target}/el/{ctx.pipeline_name}/ → "
-            f"targets/{ctx.dest_target}/el/{ctx.pipeline_name}/"
+            f"  Files: el/{ctx.pipeline_name}/ (shared) — "
+            f"catalog context: {ctx.source_target} → {ctx.dest_target}"
         )
-        if ddl_path.parent.parent.is_dir():
+        if ddl_path.is_file():
             ctx.console.print(
-                f"  DDL:   targets/{ctx.dest_target}/snowflake/{ctx.pipeline_name}.sql"
+                f"  DDL:   el/{ctx.pipeline_name}/snowflake.sql"
             )
 
         # Surface destination.toml overrides — particularly the case
@@ -876,13 +886,12 @@ def _render_destination_override_warning(ctx: DeployContext) -> None:
     """
     from carve.core.targets.destination import read_destination_toml
 
+    # P1.1-01 shim: destination.toml lives in the flat artifact tree.
+    # P1.1-02 will sectionize it with `[default]` + per-target blocks;
+    # for now the file is shared across targets and back-to-back builds
+    # with different active targets are last-write-wins.
     src_path = (
-        ctx.project_dir
-        / "targets"
-        / ctx.source_target
-        / "el"
-        / ctx.pipeline_name
-        / "destination.toml"
+        ctx.project_dir / "el" / ctx.pipeline_name / "destination.toml"
     )
     try:
         destination = read_destination_toml(src_path)
@@ -940,7 +949,7 @@ def _render_destination_override_warning(ctx: DeployContext) -> None:
             )
     ctx.console.print(
         "[dim]To change the override before deploying, edit "
-        f"targets/{ctx.dest_target}/el/{ctx.pipeline_name}/destination.toml "
+        f"el/{ctx.pipeline_name}/destination.toml "
         "after this confirmation, then re-run.[/dim]"
     )
     ctx.console.print()
