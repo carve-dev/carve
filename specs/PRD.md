@@ -1,6 +1,6 @@
-# Carve — Product Requirements Document (rewrite draft, 2026-05-14)
+# Carve — Product Requirements Document
 
-> Draft. Builds up section-by-section against [`2026-05-positioning.md`](./2026-05-positioning.md). Replaces `specs/PRD.md` when complete.
+> Last major revision 2026-05-14, aligned to [`_strategy/2026-05-positioning.md`](./_strategy/2026-05-positioning.md). For the prior version, see [`_archive/PRD-pre-2026-05-positioning.md`](./_archive/PRD-pre-2026-05-positioning.md).
 
 ## 1. Vision
 
@@ -44,6 +44,8 @@ Intent → Plan → Build → Run → Deploy → Schedule → Observe
 7. **Observe** — every run, log line, status transition, and cost number is queryable via API, MCP, CLI, or UI. External agents can subscribe to run-completion webhooks. Failed runs surface for review.
 
 Steps 1–3 are LLM-mediated (the agent does the reasoning); steps 4–7 are deterministic mechanics. The loop applies whether the goal is a new pipeline, a modification to an existing dbt model, a config change, or a guardrail adjustment. The loop applies whether driven by a human at the CLI, an agent via MCP, or a CI workflow via REST.
+
+**A sibling read-only verb outside the loop.** `carve ask` (§6.4) handles investigative queries — "Where do we calculate net revenue?", "Which models depend on `stg_orders`?", etc. It uses the same orchestration agent and skills as `plan`, but produces an answer rather than a plan, and is strictly side-effect-free. Asks can run concurrently with anything else.
 
 ## 4. Scope
 
@@ -110,11 +112,19 @@ Carve generates dlt code for extract-load and dbt code for transforms. It does n
 
 The implication: when an edge case in ingest or transform surfaces, the fix lives in dlt or dbt — not in Carve. We contribute upstream where it makes sense. This bet is what lets Carve be small: we own the authoring layer, the runtime layer, and the observability layer, and we own zero infrastructure that dlt or dbt already provide.
 
-### 5.2 Carve meets you where your dbt project is
+### 5.2 Carve meets you where your projects are
 
-Brownfield is the dominant case, not the edge case. Most teams adopting Carve already have a working dbt project — its conventions are load-bearing for the team, and Carve must integrate with it rather than overwrite or compete with it. The opposite case (greenfield, no existing dbt) is also supported, but the default assumption is brownfield.
+Brownfield is the dominant case for both dlt and dbt. Most teams adopting Carve already have either a working dbt project, a working dlt setup, or both — their conventions are load-bearing for the team, and Carve must integrate with them rather than overwrite or compete.
 
-Specifically: Carve never modifies a user's `dbt_project.yml` or `profiles.yml` without explicit consent, never reorganizes the user's `models/` directory, and never replaces conventions it observes with its own preferences. Carve learns from the existing project — naming, layering, test patterns, materialization defaults — and reflects what it learns in a generated `carve/conventions.md` file that the agents read on every invocation. The user's dbt repo can live in the same git repo as Carve or in a separate one; both are first-class (see §6.2).
+Specifically: Carve never modifies the user's `dbt_project.yml`, `profiles.yml`, existing dlt source code, `.dlt/secrets.toml`, or `.dlt/config.toml` without explicit consent, and never reorganizes the user's `models/` directory. Carve learns from the existing projects — naming, layering, source patterns, destination conventions, write dispositions — and reflects what it learns in a generated `carve/conventions.md` that the agents read on every invocation.
+
+The user can run Carve in three configurations:
+
+1. **Authoring + orchestration** (greenfield or mixed): Carve's agents generate new dlt pipelines and dbt models (when v0.2 ships), and Carve's runtime schedules them.
+2. **Orchestration only** (full brownfield): the user authored their own dlt and dbt; Carve detects them, registers them, and lets the user compose them into scheduled pipelines via plan/build without generating any new EL or transform code. This is the natural mode for teams already using dltHub Pro or another dlt-management tool.
+3. **Mix**: Carve authors some pipelines and orchestrates user-authored ones alongside them.
+
+The user's dlt and dbt repos can live in the same git repo as Carve or in separate ones; both are first-class (see §6.2).
 
 ### 5.3 AI-first authoring, not AI-assisted
 
@@ -230,7 +240,7 @@ The OSS/hosted split is enforced by the two-repo structure: the OSS repo cannot 
 
 ## 6. Functional requirements
 
-Aligned to the core loop from §3: init → dbt integration → plan → build → run → deploy → schedule → composition → agents → skills → interfaces → observability.
+Aligned to the core loop from §3: init → backend integration → plan → ask (sibling, read-only) → build → run → deploy → schedule → composition → agents → skills → interfaces → observability.
 
 **API and MCP parity is mandatory, not optional.** Every CLI command and every CLI flag has a corresponding REST endpoint (or request-body field) and a corresponding MCP tool (or tool argument). This is the operational expression of design decision 5.10 (headless by default): an external agent driving Carve via MCP, or a CI workflow driving Carve via REST, must be able to do everything a human can do at the CLI. The acceptance criteria for every subsection below implicitly include "every CLI behavior is also reachable via REST and MCP." When a new flag is added to the CLI, the corresponding REST/MCP surface must ship in the same release.
 
@@ -251,42 +261,75 @@ Aligned to the core loop from §3: init → dbt integration → plan → build �
 
 Behaviors:
 
-- If a `dbt_project.yml` is detected in the current directory or one level down, Carve enters brownfield mode and runs the dbt-integration flow (§6.2). No files in the existing dbt project are modified.
+- If a `dbt_project.yml` is detected in the current directory or one level down, Carve enters brownfield-dbt mode and runs the dbt side of the integration flow (§6.2). No files in the existing dbt project are modified.
+- If a `.dlt/` directory or Python files using `@dlt.source` / `@dlt.resource` / `@dlt.pipeline` decorators are detected, Carve enters brownfield-dlt mode and runs the dlt side of the integration flow (§6.2). No files in the existing dlt project are modified.
 - If `--with-dbt` is passed and no existing dbt project is detected, Carve scaffolds a greenfield dbt project (§6.2).
+- If `--with-dlt` is passed and no existing dlt project is detected, Carve scaffolds a greenfield dlt project (§6.2).
+- `carve init --dbt-path <path>` and `carve init --dbt-url <git_url>` enter dbt separate-repo mode (§6.2).
+- `carve init --dlt-path <path>` and `carve init --dlt-url <git_url>` enter dlt separate-repo mode (§6.2).
+- The user can mix per-backend topology: e.g., dbt same-repo + dlt separate-repo, or vice versa.
 - If no git repo exists, `carve init` runs `git init` for the new (or wrapping) repo.
 - A single-user API token is generated and stored locally for CLI authentication.
-- `carve init --dbt-path <path>` and `carve init --dbt-url <git_url>` enter separate-repo mode (§6.2).
 
 Acceptance:
 
 - `carve init` in a greenfield directory completes in under 30 seconds and produces a project that `carve plan "test goal"` can run against
 - `carve init` in a brownfield directory completes in under 5 minutes (manifest analysis included) and produces a project that integrates with the existing dbt project
 
-### 6.2 dbt project integration
+### 6.2 Backend project integration (dlt + dbt)
 
-The most common Carve install is on top of an existing dbt project. Carve must integrate with it cleanly — read its conventions, target its sources, invoke its build commands — without overwriting or surprising the user.
+The most common Carve install is on top of one or both of: an existing dbt project, an existing dlt setup. Carve must integrate with them cleanly — read their conventions, target their resources and sources, invoke their build commands — without overwriting or surprising the user. dlt and dbt are treated symmetrically: each has greenfield, brownfield-same-repo, brownfield-local-path, and brownfield-remote-URL modes, independently selected.
 
-**Repo topology.** Three modes:
+**Operating modes.** Per design decision 5.2, three configurations are supported:
 
-- **Same-repo (default).** `carve init` from within an existing dbt repo. Carve files (`carve.toml`, `carve/`, `el/`, `pipelines/`, `docker-compose.yml`) live alongside `dbt_project.yml`. Single git history. Cross-cutting changes (new dlt pipeline + new dbt source) land in one PR.
-- **Separate-repo, local path.** `carve init --dbt-path /path/to/dbt`. Carve repo is separate; `carve.toml` records the filesystem path to the dbt project. Useful for monorepos with `dbt/` and `carve/` as sibling directories.
-- **Separate-repo, remote URL.** `carve init --dbt-url git@github.com:myorg/dbt.git`. Carve clones the dbt repo into a workspace cache (`.carve/workspaces/<dbt-name>/`) and syncs it before runtime invocations. Cross-repo deploys produce two linked PRs — one to the Carve repo (EL + pipeline changes) and one to the dbt repo (new `sources.yml` entries) via the GitHub MCP server.
+1. **Authoring + orchestration** — Carve's agents generate new dlt and dbt code, and the runtime schedules them.
+2. **Orchestration only** — the user wrote their own dlt and dbt; Carve detects them and lets the user compose them into scheduled pipelines without generating any new EL or transform code. Natural mode for teams using dltHub Pro or other dlt-management tools.
+3. **Mix** — Carve authors some pipelines and orchestrates user-authored ones alongside them.
 
-**Brownfield detection.** On `carve init`, Carve searches the current directory and one level down for `dbt_project.yml`. If found, Carve registers the existing dbt project: notes its location, reads its target profile, indexes its `sources.yml` files. No files in the dbt project are modified by `carve init`.
+**Repo topology.** Three modes per backend, independently chosen:
 
-**Convention inference.** Carve analyzes the brownfield project's structure and writes `carve/conventions.md` summarizing what it found: model naming (`stg_*`, `int_*`, `fct_*`), staging-vs-marts layering, default materializations, common test patterns, source schema conventions. Agents read this file as part of their pre-scoped context on every invocation. Users can hand-edit `conventions.md` to override or correct anything Carve inferred.
+- **Same-repo (default).** `carve init` from within a repo containing existing `dbt_project.yml` and/or `.dlt/`. Carve files (`carve.toml`, `carve/`, `el/`, `pipelines/`, `docker-compose.yml`) live alongside them. Single git history.
+- **Separate-repo, local path.** `carve init --dbt-path /path/to/dbt` and/or `--dlt-path /path/to/dlt`. Carve repo is separate; `carve.toml` records each filesystem path.
+- **Separate-repo, remote URL.** `carve init --dbt-url git@github.com:myorg/dbt.git` and/or `--dlt-url git@github.com:myorg/dlt.git`. Carve clones each repo into a workspace cache (`.carve/workspaces/<name>/`) and syncs before runtime invocations. Cross-repo deploys produce linked PRs via the GitHub MCP server.
 
-**Source coupling.** When the EL agent generates a dlt pipeline, it consults the brownfield dbt project's `sources.yml` files. If the user wants the pipeline to feed an existing dbt source, the agent matches the source's schema/table conventions. If the source doesn't exist yet, the agent generates a stub `sources.yml` entry alongside the dlt pipeline. In separate-repo mode this becomes a linked PR.
+A user can mix per-backend topology — for example, dbt same-repo + dlt separate-repo — without restriction.
 
-**Greenfield scaffolding.** `carve init --with-dbt` (or selecting "scaffold new dbt project" in interactive mode) scaffolds a new dbt project alongside Carve config using a blessed default layout: `models/staging/`, `models/marts/`, `models/intermediate/`, a starter `dbt_project.yml`, a `profiles.yml` template. This is the path for users who don't already have dbt. Brownfield detection is still the default behavior.
+**Brownfield detection.** On `carve init`:
 
-**Ongoing integration.** The runtime invokes `dbt build`, `dbt test`, `dbt run --select`, etc., as step types against the registered dbt project. dlt artifacts land data into schemas dbt's `sources.yml` declares — so the dbt → dlt boundary is explicit and inspectable. Cross-pillar references (a `dbt` step inside a pipeline that depends on a `dlt` step) resolve at runtime to the right paths regardless of repo topology.
+- **dbt:** search the current directory and one level down for `dbt_project.yml`.
+- **dlt:** search for a `.dlt/` directory and/or for Python files containing `@dlt.source`, `@dlt.resource`, or `@dlt.pipeline` decorators in a designated directory (defaults: `./`, `el/`, `dlt/`).
+- The CLI prompts the user to confirm detected projects (and individual detected dlt pipelines) before registration.
+- No files in the detected projects are modified by `carve init`.
+
+**Convention inference.** Carve writes `carve/conventions.md` summarizing what it found in each backend:
+
+- **dbt conventions:** model naming (`stg_*`, `int_*`, `dim_*`, `fct_*`), staging/marts layering, default materializations, common test patterns, source schema conventions.
+- **dlt conventions:** destination types and configurations, source naming patterns, write-disposition defaults (append / replace / merge), schema-contract defaults, credential/secret conventions.
+
+Agents read this file as part of their pre-scoped context on every invocation. Users can hand-edit `conventions.md` to override or correct anything Carve inferred.
+
+**Authoring split — when agents generate code and when they stay out.**
+
+- **EL agent generates** new dlt pipelines in modes 1 and 3 (authoring + orchestration). Generated pipelines respect the brownfield dlt project's conventions (matching destinations, schema names, write-disposition defaults).
+- **EL agent stays out** in mode 2 (orchestration only). Plan/build for "schedule my-existing-stripe-pipeline" creates a `pipelines/*.toml` entry that references the existing dlt artifact by name and path — no new dlt code is generated.
+- **dbt agent (v0.2)** follows the same split: authors models in modes 1 and 3; stays out in mode 2.
+- **Cross-backend source coupling**: when the EL agent generates a pipeline that should feed an existing dbt source, it consults the brownfield dbt project's `sources.yml` and matches conventions. If the source doesn't exist, the agent generates a stub `sources.yml` entry alongside the dlt pipeline; in separate-repo mode this becomes a linked PR against the dbt repo.
+
+**Greenfield scaffolding.**
+
+- `carve init --with-dbt` scaffolds a new dbt project: `models/staging/`, `models/marts/`, `models/intermediate/`, starter `dbt_project.yml`, `profiles.yml` template.
+- `carve init --with-dlt` scaffolds a new dlt project: `el/` directory, templated `.dlt/secrets.toml` and `.dlt/config.toml`, a starter pipeline file showing the dlt patterns Carve will author against.
+- The flags compose: `carve init --with-dbt --with-dlt` is a clean greenfield-for-both install.
+
+**Ongoing integration.** The runtime invokes `dbt build` / `dbt test` / `dbt run --select` and `dlt pipeline run` as step types against the registered projects (same-repo, local-path, or remote-URL). dlt artifacts land data into schemas dbt's `sources.yml` declares — so the dbt → dlt boundary is explicit and inspectable regardless of repo topology.
 
 Acceptance:
 
-- Brownfield onboarding produces a `conventions.md` within 5 minutes of `carve init` on a real-world dbt project
+- Brownfield onboarding produces a `conventions.md` within 5 minutes of `carve init` on a real-world dlt and/or dbt project
 - The EL agent generates dlt pipelines that target existing dbt sources without modification in 80% of cases on first attempt
-- Both same-repo and separate-repo modes (local path and remote URL) are supported from v0.1
+- All three operating modes (authoring + orchestration, orchestration only, mix) are supported from v0.1
+- Same-repo, local-path, and remote-URL modes are supported symmetrically for both dlt and dbt from v0.1
+- Mixed-topology installs (e.g., dbt same-repo + dlt remote-URL) work without restriction
 
 ### 6.3 Plan generation
 
@@ -300,7 +343,33 @@ Acceptance:
 
 **Acceptance:** `carve plan` for a typical modification goal completes in under 15 seconds excluding LLM latency.
 
-### 6.4 Build
+### 6.4 Ask — investigative queries
+
+`carve ask` is a read-only sibling to `plan`. It uses the same orchestration agent and skills, but its output is an answer — not a plan with file diffs. Used for investigative questions like "Where do we calculate net revenue and what is the formula?", "Which models depend on `stg_orders`?", "What's the freshness of our Stripe data?", or "Show me every pipeline that writes to the `analytics` schema."
+
+- `carve ask "<question>"` produces an Answer with markdown text, cited entities, and a skill-call trace. Saved as `.carve/asks/<ask_id>.json` and indexed in the state store.
+- `carve ask "<question>" --pipeline <name>` scopes the question to a single pipeline's context.
+- `carve ask "<question>" --target <name>` scopes the question to a single target's destination.
+- `carve asks list` — list recent asks (with filters `--since`, `--limit`)
+- `carve asks show <ask_id>` — show a previous ask's full answer + skill-call trace
+
+The verb is strictly read-only: no files are modified, no warehouse state is touched, no plans or builds are created, no jobs are queued. The orchestrator's guardrails forbid any code-write skill from being called during an Ask.
+
+Equivalent REST:
+
+- `POST /asks` with body `{"question": "...", "pipeline": "<name>?", "target": "<name>?"}` — covers `carve ask`
+- `GET /asks/{id}` — covers `carve asks show`
+- `GET /asks` — covers `carve asks list`; supports `?since=`, `?limit=`, `?pipeline=`
+
+Equivalent MCP:
+
+- `ask(question, pipeline=None, target=None)`
+- `ask_show(ask_id)`
+- `asks_list(since=None, limit=50, pipeline=None)`
+
+**Acceptance:** `carve ask` returns an answer with cited entities within 15 seconds (excluding LLM latency) for a typical investigative question; no write skills are invoked during an Ask; asks can run concurrently with each other and with plans/builds/runs/deploys.
+
+### 6.5 Build
 
 - `carve build <plan_id>` materializes a plan's task graph into files on disk: dlt sources/resources/pipeline configs, dbt models (when the dbt agent ships in v0.2), `pipelines/<name>.toml` entries.
 - Build checks the plan's config hash against current config; refuses to run against drifted config and prompts for re-plan.
@@ -313,7 +382,7 @@ Acceptance:
 
 **Acceptance:** typical build (one dlt pipeline + one `pipelines/*.toml`) completes in under 60 seconds; generated files pass `dlt pipeline check` / `dbt parse` 99% of the time.
 
-### 6.5 Run
+### 6.6 Run
 
 - `carve run <pipeline>` executes a pipeline on demand against the default target (typically dev).
 - `carve run <pipeline> --target <name>` runs against an explicit target.
@@ -340,7 +409,7 @@ Acceptance:
 
 **Acceptance:** run startup overhead under 10 seconds; failed runs retry-from-step via CLI / API / MCP / UI.
 
-### 6.6 Deploy
+### 6.7 Deploy
 
 Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt handles destination schema management; see decision 5.1). Deploy is a git-mediated operation.
 
@@ -348,7 +417,7 @@ Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt ha
 - For separate-repo mode (§6.2), deploy may produce two linked PRs (Carve repo for EL/pipeline changes; dbt repo for `sources.yml` changes), coordinated via the GitHub MCP server.
 - `carve deploy --dry-run <pipeline>` previews the PR without opening it.
 - Carve does not modify production state directly; the PR merge triggers whatever CI the user has wired up. Carve does not own CI integration in v0.1 — users wire it via their existing GitHub Actions / GitLab CI / similar.
-- After merge, the scheduler picks up the pipeline based on its declared cron and starts firing runs against prod (§6.7).
+- After merge, the scheduler picks up the pipeline based on its declared cron and starts firing runs against prod (§6.8).
 - The hosted product adds a push-button deploy variant (via `POST /deploys` with `mode: "direct"`) that records the deploy in the audit log and supports plan-approval workflows. PR-based deploy remains supported in hosted.
 - Equivalent REST:
   - `POST /deploys` with body `{"pipeline": "<name>", "dry_run": bool, "mode": "pr"|"direct"}` — covers `carve deploy <pipeline>`, `--dry-run`, and (hosted) push-button mode
@@ -359,7 +428,7 @@ Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt ha
   - `deploy_show(deploy_id)`
   - `pipeline_deploys_list(pipeline)`
 
-### 6.7 Scheduling
+### 6.8 Scheduling
 
 Once a pipeline is deployed and merged, its cron schedule (declared in `pipelines/<name>.toml`) takes effect. The scheduler fires runs against the prod target on the configured cadence. Workers claim those runs from the Postgres queue using the optimistic-claim semantics from decision 5.7.
 
@@ -367,7 +436,7 @@ Once a pipeline is deployed and merged, its cron schedule (declared in `pipeline
 - The scheduler runs as part of `carve serve`; it does not require a separate process.
 - Schedules are read from the database on startup and refreshed when `pipelines/*.toml` files change.
 - Pause/resume controls let users disable a schedule without removing the cron expression; resuming picks up at the next normal fire time, not a backfill.
-- Manual triggers via `carve run` (§6.5) enqueue alongside scheduled runs and use the same worker pool.
+- Manual triggers via `carve run` (§6.6) enqueue alongside scheduled runs and use the same worker pool.
 - **Backfills are explicitly not supported in v0.1.** Per design decision 5.6 (narrow runtime), users who need to backfill historical periods do it manually via `carve run --target prod --param start_date=...` for each period.
 
 CLI commands and flags:
@@ -395,9 +464,9 @@ Equivalent MCP:
 
 **Acceptance:** the scheduler fires runs within 30 seconds of their cron time; pause/resume takes effect within 30 seconds; schedule state survives a `carve serve` restart.
 
-### 6.8 Pipeline composition (steps + multi-step)
+### 6.9 Pipeline composition (steps + multi-step)
 
-A pipeline is declared in `pipelines/<name>.toml`. Each pipeline has a `[schedule]` block (§6.7) and an ordered set of `[[steps]]` tables that form a DAG.
+A pipeline is declared in `pipelines/<name>.toml`. Each pipeline has a `[schedule]` block (§6.8) and an ordered set of `[[steps]]` tables that form a DAG.
 
 **Step types in v0.1**: `dlt`, `dbt`, `sql`.
 
@@ -433,11 +502,11 @@ Equivalent MCP:
 - `pipeline_validate(pipeline)`
 - `pipeline_diff(pipeline, against_build_id)`
 
-Authoring of pipeline TOML files is via plan/build (§6.3, §6.4) — not direct CLI editing, per design decision 5.3 (AI-first authoring). Hand-edits are supported but not the primary path.
+Authoring of pipeline TOML files is via plan/build (§6.3, §6.5) — not direct CLI editing, per design decision 5.3 (AI-first authoring). Hand-edits are supported but not the primary path.
 
 **Acceptance:** a 3-step pipeline (`dlt` → `dbt` → `sql`) executes end-to-end in correct dependency order; parallel steps execute concurrently when the graph allows; cross-step output references resolve via Jinja templating; cycle detection rejects invalid DAGs at `validate` time.
 
-### 6.9 Agent configuration
+### 6.10 Agent configuration
 
 Each agent has a TOML definition with system prompt, model selection, allowed skills, and guardrails. v0.1 ships three agents: orchestration, extract-load (dlt-specialist), runtime. v0.2 adds the dbt agent.
 
@@ -482,7 +551,7 @@ Creation of new agents is also reachable via plan/build (`carve plan "create a n
 
 **Acceptance:** agent config changes take effect on the next invocation within the same `carve serve` process; `agents test` returns a transcript without writing to the state store; guardrail violations are caught before any skill is invoked; built-in agents cannot be removed.
 
-### 6.10 Skills
+### 6.11 Skills
 
 Skills are how agents do things. Three sources of skill in v0.1:
 
@@ -530,9 +599,9 @@ Equivalent MCP:
 
 **Acceptance:** built-in skills are discoverable via `skills list`; MCP-imported skills appear in the same list with `mcp:` prefix; `skills test` invokes the skill in isolation and returns the result without writing to the state store; adding an MCP server makes its tools immediately available to authorized agents without restart.
 
-### 6.11 Interfaces
+### 6.12 Interfaces
 
-Per design decision 5.10, the CLI, REST API, MCP server, and local Web UI are all clients of the same backend. This subsection specifies how each interface operates as a system; the specific commands they expose are covered in §6.1–6.10.
+Per design decision 5.10, the CLI, REST API, MCP server, and local Web UI are all clients of the same backend. This subsection specifies how each interface operates as a system; the specific commands they expose are covered in §6.1–6.11.
 
 **CLI (`carve`).** Built on `typer`. Output formats: `--output table` (default), `--output json` (piping default when stdout isn't a TTY), `--output yaml`. Global flags: `--config-dir`, `--verbose`, `--quiet`, `--no-color`. Stable exit codes for CI: `0` success, `1` user error, `2` runtime error, `3` config error, `4` drift detected. The CLI talks to `carve serve` over HTTP; a subset of commands (`carve plan`, `carve build`) can run standalone for one-shot use. Server lifecycle: `carve serve`, `carve serve --workers N`, `carve serve --port`, `carve serve --host`, `carve worker`, `carve worker --workers N`, `carve docs serve`.
 
@@ -546,7 +615,7 @@ CLI: `carve mcp-serve`, `carve mcp-serve --transport ws --port 8766`. The MCP se
 
 **Acceptance:** every CLI command has a corresponding REST endpoint and MCP tool; the OpenAPI spec at `/api/openapi.json` is complete and accurate; CLI exit codes are stable across minor releases.
 
-### 6.12 Observability
+### 6.13 Observability
 
 Every run, every step, every agent invocation, and every skill call is recorded in the state store and surfaced through the same API/MCP/CLI/UI clients.
 
