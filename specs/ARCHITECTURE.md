@@ -406,7 +406,13 @@ The single most important property of the agent layer: specialists don't gather 
 ```python
 {
   "goal_slice": "Generate a dlt pipeline that ingests the Stripe charges API into raw_stripe",
-  "conventions": <relevant subset of carve/conventions.md>,
+  "memory": {
+    "conventions": <relevant subset of carve/conventions.md>,    # inferred from code
+    "standards":   <relevant subset of carve/standards.md>,      # user-authored team rules
+    "decisions":   <relevant entries from carve/decisions.md>,   # included for `ask`; sparse for other verbs
+    "pipeline_notes": <pipelines/<name>.md, if the goal touches a specific pipeline>,
+    "el_notes":       <el/<name>/NOTES.md, if the goal touches a specific EL artifact>,
+  },
   "destination": {"name": "snowflake", "schema": "raw_stripe"},
   "existing_sources": [<dbt source declarations this pipeline should match>],
   "dlt_library_match": "stripe",          # if a curated source applies
@@ -415,6 +421,16 @@ The single most important property of the agent layer: specialists don't gather 
 ```
 
 Specialists never need to run discovery skills themselves. This keeps their token budgets small and predictable.
+
+**Memory file selection.** The orchestrator picks which memory files to include based on the goal:
+
+- Every invocation includes `conventions.md` and `standards.md`
+- Goals touching a specific pipeline include `pipelines/<name>.md` if it exists
+- Goals touching a specific EL artifact include `el/<name>/NOTES.md` if it exists
+- Investigative goals via `ask` always include `decisions.md` so "why" questions can be answered with citations
+- Standards override conventions where they conflict; if `standards.md` says "always merge on PK" but `conventions.md` infers "we usually replace," the specialist follows standards
+
+Memory files are mtime-cached in the same way as the dbt manifest (§6.3). Writes to memory files go through the plan/build flow — agents propose, users review, deploy lands. No autonomous memory writes; see PRD §6.3 for the policy rationale.
 
 ### 5.5 Plans as structured outputs
 

@@ -45,7 +45,7 @@ Intent → Plan → Build → Run → Deploy → Schedule → Observe
 
 Steps 1–3 are LLM-mediated (the agent does the reasoning); steps 4–7 are deterministic mechanics. The loop applies whether the goal is a new pipeline, a modification to an existing dbt model, a config change, or a guardrail adjustment. The loop applies whether driven by a human at the CLI, an agent via MCP, or a CI workflow via REST.
 
-**A sibling read-only verb outside the loop.** `carve ask` (§6.4) handles investigative queries — "Where do we calculate net revenue?", "Which models depend on `stg_orders`?", etc. It uses the same orchestration agent and skills as `plan`, but produces an answer rather than a plan, and is strictly side-effect-free. Asks can run concurrently with anything else.
+**A sibling read-only verb outside the loop.** `carve ask` (§6.5) handles investigative queries — "Where do we calculate net revenue?", "Which models depend on `stg_orders`?", etc. It uses the same orchestration agent and skills as `plan`, but produces an answer rather than a plan, and is strictly side-effect-free. Asks can run concurrently with anything else.
 
 ## 4. Scope
 
@@ -116,7 +116,7 @@ The implication: when an edge case in ingest or transform surfaces, the fix live
 
 Brownfield is the dominant case for both dlt and dbt. Most teams adopting Carve already have either a working dbt project, a working dlt setup, or both — their conventions are load-bearing for the team, and Carve must integrate with them rather than overwrite or compete.
 
-Specifically: Carve never modifies the user's `dbt_project.yml`, `profiles.yml`, existing dlt source code, `.dlt/secrets.toml`, or `.dlt/config.toml` without explicit consent, and never reorganizes the user's `models/` directory. Carve learns from the existing projects — naming, layering, source patterns, destination conventions, write dispositions — and reflects what it learns in a generated `carve/conventions.md` that the agents read on every invocation.
+Specifically: Carve never modifies the user's `dbt_project.yml`, `profiles.yml`, existing dlt source code, `.dlt/secrets.toml`, or `.dlt/config.toml` without explicit consent, and never reorganizes the user's `models/` directory. Carve learns from the existing projects — naming, layering, source patterns, destination conventions, write dispositions — and reflects what it learns in a generated `carve/conventions.md` that the agents read on every invocation. The user adds team standards and decision history in companion `carve/standards.md` and `carve/decisions.md` files (see §6.3); agents read those too as durable project memory.
 
 The user can run Carve in three configurations:
 
@@ -240,7 +240,7 @@ The OSS/hosted split is enforced by the two-repo structure: the OSS repo cannot 
 
 ## 6. Functional requirements
 
-Aligned to the core loop from §3: init → backend integration → plan → ask (sibling, read-only) → build → run → deploy → schedule → composition → agents → skills → interfaces → observability.
+Aligned to the core loop from §3: init → backend integration → memory → plan → ask (sibling, read-only) → build → run → deploy → schedule → composition → agents → skills → interfaces → observability.
 
 **API and MCP parity is mandatory, not optional.** Every CLI command and every CLI flag has a corresponding REST endpoint (or request-body field) and a corresponding MCP tool (or tool argument). This is the operational expression of design decision 5.10 (headless by default): an external agent driving Carve via MCP, or a CI workflow driving Carve via REST, must be able to do everything a human can do at the CLI. The acceptance criteria for every subsection below implicitly include "every CLI behavior is also reachable via REST and MCP." When a new flag is added to the CLI, the corresponding REST/MCP surface must ship in the same release.
 
@@ -331,7 +331,65 @@ Acceptance:
 - Same-repo, local-path, and remote-URL modes are supported symmetrically for both dlt and dbt from v0.1
 - Mixed-topology installs (e.g., dbt same-repo + dlt remote-URL) work without restriction
 
-### 6.3 Plan generation
+### 6.3 Project memory
+
+A place where the data engineer says "we always do X" and has it stick across agent invocations — separate from "what we currently do" (inferred conventions, §6.2) and "what the agent should know how to do" (agent system prompts, §6.11). Lives in git, versioned with the project, read by agents as part of pre-scoped context on every invocation.
+
+**File types:**
+
+- **`carve/conventions.md`** — agent-generated, refreshed by convention inference (§6.2). Captures patterns observed in your code (model naming, layering, write dispositions). User-editable to correct misdetections, but the canonical source is the code.
+- **`carve/standards.md`** — user-authored. Team rules that aren't inferable from code:
+  - "All raw schemas use snake_case table names"
+  - "Stripe data must always be loaded incrementally, not full-refresh"
+  - "Use merge dispositions on PK for any pipeline pulling from a SaaS API"
+  - "All marts must have a `unique` test on the grain column"
+
+  Treated as authoritative by agents — overrides conventions where they conflict.
+- **`carve/decisions.md`** — append-only, dated, with rationale and reviewers. Example: *"2026-04-12: Decided to keep Stripe data 18 months in staging, not 24, because storage costs. Reviewed by alice@, bob@."* Read by agents when relevant; the first-class place to answer "why did we do X?" questions via `carve ask` (§6.5).
+- **Per-pipeline sidecars** — optional `pipelines/<name>.md` next to `pipelines/<name>.toml`. Pipeline-specific notes: "Stripe API has a 1000 req/min rate limit, we throttle to 500"; "depends on the daily Salesforce refresh, schedule after 6am UTC".
+- **Per-EL sidecars** — optional `el/<name>/NOTES.md`. Source-specific quirks: "Stripe's `charges` endpoint occasionally returns 502; the dlt source has retry logic."
+
+**Context bundling.** The orchestrator selects which memory files to include in each specialist's pre-scoped context based on the goal:
+
+- Every invocation: `conventions.md`, `standards.md`
+- Goals touching a specific pipeline: that pipeline's sidecar
+- Goals touching a specific EL artifact: that EL's `NOTES.md`
+- Investigative goals via `ask`: `decisions.md` is included so "why" questions can be answered with citations
+
+**Write policy.** Agents can **propose** memory additions via plan/build alongside code changes (`carve plan "we've decided to keep Stripe data 18 months; record that decision"`). The proposal lands as a file diff in the plan; the build writes it; deploy lands it as a PR. **Memory writes never bypass user review.** Agents have no autonomous memory writes — this is deliberate, because LLMs hallucinate, and self-updating memory would calcify hallucinations into the team's recorded history.
+
+**Scaffolding.** `carve init` creates empty `standards.md` and `decisions.md` with comment-only templates explaining what goes in each. `conventions.md` is populated by convention inference on first run.
+
+CLI commands and flags:
+
+- `carve memory show` — list memory files with a summary of each
+- `carve memory edit <file>` — open in `$EDITOR`
+- `carve memory append-decision "<text>"` — convenience for the common "add a dated decision" workflow (auto-prefixes today's date; opens editor for the body)
+- `carve memory show --pipeline <name>` — show the pipeline-scoped memory bundle (conventions + standards + this pipeline's sidecar)
+
+Equivalent REST:
+
+- `GET /memory` — list memory files
+- `GET /memory/{file}` — show contents
+- `PUT /memory/{file}` — replace contents (subject to the write policy: typically used by the build step, not user-direct)
+- `POST /memory/decisions` (body: `{"text": "..."}`) — append a dated decision
+
+Equivalent MCP:
+
+- `memory_list()`
+- `memory_show(file)`
+- `memory_update(file, content)`
+- `memory_append_decision(text)`
+
+**Acceptance:**
+
+- `carve init` scaffolds the three core files (`conventions.md` populated, `standards.md` and `decisions.md` empty with templated comments)
+- Agents include the appropriate memory files in pre-scoped context on every invocation
+- `carve ask "why did we do X?"` surfaces relevant entries from `decisions.md` with citations
+- Memory additions via plan/build land in the same PR as the code change that motivated them
+- No memory file is written outside the plan/build review gate
+
+### 6.4 Plan generation
 
 - `carve plan "<goal>"` produces a saved plan with task graph, file diffs, impact analysis, and cost estimate. Plans are durable artifacts persisted to `.carve/plans/<plan_id>.json` and the state store.
 - Plans include a config hash computed at generation time, used to detect drift before `build` runs.
@@ -343,7 +401,7 @@ Acceptance:
 
 **Acceptance:** `carve plan` for a typical modification goal completes in under 15 seconds excluding LLM latency.
 
-### 6.4 Ask — investigative queries
+### 6.5 Ask — investigative queries
 
 `carve ask` is a read-only sibling to `plan`. It uses the same orchestration agent and skills, but its output is an answer — not a plan with file diffs. Used for investigative questions like "Where do we calculate net revenue and what is the formula?", "Which models depend on `stg_orders`?", "What's the freshness of our Stripe data?", or "Show me every pipeline that writes to the `analytics` schema."
 
@@ -369,7 +427,7 @@ Equivalent MCP:
 
 **Acceptance:** `carve ask` returns an answer with cited entities within 15 seconds (excluding LLM latency) for a typical investigative question; no write skills are invoked during an Ask; asks can run concurrently with each other and with plans/builds/runs/deploys.
 
-### 6.5 Build
+### 6.6 Build
 
 - `carve build <plan_id>` materializes a plan's task graph into files on disk: dlt sources/resources/pipeline configs, dbt models (when the dbt agent ships in v0.2), `pipelines/<name>.toml` entries.
 - Build checks the plan's config hash against current config; refuses to run against drifted config and prompts for re-plan.
@@ -382,7 +440,7 @@ Equivalent MCP:
 
 **Acceptance:** typical build (one dlt pipeline + one `pipelines/*.toml`) completes in under 60 seconds; generated files pass `dlt pipeline check` / `dbt parse` 99% of the time.
 
-### 6.6 Run
+### 6.7 Run
 
 - `carve run <pipeline>` executes a pipeline on demand against the default target (typically dev).
 - `carve run <pipeline> --target <name>` runs against an explicit target.
@@ -409,7 +467,7 @@ Equivalent MCP:
 
 **Acceptance:** run startup overhead under 10 seconds; failed runs retry-from-step via CLI / API / MCP / UI.
 
-### 6.7 Deploy
+### 6.8 Deploy
 
 Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt handles destination schema management; see decision 5.1). Deploy is a git-mediated operation.
 
@@ -417,7 +475,7 @@ Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt ha
 - For separate-repo mode (§6.2), deploy may produce two linked PRs (Carve repo for EL/pipeline changes; dbt repo for `sources.yml` changes), coordinated via the GitHub MCP server.
 - `carve deploy --dry-run <pipeline>` previews the PR without opening it.
 - Carve does not modify production state directly; the PR merge triggers whatever CI the user has wired up. Carve does not own CI integration in v0.1 — users wire it via their existing GitHub Actions / GitLab CI / similar.
-- After merge, the scheduler picks up the pipeline based on its declared cron and starts firing runs against prod (§6.8).
+- After merge, the scheduler picks up the pipeline based on its declared cron and starts firing runs against prod (§6.9).
 - The hosted product adds a push-button deploy variant (via `POST /deploys` with `mode: "direct"`) that records the deploy in the audit log and supports plan-approval workflows. PR-based deploy remains supported in hosted.
 - Equivalent REST:
   - `POST /deploys` with body `{"pipeline": "<name>", "dry_run": bool, "mode": "pr"|"direct"}` — covers `carve deploy <pipeline>`, `--dry-run`, and (hosted) push-button mode
@@ -428,7 +486,7 @@ Deploy promotes a built pipeline from dev to prod. There is no DDL phase (dlt ha
   - `deploy_show(deploy_id)`
   - `pipeline_deploys_list(pipeline)`
 
-### 6.8 Scheduling
+### 6.9 Scheduling
 
 Once a pipeline is deployed and merged, its cron schedule (declared in `pipelines/<name>.toml`) takes effect. The scheduler fires runs against the prod target on the configured cadence. Workers claim those runs from the Postgres queue using the optimistic-claim semantics from decision 5.7.
 
@@ -436,7 +494,7 @@ Once a pipeline is deployed and merged, its cron schedule (declared in `pipeline
 - The scheduler runs as part of `carve serve`; it does not require a separate process.
 - Schedules are read from the database on startup and refreshed when `pipelines/*.toml` files change.
 - Pause/resume controls let users disable a schedule without removing the cron expression; resuming picks up at the next normal fire time, not a backfill.
-- Manual triggers via `carve run` (§6.6) enqueue alongside scheduled runs and use the same worker pool.
+- Manual triggers via `carve run` (§6.7) enqueue alongside scheduled runs and use the same worker pool.
 - **Backfills are explicitly not supported in v0.1.** Per design decision 5.6 (narrow runtime), users who need to backfill historical periods do it manually via `carve run --target prod --param start_date=...` for each period.
 
 CLI commands and flags:
@@ -464,9 +522,9 @@ Equivalent MCP:
 
 **Acceptance:** the scheduler fires runs within 30 seconds of their cron time; pause/resume takes effect within 30 seconds; schedule state survives a `carve serve` restart.
 
-### 6.9 Pipeline composition (steps + multi-step)
+### 6.10 Pipeline composition (steps + multi-step)
 
-A pipeline is declared in `pipelines/<name>.toml`. Each pipeline has a `[schedule]` block (§6.8) and an ordered set of `[[steps]]` tables that form a DAG.
+A pipeline is declared in `pipelines/<name>.toml`. Each pipeline has a `[schedule]` block (§6.9) and an ordered set of `[[steps]]` tables that form a DAG.
 
 **Step types in v0.1**: `dlt`, `dbt`, `sql`.
 
@@ -502,11 +560,11 @@ Equivalent MCP:
 - `pipeline_validate(pipeline)`
 - `pipeline_diff(pipeline, against_build_id)`
 
-Authoring of pipeline TOML files is via plan/build (§6.3, §6.5) — not direct CLI editing, per design decision 5.3 (AI-first authoring). Hand-edits are supported but not the primary path.
+Authoring of pipeline TOML files is via plan/build (§6.4, §6.6) — not direct CLI editing, per design decision 5.3 (AI-first authoring). Hand-edits are supported but not the primary path.
 
 **Acceptance:** a 3-step pipeline (`dlt` → `dbt` → `sql`) executes end-to-end in correct dependency order; parallel steps execute concurrently when the graph allows; cross-step output references resolve via Jinja templating; cycle detection rejects invalid DAGs at `validate` time.
 
-### 6.10 Agent configuration
+### 6.11 Agent configuration
 
 Each agent has a TOML definition with system prompt, model selection, allowed skills, and guardrails. v0.1 ships three agents: orchestration, extract-load (dlt-specialist), runtime. v0.2 adds the dbt agent.
 
@@ -551,7 +609,7 @@ Creation of new agents is also reachable via plan/build (`carve plan "create a n
 
 **Acceptance:** agent config changes take effect on the next invocation within the same `carve serve` process; `agents test` returns a transcript without writing to the state store; guardrail violations are caught before any skill is invoked; built-in agents cannot be removed.
 
-### 6.11 Skills
+### 6.12 Skills
 
 Skills are how agents do things. Three sources of skill in v0.1:
 
@@ -599,9 +657,9 @@ Equivalent MCP:
 
 **Acceptance:** built-in skills are discoverable via `skills list`; MCP-imported skills appear in the same list with `mcp:` prefix; `skills test` invokes the skill in isolation and returns the result without writing to the state store; adding an MCP server makes its tools immediately available to authorized agents without restart.
 
-### 6.12 Interfaces
+### 6.13 Interfaces
 
-Per design decision 5.10, the CLI, REST API, MCP server, and local Web UI are all clients of the same backend. This subsection specifies how each interface operates as a system; the specific commands they expose are covered in §6.1–6.11.
+Per design decision 5.10, the CLI, REST API, MCP server, and local Web UI are all clients of the same backend. This subsection specifies how each interface operates as a system; the specific commands they expose are covered in §6.1–6.12.
 
 **CLI (`carve`).** Built on `typer`. Output formats: `--output table` (default), `--output json` (piping default when stdout isn't a TTY), `--output yaml`. Global flags: `--config-dir`, `--verbose`, `--quiet`, `--no-color`. Stable exit codes for CI: `0` success, `1` user error, `2` runtime error, `3` config error, `4` drift detected. The CLI talks to `carve serve` over HTTP; a subset of commands (`carve plan`, `carve build`) can run standalone for one-shot use. Server lifecycle: `carve serve`, `carve serve --workers N`, `carve serve --port`, `carve serve --host`, `carve worker`, `carve worker --workers N`, `carve docs serve`.
 
@@ -615,7 +673,7 @@ CLI: `carve mcp-serve`, `carve mcp-serve --transport ws --port 8766`. The MCP se
 
 **Acceptance:** every CLI command has a corresponding REST endpoint and MCP tool; the OpenAPI spec at `/api/openapi.json` is complete and accurate; CLI exit codes are stable across minor releases.
 
-### 6.13 Observability
+### 6.14 Observability
 
 Every run, every step, every agent invocation, and every skill call is recorded in the state store and surfaced through the same API/MCP/CLI/UI clients.
 
