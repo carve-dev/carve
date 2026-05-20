@@ -124,56 +124,8 @@ def postgres_state_store_url(
 
 
 @pytest.fixture
-def cli_env(
-    postgres_state_store_url: str, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, str]:
-    """Env dict for ``CliRunner.invoke``.
-
-    Routes the in-process state-store init at the per-test Postgres
-    database created by ``postgres_state_store_url``. Tests that exercise
-    ``carve init`` or any other CLI flow that runs ``initialize_database``
-    pass this fixture as ``env=`` so the spawned command resolves its
-    connection string against the test container rather than the real
-    (possibly absent) bundled-compose Postgres.
-
-    Production ``resolve_state_store_url`` does not yet read
-    ``DATABASE_URL`` natively (it honors ``state_store.url`` from
-    ``runtime.toml``, but ``carve init`` runs before that file exists and
-    falls back to the bundled-compose default). To bridge that gap for
-    tests, this fixture monkeypatches ``resolve_state_store_url`` in the
-    one module that calls it (``carve.core.state.database``) so the
-    resolved URL falls back to the per-test database URL whenever it
-    would otherwise be the module default.
-
-    The patch is scoped to the test that consumes ``cli_env``; production
-    code is unchanged. Once production ``resolve_state_store_url`` reads
-    ``DATABASE_URL`` natively (tracked as a v0.1-02 followup), this
-    fixture collapses to ``return {"DATABASE_URL": postgres_state_store_url}``.
-    """
-    from carve.core.config.state_store import (
-        DEFAULT_STATE_STORE_URL,
-    )
-    from carve.core.config.state_store import (
-        resolve_state_store_url as _real_resolve,
-    )
-    from carve.core.state import database as database_mod
-
-    # Close over the per-test URL rather than reading os.environ at call
-    # time. CliRunner.invoke env={...} only sets DATABASE_URL inside the
-    # invoke; any post-invoke direct call to resolve_state_store_url
-    # would otherwise pick up the developer's shell DATABASE_URL.
-    per_test_url = postgres_state_store_url
-
-    def _resolve_with_test_fallback(config: Any) -> str:
-        resolved = _real_resolve(config)
-        if resolved == DEFAULT_STATE_STORE_URL:
-            return per_test_url
-        return resolved
-
-    monkeypatch.setattr(
-        database_mod, "resolve_state_store_url", _resolve_with_test_fallback
-    )
-
+def cli_env(postgres_state_store_url: str) -> dict[str, str]:
+    """Env dict for CliRunner.invoke; routes the spawned process at the per-test Postgres."""
     return {"DATABASE_URL": postgres_state_store_url}
 
 

@@ -4,9 +4,9 @@
 
 ## Status
 
-- **Status:** Drafting
+- **Status:** Landed (2026-05-20)
 - **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) (modifies the resolver added there)
-- **Blocks:** nothing — but is a precondition for cleanly removing the `cli_env` monkeypatch in [`v0.1-01-followup-m1-test-sweep`](./01-followup-m1-test-sweep.md).
+- **Blocks:** nothing — but is a precondition for cleanly removing the `cli_env` monkeypatch in [`v0.1-01-followup-m1-test-sweep`](./01-followup-m1-test-sweep.md). With this landed, the parent spec's Caveat 1 is resolved (see callout in §Acceptance).
 
 ## Goal
 
@@ -29,13 +29,16 @@ This spec is **production code + tests**. No new user-facing CLI surface; no new
 
 ## Files this spec produces
 
+> **Updated during implementation (2026-05-20):** Added `tests/core/state/test_database.py` to the list. The engineer added one new test (`test_database_url_env_with_non_postgres_dialect_is_rejected`) there to close the test gap explicitly invited by §Open questions item 3 ("worth one test case that confirms `DATABASE_URL=sqlite:///bad.db` produces the same `StateStoreBackendError`"). Pure additive; no other changes to that file.
+
 ```
 src/carve/core/config/state_store.py            # MODIFY — resolve_state_store_url reads DATABASE_URL
 tests/core/config/test_state_store.py           # NEW — three unit tests for precedence
 tests/conftest.py                               # MODIFY — collapse cli_env's monkeypatch to a no-op
+tests/core/state/test_database.py               # MODIFY — add env-sourced dialect-rejection test (per §Open questions #3)
 ```
 
-That's it. Three files.
+Four files.
 
 ## Behavior
 
@@ -138,3 +141,4 @@ Verify the full pytest sweep stays green after the collapse: `uv run pytest test
 - **Should we also accept `CARVE_DATABASE_URL` as a synonym?** *Implementation default.* No. `DATABASE_URL` is the cross-tool standard. Adding a Carve-specific name fragments the convention without solving any problem.
 - **Should `DATABASE_URL` empty-string (`""`) be treated as unset?** *Implementation default.* Yes. Treat empty string the same as missing — `os.environ.get("DATABASE_URL")` returning `""` should fall through to the legacy/default branches. One extra `if env_url:` truthiness check covers this; spell it out as `if env_url:` (not `if env_url is not None:`) in the code.
 - **Should the rejection check on non-Postgres URLs (`StateStoreBackendError`) also run against `DATABASE_URL` values?** *Implementation default.* Yes, transparently. The rejection lives in `create_engine_from_config` / `initialize_database` and runs on whatever URL `resolve_state_store_url` returns, so this comes for free — no extra code, but worth one test case that confirms `DATABASE_URL=sqlite:///bad.db` produces the same `StateStoreBackendError` as the equivalent `state_store.url` setting.
+  > **Resolved during implementation (2026-05-20):** Test landed as `test_database_url_env_with_non_postgres_dialect_is_rejected` in `tests/core/state/test_database.py`. Sets `DATABASE_URL=sqlite:///bad.db`, builds a Config with default `state_store.url`, asserts `create_engine_from_config(config)` raises `StateStoreBackendError` with `match=r"postgresql\+psycopg://"` — same shape as the existing `test_engine_factory_rejects_non_postgres_url` parameterized test.

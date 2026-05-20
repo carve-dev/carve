@@ -14,6 +14,7 @@ the loader still validates it, but the runtime ignores it in favor of
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,18 +57,21 @@ class StateStoreConfig(BaseModel):
 def resolve_state_store_url(config: Config) -> str:
     """Resolve the effective state-store URL from a loaded config.
 
-    Precedence:
-    1. ``state_store.url`` from ``runtime.toml`` (the v0.1 idiom)
-    2. ``server.state_store`` from ``server.toml`` (the legacy M1 idiom)
-    3. The module default (``DEFAULT_STATE_STORE_URL``).
-
-    The legacy fallback exists so we can keep the M1 test fixtures and
-    in-tree projects working without rewriting every ``ServerConfig(...)``
-    construction. Once a project upgrades via ``carve migrate-state`` and
-    rewrites its ``runtime.toml``, the legacy key is ignored.
+    Precedence (highest to lowest):
+    1. ``state_store.url`` from ``runtime.toml`` — an explicit, non-default
+       value wins over any env var.
+    2. ``DATABASE_URL`` env var — the canonical Postgres env var. Honored
+       even when no ``runtime.toml`` has been written yet (the
+       ``carve init`` bootstrap case).
+    3. ``server.state_store`` from the legacy ``server.toml`` — kept for
+       M1 in-tree projects that haven't migrated yet. Removed in v0.2.
+    4. The module default (``DEFAULT_STATE_STORE_URL``).
     """
     if config.state_store.url != DEFAULT_STATE_STORE_URL:
         return config.state_store.url
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url:
+        return env_url
     if config.server.state_store and config.server.state_store != DEFAULT_STATE_STORE_URL:
         return config.server.state_store
     return config.state_store.url

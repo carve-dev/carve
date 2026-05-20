@@ -207,6 +207,29 @@ def test_engine_factory_rejects_non_postgres_url(bad_url: str) -> None:
         create_engine_from_config(config)
 
 
+def test_database_url_env_with_non_postgres_dialect_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`DATABASE_URL=sqlite:///...` must raise the same `StateStoreBackendError`
+    as setting the equivalent value in `state_store.url`.
+
+    v0.1-01c added `DATABASE_URL` env to the resolver's precedence chain.
+    The dialect rejection in `create_engine_from_config` keys on the
+    resolved URL regardless of source, so an env-supplied non-Postgres
+    URL must trip the same guard — confirming the open-question
+    resolution in spec v0.1-01c §Open questions #3.
+    """
+    monkeypatch.setenv("DATABASE_URL", _SQLITE_BAD_URL)
+    config = Config(
+        project=ProjectConfig(name="env-reject-test"),
+        models=ModelsConfig(anthropic_api_key="sk-test"),
+        server=ServerConfig(),
+        state_store=StateStoreConfig(),
+    )
+    with pytest.raises(StateStoreBackendError, match=r"postgresql\+psycopg://"):
+        create_engine_from_config(config)
+
+
 def test_initialize_database_rejects_non_postgres_engine(
     postgres_state_store_url: str,
 ) -> None:
