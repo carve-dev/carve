@@ -1,0 +1,64 @@
+"""State-store configuration schema.
+
+The state store is a Postgres database; the SQLite default that M1 shipped
+with is gone. This module defines the pydantic shape the config loader
+parses, and provides a single helper that picks the *effective* URL from
+the merged config — honoring the env-var-friendly ``${DATABASE_URL}``
+form used by the docker-compose bundle in v0.1-02.
+
+The legacy ``server.state_store`` key remains as a write-only alias —
+the loader still validates it, but the runtime ignores it in favor of
+``state_store.url`` once a project has been upgraded. See
+`docs/upgrade-from-walking-skeleton.md` for the migration story.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from carve.core.config.schema import Config
+
+# The docker-compose bundle in v0.1-02 ships exactly this connection
+# string; the OSS default matches so a fresh install + `carve serve`
+# Just Works. The hosted product overrides via env var.
+DEFAULT_STATE_STORE_URL = "postgresql+psycopg://carve:carve@localhost:5432/carve"
+
+
+class StateStoreConfig(BaseModel):
+    """``[state_store]`` section of ``runtime.toml`` / ``server.toml``.
+
+    Pool sizing defaults (10 / 20) suit the v0.1 default of a single
+    worker; the v0.1-07 runtime spec revisits this when concrete worker
+    counts land. ``${DATABASE_URL}`` interpolation is applied by the
+    loader before this model sees the value, so by validation time
+    ``url`` is a concrete connection string.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = DEFAULT_STATE_STORE_URL
+    pool_size: int = Field(default=10, ge=1, le=100)
+    max_overflow: int = Field(default=20, ge=0, le=200)
+
+
+def resolve_state_store_url(config: Config) -> str:
+    """Resolve the effective state-store URL from a loaded config.
+
+    Precedence:
+    1. ``state_store.url`` from ``runtime.toml`` (the v0.1 idiom)
+    2. ``server.state_store`` from ``server.toml`` (the legacy M1 idiom)
+    3. The module default (``DEFAULT_STATE_STORE_URL``).
+
+    The legacy fallback exists so we can keep the M1 test fixtures and
+    in-tree projects working without rewriting every ``ServerConfig(...)``
+    construction. Once a project upgrades via ``carve migrate-state`` and
+    rewrites its ``runtime.toml``, the legacy key is ignored.
+    """
+    if config.state_store.url != DEFAULT_STATE_STORE_URL:
+        return config.state_store.url
+    if config.server.state_store and config.server.state_store != DEFAULT_STATE_STORE_URL:
+        return config.server.state_store
+    return config.state_store.url

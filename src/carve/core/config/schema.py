@@ -15,6 +15,8 @@ from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreConfig
+
 
 class ProjectConfig(BaseModel):
     """`[project]` section of `carve.toml`."""
@@ -142,13 +144,21 @@ class RunnerConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    """Embedded HTTP server configuration."""
+    """Embedded HTTP server configuration.
+
+    The ``state_store`` field is kept as a string alias for backward
+    compatibility with M1 ``server.toml`` files (and tests that pre-date
+    v0.1-01). New projects set ``state_store.url`` in ``runtime.toml``
+    instead; the loader copies that value over here so the runtime
+    engine factory has a single place to look. Defaults to the v0.1
+    Postgres URL.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     host: str = "127.0.0.1"
     port: int = 8787
-    state_store: str = "sqlite:///.carve/state.db"
+    state_store: str = DEFAULT_STATE_STORE_URL
     auth_mode: str = "single_user"
 
 
@@ -167,4 +177,5 @@ class Config(BaseModel):
     models: ModelsConfig
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    state_store: StateStoreConfig = Field(default_factory=StateStoreConfig)
     config_hash: str = ""

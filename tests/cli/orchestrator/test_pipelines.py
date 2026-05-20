@@ -26,11 +26,11 @@ from carve.core.state.database import (
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> Repository:
+def repository(tmp_path: Path, postgres_state_store_url: str) -> Repository:
     config = Config(
         project=ProjectConfig(name="pipes-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
-        server=ServerConfig(state_store="sqlite:///.carve/state.db"),
+        server=ServerConfig(state_store=postgres_state_store_url),
     )
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)

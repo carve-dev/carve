@@ -24,11 +24,14 @@ from carve.core.state.models import Build, Pipeline, Plan
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Repository:
+def repo(tmp_path: Path, postgres_state_store_url: str) -> Repository:
+    from carve.core.config.state_store import StateStoreConfig
+
     config = Config(
         project=ProjectConfig(name="repo-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
-        server=ServerConfig(state_store="sqlite:///.carve/state.db"),
+        server=ServerConfig(),
+        state_store=StateStoreConfig(url=postgres_state_store_url),
     )
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)
@@ -189,7 +192,7 @@ def _make_plan(plan_id: str = "plan-001", **overrides: object) -> Plan:
         "goal": "build the warehouse",
         "config_hash": "abc123",
         "carve_version": "0.0.1",
-        "task_graph_json": '{"nodes": []}',
+        "task_graph_json": {"nodes": []},
         "file_path": f".carve/plans/{plan_id}.json",
     }
     defaults.update(overrides)
@@ -203,7 +206,7 @@ def test_save_and_get_plan_round_trip(repo: Repository) -> None:
     assert fetched is not None
     assert fetched.id == "plan-001"
     assert fetched.goal == "build the warehouse"
-    assert fetched.task_graph_json == '{"nodes": []}'
+    assert fetched.task_graph_json == {"nodes": []}
 
 
 def test_get_plan_returns_none_for_unknown(repo: Repository) -> None:
@@ -479,8 +482,7 @@ def test_create_build_returns_row_with_prefixed_id(repo: Repository) -> None:
     assert build.pipeline_name == "ingest"
     assert build.plan_id == "plan-1"
     assert build.target == "dev"
-    assert '"files"' in build.manifest_json
-    assert "el/ingest/main.py" in build.manifest_json
+    assert build.manifest_json == {"files": ["el/ingest/main.py"]}
 
 
 def test_create_build_default_manifest_is_empty_files_list(repo: Repository) -> None:
@@ -491,7 +493,7 @@ def test_create_build_default_manifest_is_empty_files_list(repo: Repository) -> 
         pipeline_dir="el/ingest",
     )
     build = repo.create_build(pipeline_name="ingest", plan_id="plan-1", target="dev")
-    assert build.manifest_json == '{"files": []}'
+    assert build.manifest_json == {"files": []}
 
 
 def test_get_build_returns_none_for_unknown(repo: Repository) -> None:

@@ -44,6 +44,7 @@ from pathlib import Path
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 # Mirror of carve.core.targets.registry.TARGET_NAME_RE — kept inline so
 # the migration stays import-safe if the registry module is later moved.
@@ -59,7 +60,15 @@ _logger = logging.getLogger("alembic.0004_build_entity")
 
 
 def upgrade() -> None:
-    """Land the Build table and prune Plan's deploy-state columns."""
+    """Land the Build table and prune Plan's deploy-state columns.
+
+    v0.1-01 retargeted this migration at Postgres:
+
+    * ``manifest_json`` is now ``JSONB`` (was TEXT).
+    * Timestamps use ``TIMESTAMP WITH TIME ZONE``.
+    * ``batch_alter_table`` blocks are gone — Postgres handles ALTER
+      TABLE natively without the rewrite-on-copy that SQLite required.
+    """
     # 1. Create the `builds` table. Indices created here alongside the
     # table so the backfill in step 2 already has the
     # (pipeline_name, target, created_at) lookup index in place.
@@ -79,16 +88,16 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("target", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column(
             "manifest_json",
-            sa.String(),
+            JSONB,
             nullable=False,
-            server_default='{"files": []}',
+            server_default=sa.text("'{\"files\": []}'::jsonb"),
         ),
         sa.Column("commit_sha", sa.String(), nullable=True),
         sa.Column("pr_url", sa.String(), nullable=True),
-        sa.Column("deployed_at", sa.DateTime(), nullable=True),
+        sa.Column("deployed_at", sa.TIMESTAMP(timezone=True), nullable=True),
     )
     op.create_index(
         "ix_builds_pipeline_target_created_at",
@@ -104,18 +113,16 @@ def upgrade() -> None:
     pipeline_to_build_id = _backfill_builds_from_pipelines()
 
     # 3. Add current_build_id and stamp it from the backfill map. Drop
-    # current_plan_id once stamping completes. Done inside a single
-    # batch_alter_table so the SQLite copy preserves the column order
-    # without two intermediate table rewrites.
-    with op.batch_alter_table("pipelines") as batch:
-        batch.add_column(
-            sa.Column(
-                "current_build_id",
-                sa.String(),
-                sa.ForeignKey("builds.id", name="fk_pipelines_current_build_id"),
-                nullable=True,
-            )
-        )
+    # current_plan_id once stamping completes.
+    op.add_column(
+        "pipelines",
+        sa.Column(
+            "current_build_id",
+            sa.String(),
+            sa.ForeignKey("builds.id", name="fk_pipelines_current_build_id"),
+            nullable=True,
+        ),
+    )
 
     if pipeline_to_build_id:
         bind = op.get_bind()
@@ -128,15 +135,12 @@ def upgrade() -> None:
                 {"build_id": build_id, "name": pipeline_name},
             )
 
-    with op.batch_alter_table("pipelines") as batch:
-        batch.drop_column("current_plan_id")
+    op.drop_column("pipelines", "current_plan_id")
 
-    # 4. Drop the three vestigial Plan columns. Single batch_alter_table
-    # so SQLite rewrites the table once.
-    with op.batch_alter_table("plans") as batch:
-        batch.drop_column("estimates_json")
-        batch.drop_column("deployed_at")
-        batch.drop_column("deploy_run_id")
+    # 4. Drop the three vestigial Plan columns.
+    op.drop_column("plans", "estimates_json")
+    op.drop_column("plans", "deployed_at")
+    op.drop_column("plans", "deploy_run_id")
 
 
 def _backfill_builds_from_pipelines() -> dict[str, str]:
@@ -172,7 +176,7 @@ def _backfill_builds_from_pipelines() -> dict[str, str]:
         return {}
 
     default_target = _read_default_target()
-    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    now_ts = datetime.now(UTC)
     pipeline_to_build_id: dict[str, str] = {}
 
     for row in rows:
@@ -186,9 +190,11 @@ def _backfill_builds_from_pipelines() -> dict[str, str]:
         elif isinstance(pipeline_updated_at, datetime):
             created_at = pipeline_updated_at
         else:
-            created_at = now_naive
+            created_at = now_ts
 
         build_id = "build_" + uuid.uuid4().hex
+        # ``manifest_json`` is JSONB — cast the string literal so psycopg
+        # accepts it without a parameter-type mismatch.
         bind.execute(
             sa.text(
                 "INSERT INTO builds "
@@ -196,7 +202,7 @@ def _backfill_builds_from_pipelines() -> dict[str, str]:
                 " manifest_json, commit_sha, pr_url, deployed_at) "
                 "VALUES "
                 "(:id, :pipeline_name, :plan_id, :target, :created_at, "
-                " :manifest_json, NULL, NULL, NULL)"
+                " CAST(:manifest_json AS jsonb), NULL, NULL, NULL)"
             ),
             {
                 "id": build_id,
@@ -253,35 +259,39 @@ def _read_default_target() -> str:
 def downgrade() -> None:
     """Reverse the upgrade in inverse order."""
     # 1. Restore the three Plan columns.
-    with op.batch_alter_table("plans") as batch:
-        batch.add_column(
-            sa.Column(
-                "estimates_json",
-                sa.String(),
-                nullable=False,
-                server_default="{}",
-            )
-        )
-        batch.add_column(sa.Column("deployed_at", sa.DateTime(), nullable=True))
-        batch.add_column(
-            sa.Column(
-                "deploy_run_id",
-                sa.String(),
-                sa.ForeignKey("runs.id", name="fk_plans_deploy_run_id"),
-                nullable=True,
-            )
-        )
+    op.add_column(
+        "plans",
+        sa.Column(
+            "estimates_json",
+            sa.String(),
+            nullable=False,
+            server_default="{}",
+        ),
+    )
+    op.add_column(
+        "plans",
+        sa.Column("deployed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "plans",
+        sa.Column(
+            "deploy_run_id",
+            sa.String(),
+            sa.ForeignKey("runs.id", name="fk_plans_deploy_run_id"),
+            nullable=True,
+        ),
+    )
 
     # 2. Restore pipelines.current_plan_id (nullable FK to plans.id).
-    with op.batch_alter_table("pipelines") as batch:
-        batch.add_column(
-            sa.Column(
-                "current_plan_id",
-                sa.String(),
-                sa.ForeignKey("plans.id", name="fk_pipelines_current_plan_id"),
-                nullable=True,
-            )
-        )
+    op.add_column(
+        "pipelines",
+        sa.Column(
+            "current_plan_id",
+            sa.String(),
+            sa.ForeignKey("plans.id", name="fk_pipelines_current_plan_id"),
+            nullable=True,
+        ),
+    )
 
     # 3. Repopulate current_plan_id from the most recent Build per pipeline.
     bind = op.get_bind()
@@ -314,8 +324,7 @@ def downgrade() -> None:
         )
 
     # 4. Drop pipelines.current_build_id.
-    with op.batch_alter_table("pipelines") as batch:
-        batch.drop_column("current_build_id")
+    op.drop_column("pipelines", "current_build_id")
 
     # 5. Drop the builds table (and its index).
     op.drop_index(

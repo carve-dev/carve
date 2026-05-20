@@ -171,11 +171,14 @@ def _make_config(
     targets: tuple[str, ...] = ("dev", "prod", "prod_deploy"),
     default_target: str = "dev",
 ) -> Config:
+    from carve.core.config.state_store import StateStoreConfig
+
     return Config(
         project=ProjectConfig(name="deploy-test", default_target=default_target),
         models=ModelsConfig(anthropic_api_key="sk-test"),
         runner=RunnerConfig(default_timeout_seconds=60),
-        server=ServerConfig(state_store=state_db),
+        server=ServerConfig(),
+        state_store=StateStoreConfig(url=state_db),
         connections=ConnectionsConfig(
             snowflake={t: _snowflake_section(t) for t in targets}
         ),
@@ -250,9 +253,10 @@ def project_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def repository_with_build(
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> tuple[Repository, Config, str]:
     """Set up state with a Pipeline + Plan + Build (target=dev)."""
-    config = _make_config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _make_config(state_db=postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))

@@ -28,19 +28,19 @@ from carve.core.state.database import (
 )
 
 
-def _config() -> Config:
+def _config(state_store_url: str) -> Config:
     return Config(
         project=ProjectConfig(name="listing-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
         runner=RunnerConfig(),
-        server=ServerConfig(state_store="sqlite:///.carve/state.db"),
+        server=ServerConfig(state_store=state_store_url),
         connections=ConnectionsConfig(snowflake={}),
     )
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> Repository:
-    config = _config()
+def repository(tmp_path: Path, postgres_state_store_url: str) -> Repository:
+    config = _config(postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)
     return Repository(create_session_factory(engine))

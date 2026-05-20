@@ -22,8 +22,10 @@ from carve.core.config.schema import (
     ServerConfig,
     SnowflakeConnection,
 )
+from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreConfig
 
 __all__ = [
+    "DEFAULT_STATE_STORE_URL",
     "Config",
     "ConfigError",
     "ConnectionsConfig",
@@ -33,5 +35,6 @@ __all__ = [
     "RunnerConfig",
     "ServerConfig",
     "SnowflakeConnection",
+    "StateStoreConfig",
     "load_config",
 ]

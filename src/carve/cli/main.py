@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 
+from carve.cli import migrate_state
 from carve.cli.commands import (
     build,
     deploy,
@@ -86,6 +87,7 @@ app.command(name="logs")(logs.command)
 app.command(name="pipelines")(pipelines.command)
 app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
+app.command(name="migrate-state")(migrate_state.command)
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
 

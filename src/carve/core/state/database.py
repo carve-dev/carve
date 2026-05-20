@@ -1,26 +1,34 @@
 """Engine and session helpers for the state store.
 
-The connection string comes from `config.server.state_store` (see
-`carve.core.config.schema.ServerConfig`). For SQLite we enable WAL mode
-and `synchronous=NORMAL` on every connection so concurrent reads from
-the CLI and the future API server don't block each other.
+The connection string is resolved from `Config` via
+:func:`carve.core.config.state_store.resolve_state_store_url`. Postgres is
+the only supported runtime backend; v0.1-01 retired the SQLite path. The
+engine factory has a one-way door:
+
+* ``postgresql+psycopg://...`` URLs are accepted everywhere
+* ``sqlite:///<path>`` URLs are rejected at runtime with a friendly error
+  string that points the user at ``carve migrate-state``
+
+The migration tool itself constructs a *source* SQLite engine via
+:func:`create_sqlite_source_engine` — that helper is the only sanctioned
+SQLite entry point in the codebase.
 
 `initialize_database` runs Alembic migrations to ``head`` so a fresh
-database lands on the latest schema and existing dev databases get the
-new columns when they upgrade across spec boundaries.
+database lands on the latest schema (the OSS auto-migrate-on-startup
+default; the hosted product overrides via its own startup flow).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import Engine, create_engine, event, inspect
+from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
 from carve.core.config import Config
+from carve.core.config.state_store import resolve_state_store_url
 
 # Repository-relative paths to the Alembic ini file and migrations
 # directory. Discovered by walking up from this module — the runtime
@@ -31,21 +39,47 @@ _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 
+class StateStoreBackendError(RuntimeError):
+    """Raised when the runtime is asked to open a non-Postgres state store.
+
+    The migration tool's source-connection path catches this and falls
+    back to :func:`create_sqlite_source_engine`; every other caller
+    treats this as fatal.
+    """
+
+
 def create_engine_from_config(config: Config, *, project_dir: Path | None = None) -> Engine:
     """Build a SQLAlchemy engine from the given Carve config.
 
-    For SQLite URLs of the form ``sqlite:///<relative-path>`` the path is
-    resolved against ``project_dir`` (defaulting to the current working
-    directory) so the database file lives inside the project, not wherever
-    the CLI happens to have been invoked from.
+    Only Postgres URLs are accepted. SQLite URLs raise
+    :class:`StateStoreBackendError` with a message pointing the user at
+    ``carve migrate-state``. ``project_dir`` is accepted for backward
+    compatibility but is unused for Postgres.
     """
-    url = _resolve_sqlite_url(config.server.state_store, project_dir or Path.cwd())
-    engine = create_engine(url, echo=False, future=True)
+    del project_dir  # unused for Postgres; kept for API compatibility
+    url = resolve_state_store_url(config)
+    _reject_non_postgres_url(url)
+    return create_engine(
+        url,
+        echo=False,
+        future=True,
+        pool_size=config.state_store.pool_size,
+        max_overflow=config.state_store.max_overflow,
+        pool_pre_ping=True,
+    )
 
-    if engine.url.get_backend_name() == "sqlite":
-        _install_sqlite_pragmas(engine)
 
-    return engine
+def create_sqlite_source_engine(url: str) -> Engine:
+    """Build a read-only SQLAlchemy engine for a SQLite migration source.
+
+    The migration tool (`carve migrate-state`) is the only caller. The
+    URL must start with ``sqlite:///``; anything else raises ``ValueError``.
+    File-resolution is the caller's responsibility — the migration tool
+    accepts already-absolute paths on its CLI flag.
+    """
+    if not url.startswith("sqlite:///"):
+        raise ValueError(f"create_sqlite_source_engine requires a sqlite URL; got {url!r}")
+    return create_engine(url, echo=False, future=True)
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -62,19 +96,20 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def initialize_database(engine: Engine) -> None:
     """Bring the database to the latest migration revision.
 
-    Called from `carve init` and as a best-effort safeguard from each CLI
-    command that opens an engine. Idempotent — re-running on an up-to-date
-    database is a fast no-op (Alembic checks the `alembic_version` table).
+    Called from `carve init` and `carve serve` startup. Idempotent —
+    re-running on an up-to-date database is a fast no-op (Alembic checks
+    the `alembic_version` table).
 
-    For an existing M1 database that pre-dates Alembic, the function
-    detects the legacy schema (`runs` exists, `alembic_version` does not)
-    and stamps the baseline before running `upgrade head` so the
-    pipeline-centric migration applies cleanly without trying to recreate
-    tables that are already there.
+    For an existing M1-era Postgres database that pre-dates Alembic
+    (extremely unlikely, but kept defensively to mirror the M1 behavior),
+    the function detects the legacy schema and stamps the baseline before
+    running ``upgrade head``. SQLite is rejected here too — `carve serve`
+    surfaces the friendly error via the engine factory before reaching
+    this function, but a direct caller would otherwise see a confusing
+    Alembic stack trace.
     """
-    parent = _sqlite_path_parent(engine)
-    if parent is not None:
-        parent.mkdir(parents=True, exist_ok=True)
+    if engine.url.get_backend_name() != "postgresql":
+        raise StateStoreBackendError(_SQLITE_MESSAGE)
 
     cfg = _alembic_config(engine)
 
@@ -86,8 +121,6 @@ def initialize_database(engine: Engine) -> None:
     with engine.begin() as connection:
         cfg.attributes["connection"] = connection
         if has_baseline_tables and not has_alembic_table:
-            # Pre-Alembic dev DB; jump the version pointer past the
-            # baseline so 0001 isn't re-run against existing tables.
             alembic_command.stamp(cfg, "0001_baseline")
         alembic_command.upgrade(cfg, "head")
 
@@ -107,61 +140,29 @@ def _alembic_config(engine: Engine) -> AlembicConfig:
 
 
 # ---------------------------------------------------------------------------
-# SQLite helpers
+# URL-shape gating
 # ---------------------------------------------------------------------------
 
 
-def _resolve_sqlite_url(url: str, project_dir: Path) -> str:
-    """Resolve a relative ``sqlite:///`` URL against ``project_dir``.
+_SQLITE_MESSAGE = (
+    "Carve no longer runs against SQLite. Migrate your state store with "
+    "`carve migrate-state --from sqlite:///<path> --to <postgres-url>` and "
+    "set `state_store.url` in runtime.toml to the Postgres connection "
+    "string. See docs/upgrade-from-walking-skeleton.md for the full guide."
+)
 
-    Postgres and other URLs are returned unchanged. Already-absolute
-    SQLite URLs (``sqlite:////abs/path``) are also returned unchanged.
-    The in-memory form (``sqlite:///:memory:``) is preserved.
+
+def _reject_non_postgres_url(url: str) -> None:
+    """Reject anything that isn't a Postgres URL at runtime.
+
+    The check is intentionally a substring match on the scheme rather
+    than a full parse: ``sqlite:///``, ``sqlite://`` and any future
+    typo'd variant should all surface the same friendly message.
     """
-    prefix = "sqlite:///"
-    if not url.startswith(prefix):
-        return url
-
-    path_part = url[len(prefix) :]
-    if path_part == ":memory:" or path_part == "":
-        return url
-    if path_part.startswith("/"):
-        # Already absolute — `sqlite:////abs/path` arrives here as `/abs/path`.
-        return url
-
-    absolute = (project_dir / path_part).resolve()
-    return f"{prefix}{absolute}"
-
-
-def _sqlite_path_parent(engine: Engine) -> Path | None:
-    """Return the parent directory of a file-backed SQLite engine, or None."""
-    if engine.url.get_backend_name() != "sqlite":
-        return None
-    db = engine.url.database
-    if not db or db == ":memory:":
-        return None
-    return Path(db).parent
-
-
-def _install_sqlite_pragmas(engine: Engine) -> None:
-    """Apply WAL mode and `synchronous=NORMAL` to every SQLite connection.
-
-    The pragmas have to be set *per connection*; SQLAlchemy raises a
-    fresh DB-API connection for each pool checkout, so we hook the
-    `connect` event rather than executing once on the engine.
-    """
-
-    @event.listens_for(engine, "connect")
-    def _set_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            # SQLite ships with FK enforcement off by default; the schema
-            # has real foreign keys (Pipeline.current_build_id → Build,
-            # Build.plan_id → Plan, Plan.pipeline_name → Pipeline,
-            # Run.pipeline_name → Pipeline) that need to be enforced or
-            # they're advisory only.
-            cursor.execute("PRAGMA foreign_keys=ON")
-        finally:
-            cursor.close()
+    if url.startswith("sqlite:"):
+        raise StateStoreBackendError(_SQLITE_MESSAGE)
+    if not (url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")):
+        raise StateStoreBackendError(
+            f"Unsupported state store URL {url!r}. Carve requires Postgres "
+            f"(postgresql+psycopg://...). See docs/upgrade-from-walking-skeleton.md."
+        )

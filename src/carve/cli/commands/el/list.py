@@ -118,7 +118,7 @@ def render_el_list(
     table.add_column("Last run")
     table.add_column("Per-target status")
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     for name in artifact_names:
         latest_build = repository.latest_build_for(name, active_target)
         built_str = (
@@ -197,8 +197,10 @@ def _format_relative(when: datetime, now: datetime) -> str:
     listing the user wants "is this fresh or stale", not millisecond
     precision.
     """
-    if when.tzinfo is not None:
-        when = when.astimezone(UTC).replace(tzinfo=None)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    else:
+        when = when.astimezone(UTC)
     delta = now - when
     seconds = int(delta.total_seconds())
     if seconds < 0:

@@ -53,18 +53,18 @@ from carve.core.state.database import (
 # ---------------------------------------------------------------------------
 
 
-def _make_config(project_dir: Path) -> Config:
+def _make_config(state_store_url: str) -> Config:
     return Config(
         project=ProjectConfig(name="rec-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
-        server=ServerConfig(state_store=f"sqlite:///{project_dir}/.carve/state.db"),
+        server=ServerConfig(state_store=state_store_url),
     )
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> Repository:
+def repository(tmp_path: Path, postgres_state_store_url: str) -> Repository:
     (tmp_path / ".carve").mkdir(parents=True, exist_ok=True)
-    config = _make_config(tmp_path)
+    config = _make_config(postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)
     return Repository(create_session_factory(engine))
@@ -661,7 +661,10 @@ class TestLLMRecoveryHandlerConnectionRoles:
     """
 
     def test_verify_stage_uses_runtime_query_runner(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        postgres_state_store_url: str,
     ) -> None:
         from carve.core.agents.recovery import LLMRecoveryHandler
         from carve.core.deploy.recovery import RecoveryContext, RecoveryStage
@@ -697,7 +700,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
         config = Config(
             project=ProjectConfig(name="p"),
             models=ModelsConfig(anthropic_api_key="sk"),
-            server=ServerConfig(state_store=f"sqlite:///{project_dir}/.carve/state.db"),
+            server=ServerConfig(state_store=postgres_state_store_url),
         )
         engine = create_engine_from_config(config, project_dir=project_dir)
         initialize_database(engine)
@@ -722,7 +725,10 @@ class TestLLMRecoveryHandlerConnectionRoles:
         assert recorded["query_runner"] is runtime_runner
 
     def test_ddl_apply_stage_uses_deploy_query_runner(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        postgres_state_store_url: str,
     ) -> None:
         from carve.core.agents.recovery import LLMRecoveryHandler
         from carve.core.deploy.recovery import RecoveryContext, RecoveryStage
@@ -756,7 +762,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
         config = Config(
             project=ProjectConfig(name="p"),
             models=ModelsConfig(anthropic_api_key="sk"),
-            server=ServerConfig(state_store=f"sqlite:///{project_dir}/.carve/state.db"),
+            server=ServerConfig(state_store=postgres_state_store_url),
         )
         engine = create_engine_from_config(config, project_dir=project_dir)
         initialize_database(engine)

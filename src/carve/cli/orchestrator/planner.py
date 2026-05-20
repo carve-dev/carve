@@ -503,10 +503,10 @@ def _render_existing_pipeline_section(
 
 def _render_parent_plan_section(parent: Plan) -> str:
     """Inline the parent plan's goal + design for refinement context."""
-    try:
-        parent_design = json.loads(parent.task_graph_json or "{}").get("design")
-    except (TypeError, ValueError):
-        parent_design = None
+    # v0.1-01: task_graph_json is JSONB; ORM returns dict directly.
+    raw = parent.task_graph_json
+    parent_task_graph = raw if isinstance(raw, dict) else {}
+    parent_design = parent_task_graph.get("design")
     parts = [
         f"## Refining plan `{parent.id}`",
         "The user provided feedback on a prior draft. Adjust the design accordingly.",
@@ -734,12 +734,13 @@ def _persist_artifact(
         goal=artifact.goal,
         config_hash=artifact.config_hash,
         carve_version=artifact.carve_version,
-        task_graph_json=json.dumps(task_graph, sort_keys=True),
+        # v0.1-01: task_graph_json is JSONB; pass dict, not str.
+        task_graph_json=task_graph,
         file_path=str(file_path),
         phase="drafted",
         pipeline_name=artifact.target_pipeline,
-        created_at=artifact.created_at.replace(tzinfo=None),
-        expires_at=artifact.expires_at.replace(tzinfo=None),
+        created_at=artifact.created_at,
+        expires_at=artifact.expires_at,
     )
     repository.save_plan(plan_row)
     return file_path

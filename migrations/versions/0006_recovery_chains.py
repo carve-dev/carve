@@ -32,15 +32,15 @@ depends_on: str | None = None
 
 def upgrade() -> None:
     """Add ``runs.parent_run_id`` (nullable, FK to runs.id) and its index."""
-    with op.batch_alter_table("runs") as batch:
-        batch.add_column(
-            sa.Column(
-                "parent_run_id",
-                sa.String(),
-                sa.ForeignKey("runs.id", name="fk_runs_parent_run_id"),
-                nullable=True,
-            )
-        )
+    op.add_column(
+        "runs",
+        sa.Column(
+            "parent_run_id",
+            sa.String(),
+            sa.ForeignKey("runs.id", name="fk_runs_parent_run_id"),
+            nullable=True,
+        ),
+    )
     op.create_index(
         "ix_runs_parent_run_id",
         "runs",
@@ -51,8 +51,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the index and the column."""
     op.drop_index("ix_runs_parent_run_id", table_name="runs")
-    with op.batch_alter_table("runs") as batch:
-        batch.drop_column("parent_run_id")
+    op.drop_column("runs", "parent_run_id")
 
 
 __all__ = ["downgrade", "upgrade"]

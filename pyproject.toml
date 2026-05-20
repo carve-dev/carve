@@ -25,6 +25,7 @@ dependencies = [
     "pydantic>=2.6",
     "rich>=13.7",
     "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
     "snowflake-connector-python>=3.7",
     "cryptography>=42",
     "tomlkit>=0.13",
@@ -39,6 +40,7 @@ dev = [
     "mypy>=1.10",
     "pre-commit>=3.7",
     "sqlparse>=0.5",
+    "testcontainers[postgres]>=4.0",
 ]
 
 [project.scripts]

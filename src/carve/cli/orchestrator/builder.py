@@ -313,12 +313,16 @@ def build_plan(
 
 def _load_plan_design(plan_row: Plan) -> dict[str, Any]:
     """Pull the design dict out of the plan's stored task_graph JSON."""
-    try:
-        task_graph = json.loads(plan_row.task_graph_json or "{}")
-    except (TypeError, ValueError) as exc:
+    # v0.1-01: task_graph_json is JSONB; ORM returns dict directly.
+    raw = plan_row.task_graph_json
+    if raw is None:
+        task_graph: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        task_graph = raw
+    else:
         raise BuildError(
-            f"Plan {plan_row.id!r} has malformed task_graph_json: {exc}"
-        ) from exc
+            f"Plan {plan_row.id!r} has non-dict task_graph_json (type={type(raw).__name__})"
+        )
     design = task_graph.get("design")
     if not isinstance(design, dict):
         raise BuildError(

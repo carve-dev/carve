@@ -192,7 +192,6 @@ def _confirm_or_override_destination(
     target's connection default) from "inherit" (matches default or
     unset).
     """
-    import json as _json
 
     from rich.markup import escape as _esc
 
@@ -205,11 +204,12 @@ def _confirm_or_override_destination(
     if plan_row is None or not plan_row.task_graph_json:
         return None  # build_plan will raise its own clean error
 
-    try:
-        task_graph = _json.loads(plan_row.task_graph_json)
-    except (TypeError, ValueError):
+    # v0.1-01: task_graph_json is JSONB; ORM returns dict directly.
+    raw = plan_row.task_graph_json
+    task_graph = raw if isinstance(raw, dict) else None
+    if task_graph is None:
         return None
-    design = task_graph.get("design") if isinstance(task_graph, dict) else None
+    design = task_graph.get("design")
     plan_destination = (
         design.get("destination") if isinstance(design, dict) else None
     )

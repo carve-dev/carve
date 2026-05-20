@@ -28,11 +28,11 @@ depends_on: str | None = None
 
 def upgrade() -> None:
     """Rename plans columns and rewrite any apply-kind run rows."""
-    # 1. Rename the two `plans` columns. SQLite needs batch_alter_table
-    # for ALTER TABLE; on Postgres this collapses to a regular ALTER.
-    with op.batch_alter_table("plans") as batch:
-        batch.alter_column("applied_at", new_column_name="deployed_at")
-        batch.alter_column("apply_run_id", new_column_name="deploy_run_id")
+    # 1. Rename the two `plans` columns. Postgres supports plain
+    # ``ALTER TABLE ... RENAME COLUMN`` so we no longer need
+    # ``batch_alter_table``.
+    op.alter_column("plans", "applied_at", new_column_name="deployed_at")
+    op.alter_column("plans", "apply_run_id", new_column_name="deploy_run_id")
 
     # 2. Defensive rewrite: any historical run rows with kind='apply'
     # become kind='deploy'. Expected to be zero rows in practice.
@@ -46,6 +46,5 @@ def downgrade() -> None:
     op.execute(
         sa.text("UPDATE runs SET kind = 'apply' WHERE kind = 'deploy'")
     )
-    with op.batch_alter_table("plans") as batch:
-        batch.alter_column("deploy_run_id", new_column_name="apply_run_id")
-        batch.alter_column("deployed_at", new_column_name="applied_at")
+    op.alter_column("plans", "deploy_run_id", new_column_name="apply_run_id")
+    op.alter_column("plans", "deployed_at", new_column_name="applied_at")

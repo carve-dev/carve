@@ -21,7 +21,6 @@ build / run history.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -864,10 +863,9 @@ def _load_plan_design(repository: Repository, plan_id: str) -> dict[str, Any] | 
     plan: Plan | None = repository.get_plan(plan_id)
     if plan is None:
         return None
-    raw = plan.task_graph_json
-    try:
-        task_graph = json.loads(raw)
-    except (TypeError, ValueError):
+    # v0.1-01: task_graph_json is JSONB; ORM returns dict directly.
+    task_graph = plan.task_graph_json
+    if not isinstance(task_graph, dict):
         return None
     design = task_graph.get("design")
     return design if isinstance(design, dict) else None

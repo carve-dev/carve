@@ -21,7 +21,6 @@ stays consistent.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -428,10 +427,9 @@ def expected_destinations_from_build(
     """
     # Manifest doesn't currently carry destinations; future-proof
     # by checking it first.
-    try:
-        manifest = json.loads(build.manifest_json)
-    except (TypeError, ValueError):
-        manifest = {}
+    # v0.1-01: manifest_json is JSONB; ORM returns dict directly.
+    raw_manifest = build.manifest_json
+    manifest = raw_manifest if isinstance(raw_manifest, dict) else {}
     destinations = manifest.get("destinations")
     if isinstance(destinations, list) and destinations:
         out: list[tuple[str, str, str, list[tuple[str, str]]]] = []

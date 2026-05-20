@@ -20,7 +20,6 @@ written from `mark_plan_built`; the build row carries that state now.
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -140,7 +139,7 @@ class Repository:
             run.status = status
             if error is not None:
                 run.error_message = error
-            now_utc = datetime.now(UTC).replace(tzinfo=None)
+            now_utc = datetime.now(UTC)
             if status == "running" and run.started_at is None:
                 run.started_at = now_utc
             if status in terminal:
@@ -267,9 +266,11 @@ class Repository:
         by ``phase == "drafted"`` (built plans are skipped because they
         have a corresponding Build that owns the deploy state).
         """
-        cutoff = now if now is not None else datetime.now(UTC).replace(tzinfo=None)
-        if cutoff.tzinfo is not None:
-            cutoff = cutoff.astimezone(UTC).replace(tzinfo=None)
+        cutoff = now if now is not None else datetime.now(UTC)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=UTC)
+        else:
+            cutoff = cutoff.astimezone(UTC)
         stmt = (
             select(Plan)
             .where(Plan.expires_at < cutoff)
@@ -325,7 +326,7 @@ class Repository:
         ``current_build_id`` is set separately by `create_build` (which
         atomically inserts the Build row and stamps the FK).
         """
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         with self._session_factory() as session:
             pipeline = session.get(Pipeline, name)
             if pipeline is None:
@@ -431,9 +432,11 @@ class Repository:
         last call wins. Silently no-ops if the pipeline row doesn't
         exist (the run row stays valid; we just have nowhere to update).
         """
-        timestamp = run_at if run_at is not None else datetime.now(UTC).replace(tzinfo=None)
-        if timestamp.tzinfo is not None:
-            timestamp = timestamp.astimezone(UTC).replace(tzinfo=None)
+        timestamp = run_at if run_at is not None else datetime.now(UTC)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        else:
+            timestamp = timestamp.astimezone(UTC)
         with self._session_factory() as session:
             pipeline = session.get(Pipeline, pipeline_name)
             if pipeline is None:
@@ -464,14 +467,15 @@ class Repository:
         """
         build_id = "build_" + uuid.uuid4().hex
         manifest_payload = manifest if manifest is not None else {"files": []}
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         build = Build(
             id=build_id,
             pipeline_name=pipeline_name,
             plan_id=plan_id,
             target=target,
             created_at=now,
-            manifest_json=json.dumps(manifest_payload, sort_keys=True),
+            # v0.1-01: manifest_json is JSONB; pass dict, not str.
+            manifest_json=manifest_payload,
         )
         with self._session_factory() as session:
             session.add(build)
@@ -507,7 +511,7 @@ class Repository:
             if pipeline is None:
                 raise KeyError(f"pipeline {name!r} not found")
             pipeline.current_build_id = build_id
-            pipeline.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            pipeline.updated_at = datetime.now(UTC)
             session.commit()
 
     def latest_build_for(self, name: str, target: str) -> Build | None:

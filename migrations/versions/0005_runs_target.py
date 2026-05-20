@@ -31,8 +31,7 @@ depends_on: str | None = None
 
 def upgrade() -> None:
     """Add `runs.target` (TEXT NULL) and backfill from latest build per pipeline."""
-    with op.batch_alter_table("runs") as batch:
-        batch.add_column(sa.Column("target", sa.String(), nullable=True))
+    op.add_column("runs", sa.Column("target", sa.String(), nullable=True))
 
     bind = op.get_bind()
 
@@ -64,8 +63,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop `runs.target`."""
-    with op.batch_alter_table("runs") as batch:
-        batch.drop_column("target")
+    op.drop_column("runs", "target")
 
 
 __all__ = ["downgrade", "upgrade"]

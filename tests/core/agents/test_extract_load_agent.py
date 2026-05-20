@@ -80,12 +80,12 @@ def _client_returning(*responses: Any) -> MagicMock:
     return client
 
 
-def _config(target: str = "dev") -> Config:
+def _config(state_store_url: str, target: str = "dev") -> Config:
     return Config(
         project=ProjectConfig(name="el-tests"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
         runner=RunnerConfig(),
-        server=ServerConfig(state_store="sqlite:///:memory:"),
+        server=ServerConfig(state_store=state_store_url),
         connections=ConnectionsConfig(
             snowflake={
                 target: ConnConfig(

@@ -8,6 +8,11 @@ Adds the `pipelines` table, the new ``phase`` and ``pipeline_name``
 columns on `plans`, and ``pipeline_name`` on `runs`. Backfills a
 synthesized `Pipeline` row for any pre-existing plan with
 ``applied_at IS NOT NULL`` (best-effort — JSON shape may not match).
+
+v0.1-01 retargeted the migration at Postgres: timestamps use
+``TIMESTAMP WITH TIME ZONE``, the ``task_graph_json`` column the backfill
+reads is JSONB so it deserialises to ``dict`` directly, and the
+``batch_alter_table`` blocks compile down to plain ALTER on Postgres.
 """
 
 from __future__ import annotations
@@ -53,8 +58,8 @@ def upgrade() -> None:
             sa.ForeignKey("plans.id"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column(
             "last_run_id",
             sa.String(),
@@ -62,54 +67,53 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("last_run_status", sa.String(), nullable=True),
-        sa.Column("last_run_at", sa.DateTime(), nullable=True),
+        sa.Column("last_run_at", sa.TIMESTAMP(timezone=True), nullable=True),
     )
 
-    # 2. New columns on `plans`.
-    #
-    # `batch_alter_table` is necessary on SQLite for any meaningful ALTER —
-    # SQLite implements it by copying the table. Both columns are nullable
-    # initially so existing rows can be backfilled in a separate UPDATE
-    # without violating constraints; the CHECK ensures `phase` only takes
-    # one of two values once set.
-    with op.batch_alter_table("plans") as batch:
-        batch.add_column(
-            sa.Column(
-                "phase",
-                sa.String(),
-                nullable=False,
-                server_default="drafted",
-            )
-        )
-        batch.add_column(
-            sa.Column(
-                "pipeline_name",
-                sa.String(),
-                sa.ForeignKey(
-                    "pipelines.name",
-                    name="fk_plans_pipeline_name",
-                ),
-                nullable=True,
-            )
-        )
-        batch.create_check_constraint(
-            "ck_plans_phase",
-            "phase IN ('drafted', 'built')",
-        )
+    # 2. New columns on `plans`. Postgres supports plain ALTER TABLE
+    # ADD COLUMN; we no longer need ``batch_alter_table``. Both columns
+    # are nullable (phase has a server_default so existing rows take
+    # ``'drafted'``) and the CHECK constraint enforces the phase enum.
+    op.add_column(
+        "plans",
+        sa.Column(
+            "phase",
+            sa.String(),
+            nullable=False,
+            server_default="drafted",
+        ),
+    )
+    op.add_column(
+        "plans",
+        sa.Column(
+            "pipeline_name",
+            sa.String(),
+            sa.ForeignKey(
+                "pipelines.name",
+                name="fk_plans_pipeline_name",
+            ),
+            nullable=True,
+        ),
+    )
+    op.create_check_constraint(
+        "ck_plans_phase",
+        "plans",
+        "phase IN ('drafted', 'built')",
+    )
 
     # 3. New column on `runs`.
-    with op.batch_alter_table("runs") as batch:
-        batch.add_column(
-            sa.Column(
-                "pipeline_name",
-                sa.String(),
-                sa.ForeignKey(
-                    "pipelines.name",
-                    name="fk_runs_pipeline_name",
-                ),
-                nullable=True,
-            )
-        )
+    op.add_column(
+        "runs",
+        sa.Column(
+            "pipeline_name",
+            sa.String(),
+            sa.ForeignKey(
+                "pipelines.name",
+                name="fk_runs_pipeline_name",
+            ),
+            nullable=True,
+        ),
+    )
 
     # 4. Backfill from previously-applied plans.
     _backfill_pipelines_from_applied_plans()
@@ -142,19 +146,25 @@ def _backfill_pipelines_from_applied_plans() -> None:
     seen_pipelines: set[str] = set()
     for row in plans:
         plan_id: str = row[0]
-        task_graph_raw: str = row[1] or "{}"
+        task_graph_raw = row[1]
         applied_at = row[2]
         apply_run_id = row[3]
         created_at = row[4]
-        try:
-            task_graph = json.loads(task_graph_raw)
-        except (TypeError, ValueError) as exc:
-            _logger.info(
-                "skipping backfill for plan %s: malformed task_graph_json (%s)",
-                plan_id,
-                exc,
-            )
-            continue
+        # ``task_graph_json`` is JSONB on Postgres so psycopg returns a
+        # dict already; defensively json.loads for the legacy TEXT path
+        # an offline-migrated database might still expose.
+        if isinstance(task_graph_raw, dict):
+            task_graph = task_graph_raw
+        else:
+            try:
+                task_graph = json.loads(task_graph_raw or "{}")
+            except (TypeError, ValueError) as exc:
+                _logger.info(
+                    "skipping backfill for plan %s: malformed task_graph_json (%s)",
+                    plan_id,
+                    exc,
+                )
+                continue
 
         pipeline_dir = task_graph.get("pipeline_dir")
         if not isinstance(pipeline_dir, str) or not pipeline_dir:
@@ -182,15 +192,18 @@ def _backfill_pipelines_from_applied_plans() -> None:
             )
             continue
 
-        now_naive = (
+        # Timestamps are TIMESTAMPTZ now; values from `bind.execute` come
+        # back as aware datetimes on Postgres. Fall back to an aware UTC
+        # `now()` when the source row's timestamp is missing.
+        now_ts = (
             applied_at
             if isinstance(applied_at, datetime)
-            else datetime.now(UTC).replace(tzinfo=None)
+            else datetime.now(UTC)
         )
         first_seen = (
             created_at
             if isinstance(created_at, datetime)
-            else now_naive
+            else now_ts
         )
 
         if pipeline_name not in seen_pipelines:
@@ -209,7 +222,7 @@ def _backfill_pipelines_from_applied_plans() -> None:
                     "pipeline_dir": pipeline_dir,
                     "current_plan_id": plan_id,
                     "created_at": first_seen,
-                    "updated_at": now_naive,
+                    "updated_at": now_ts,
                     "last_run_id": apply_run_id,
                 },
             )
@@ -226,9 +239,8 @@ def _backfill_pipelines_from_applied_plans() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("runs") as batch:
-        batch.drop_column("pipeline_name")
-    with op.batch_alter_table("plans") as batch:
-        batch.drop_column("pipeline_name")
-        batch.drop_column("phase")
+    op.drop_column("runs", "pipeline_name")
+    op.drop_constraint("ck_plans_phase", "plans", type_="check")
+    op.drop_column("plans", "pipeline_name")
+    op.drop_column("plans", "phase")
     op.drop_table("pipelines")
