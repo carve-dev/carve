@@ -8,7 +8,8 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 
 | #  | Spec                                                                | Theme                                                    | Status   |
 |----|---------------------------------------------------------------------|----------------------------------------------------------|----------|
-| 01 | [`01-state-store-postgres.md`](./01-state-store-postgres.md)        | Migrate state store from SQLite to Postgres + one-shot migration tool | Drafting |
+| 01 | [`01-state-store-postgres.md`](./01-state-store-postgres.md)        | State store: Postgres only (SQLite retired)                            | Landed (partial; sweep deferred to 01-followup) |
+| 01b | [`01-followup-m1-test-sweep.md`](./01-followup-m1-test-sweep.md)   | M1 test fixture sweep + missing v0.1-01 unit tests                     | Drafting |
 | 02 | [`02-oss-packaging.md`](./02-oss-packaging.md)                      | Bundled docker-compose with Postgres; external-Postgres option        | Drafting |
 | 03 | [`03-flat-layout.md`](./03-flat-layout.md)                          | Flat `el/<name>/` layout for dlt artifacts; per-backend repo topology | Drafting |
 | 04 | [`04-el-agent-dlt.md`](./04-el-agent-dlt.md)                        | EL specialist agent generates dlt code (native, REST API config, curated library, MCP wrapper) | Drafting |
