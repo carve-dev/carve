@@ -6,7 +6,6 @@ records SQL and returns canned column rows.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -63,7 +62,7 @@ def _build(plan_id: str = "plan_1") -> Build:
         pipeline_name="iowa",
         plan_id=plan_id,
         target="dev",
-        manifest_json='{"files": []}',
+        manifest_json={"files": []},
     )
 
 
@@ -245,8 +244,6 @@ def test_expected_destinations_prefers_manifest_destinations() -> None:
     on the build directly. P1-08 reads only from the plan design, but
     the helper is wired for the upgrade.
     """
-    import json
-
     manifest = {
         "files": [],
         "destinations": [
@@ -263,7 +260,7 @@ def test_expected_destinations_prefers_manifest_destinations() -> None:
         pipeline_name="iowa",
         plan_id="plan_1",
         target="dev",
-        manifest_json=json.dumps(manifest),
+        manifest_json=manifest,
     )
     out = expected_destinations_from_build(build, _design())
     assert len(out) == 1
@@ -336,7 +333,7 @@ def test_expected_destinations_from_manifest_validates_identifiers() -> None:
         pipeline_name="iowa",
         plan_id="plan_1",
         target="dev",
-        manifest_json=json.dumps(manifest),
+        manifest_json=manifest,
     )
     with pytest.raises(InvalidSnowflakeIdentifierError):
         expected_destinations_from_build(build, None)

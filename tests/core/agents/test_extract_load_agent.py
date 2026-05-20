@@ -397,6 +397,7 @@ def _scripted_run(
 def _run(
     project_dir: Path,
     client: MagicMock,
+    state_store_url: str,
     *,
     task: dict[str, Any] | None = None,
     target: str = "dev",
@@ -404,7 +405,7 @@ def _run(
     return run_extract_load_agent(
         task=task or _iowa_task(),
         active_target=target,
-        config=_config(target),
+        config=_config(state_store_url, target=target),
         project_dir=project_dir,
         client=client,
         max_turns=20,
@@ -414,7 +415,10 @@ def _run(
 # --------------------------------------------------------------------- tests
 
 
-def test_emits_three_files_for_socrata_merge_upsert(tmp_path: Path) -> None:
+def test_emits_three_files_for_socrata_merge_upsert(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     project_dir = _project(tmp_path)
     main_py = _iowa_main_py(stringify_dicts=True)
     client, _ = _scripted_run(
@@ -422,7 +426,7 @@ def test_emits_three_files_for_socrata_merge_upsert(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     assert result.success is True
     assert result.error is False
     assert sorted(result.file_list) == sorted(
@@ -439,7 +443,7 @@ def test_emits_three_files_for_socrata_merge_upsert(tmp_path: Path) -> None:
     ).is_file()
 
 
-def test_rejects_out_of_scope(tmp_path: Path) -> None:
+def test_rejects_out_of_scope(tmp_path: Path, postgres_state_store_url: str) -> None:
     """A dbt-shaped goal triggers `submit_step(error=True)`."""
     project_dir = _project(tmp_path)
     task = _iowa_task()
@@ -451,14 +455,14 @@ def test_rejects_out_of_scope(tmp_path: Path) -> None:
         error=True,
         error_summary="This is a dbt agent task — out of scope for Pillar 1.",
     )
-    result = _run(project_dir, client, task=task)
+    result = _run(project_dir, client, postgres_state_store_url, task=task)
     assert result.error is True
     assert result.success is False
     assert result.file_list == []
     assert "dbt" in result.summary.lower()
 
 
-def test_dict_binding_regression(tmp_path: Path) -> None:
+def test_dict_binding_regression(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Iowa-liquor regression: the script stringifies dict columns.
 
     Replays a column whose type is `VARIANT` (Snowflake's JSON-ish
@@ -473,7 +477,7 @@ def test_dict_binding_regression(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     main_py_path = project_dir / "el/iowa_liquor_sales/main.py"
     written = main_py_path.read_text(encoding="utf-8")
     ddl_path = project_dir / "el/iowa_liquor_sales/snowflake.sql"
@@ -486,14 +490,14 @@ def test_dict_binding_regression(tmp_path: Path) -> None:
     assert result.success is True
 
 
-def test_emits_ddl_companion_file(tmp_path: Path) -> None:
+def test_emits_ddl_companion_file(tmp_path: Path, postgres_state_store_url: str) -> None:
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
         main_py=_iowa_main_py(),
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     ddl_rel = "el/iowa_liquor_sales/snowflake.sql"
     assert ddl_rel in result.file_list
     ddl_text = (project_dir / ddl_rel).read_text(encoding="utf-8")
@@ -502,7 +506,10 @@ def test_emits_ddl_companion_file(tmp_path: Path) -> None:
     assert "GRANT SELECT, INSERT, UPDATE, DELETE" in ddl_text
 
 
-def test_skill_loading_is_on_demand_simple_task(tmp_path: Path) -> None:
+def test_skill_loading_is_on_demand_simple_task(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """Simple task: no `lookup_skill` call recorded."""
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
@@ -511,11 +518,14 @@ def test_skill_loading_is_on_demand_simple_task(tmp_path: Path) -> None:
         ddl_sql=_ddl_text(),
         skill_calls=[],
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     assert "lookup_skill" not in result.tools_invoked
 
 
-def test_skill_loading_is_on_demand_complex_task(tmp_path: Path) -> None:
+def test_skill_loading_is_on_demand_complex_task(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """Complex task (MERGE + VARIANT): both skills loaded."""
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
@@ -524,11 +534,11 @@ def test_skill_loading_is_on_demand_complex_task(tmp_path: Path) -> None:
         ddl_sql=_ddl_text(),
         skill_calls=["data_engineering", "snowflake_destination"],
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     assert result.tools_invoked.count("lookup_skill") == 2
 
 
-def test_write_file_path_allowlist(tmp_path: Path) -> None:
+def test_write_file_path_allowlist(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Writing outside the three allowed paths surfaces as a tool error.
 
     The agent attempts a write to `pipelines/<name>/main.py` (legacy
@@ -610,7 +620,7 @@ def test_write_file_path_allowlist(tmp_path: Path) -> None:
         stop_reason="tool_use",
     )
     client = _client_returning(bad_response, good_main, good_req, good_ddl, submit)
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     # The bad write surfaces as a tool error in the next user message.
     bad_call_user_message = client.calls[1]["messages"][-1]
     bad_results = [
@@ -625,7 +635,7 @@ def test_write_file_path_allowlist(tmp_path: Path) -> None:
     assert result.success is True
 
 
-def test_uses_target_prefixed_env_vars(tmp_path: Path) -> None:
+def test_uses_target_prefixed_env_vars(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Generated script reads `<TARGET>_SNOWFLAKE_USER`, not unprefixed."""
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
@@ -633,7 +643,7 @@ def test_uses_target_prefixed_env_vars(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
     written = (
         project_dir / "el/iowa_liquor_sales/main.py"
     ).read_text(encoding="utf-8")
@@ -641,7 +651,7 @@ def test_uses_target_prefixed_env_vars(tmp_path: Path) -> None:
 
 
 def test_connection_context_uses_env_var_references_for_script(
-    tmp_path: Path,
+    tmp_path: Path, postgres_state_store_url: str,
 ) -> None:
     """The script-side connection-context block must show env-var
     references (`os.environ['DEV_SNOWFLAKE_ACCOUNT']`), NOT resolved
@@ -656,7 +666,7 @@ def test_connection_context_uses_env_var_references_for_script(
     from carve.core.agents.extract_load.agent import _compose_system_prompt
 
     project_dir = _project(tmp_path)
-    config = _config(target="dev")
+    config = _config(postgres_state_store_url, target="dev")
     task = _iowa_task()
     prompt = _compose_system_prompt(
         config=config,
@@ -691,14 +701,14 @@ def test_connection_context_uses_env_var_references_for_script(
     assert 'account = "acct"' not in prompt
 
 
-def test_requirements_minimality(tmp_path: Path) -> None:
+def test_requirements_minimality(tmp_path: Path, postgres_state_store_url: str) -> None:
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
         main_py=_iowa_main_py(),
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
     requirements = (
         project_dir / "el/iowa_liquor_sales/requirements.txt"
     ).read_text(encoding="utf-8")
@@ -708,7 +718,7 @@ def test_requirements_minimality(tmp_path: Path) -> None:
     assert "pyarrow" not in requirements
 
 
-def test_submit_step_must_be_called(tmp_path: Path) -> None:
+def test_submit_step_must_be_called(tmp_path: Path, postgres_state_store_url: str) -> None:
     project_dir = _project(tmp_path)
     # Client responds with a single end_turn — no submit_step at all.
     client = _client_returning(
@@ -718,22 +728,22 @@ def test_submit_step_must_be_called(tmp_path: Path) -> None:
         )
     )
     with pytest.raises(ExtractLoadAgentError):
-        _run(project_dir, client)
+        _run(project_dir, client, postgres_state_store_url)
 
 
-def test_rejects_wrong_agent_in_task(tmp_path: Path) -> None:
+def test_rejects_wrong_agent_in_task(tmp_path: Path, postgres_state_store_url: str) -> None:
     project_dir = _project(tmp_path)
     task = _iowa_task()
     task["agent"] = "dbt"
     client = _client_returning()  # no API calls expected
     with pytest.raises(ExtractLoadAgentError):
-        _run(project_dir, client, task=task)
+        _run(project_dir, client, postgres_state_store_url, task=task)
 
 
 # --------------------------------------------------------------------- DDL
 
 
-def test_emitted_ddl_parses(tmp_path: Path) -> None:
+def test_emitted_ddl_parses(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Emitted SQL parses via sqlparse; statement types match expected."""
     project_dir = _project(tmp_path)
     ddl = _ddl_text()
@@ -742,7 +752,7 @@ def test_emitted_ddl_parses(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=ddl,
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
     parsed = sqlparse.parse(ddl)
     # sqlparse doesn't ship type stubs; the str(...) form below is the
     # uniform way to ask for a parsed statement's text without going
@@ -754,7 +764,10 @@ def test_emitted_ddl_parses(tmp_path: Path) -> None:
     assert any("GRANT" in t for t in statements_text)
 
 
-def test_ddl_idempotent_create_table_if_not_exists(tmp_path: Path) -> None:
+def test_ddl_idempotent_create_table_if_not_exists(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     project_dir = _project(tmp_path)
     ddl = _ddl_text()
     client, _ = _scripted_run(
@@ -762,7 +775,7 @@ def test_ddl_idempotent_create_table_if_not_exists(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=ddl,
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
     on_disk = (
         project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
@@ -773,7 +786,7 @@ def test_ddl_idempotent_create_table_if_not_exists(tmp_path: Path) -> None:
     assert "CREATE OR REPLACE" not in on_disk
 
 
-def test_ddl_never_uses_create_or_replace(tmp_path: Path) -> None:
+def test_ddl_never_uses_create_or_replace(tmp_path: Path, postgres_state_store_url: str) -> None:
     """An agent-emitted DDL that uses CREATE OR REPLACE fails the contract.
 
     This test is the agent-author's safety net: if the model ever emits
@@ -794,7 +807,7 @@ def test_ddl_never_uses_create_or_replace(tmp_path: Path) -> None:
     assert "CREATE OR REPLACE" not in cleaned
 
 
-def test_ddl_never_uses_bare_rename(tmp_path: Path) -> None:
+def test_ddl_never_uses_bare_rename(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Rename-shaped goals are rejected via `submit_step(error=True)`."""
     project_dir = _project(tmp_path)
     task = _iowa_task()
@@ -809,7 +822,7 @@ def test_ddl_never_uses_bare_rename(tmp_path: Path) -> None:
             "re-create or hand-edit."
         ),
     )
-    result = _run(project_dir, client, task=task)
+    result = _run(project_dir, client, postgres_state_store_url, task=task)
     assert result.error is True
     assert "rename" in result.summary.lower()
     # The on-disk DDL never appeared — the agent didn't write any files.
@@ -818,7 +831,10 @@ def test_ddl_never_uses_bare_rename(tmp_path: Path) -> None:
     ).exists()
 
 
-def test_ddl_destructive_intent_surfaces_in_tradeoffs(tmp_path: Path) -> None:
+def test_ddl_destructive_intent_surfaces_in_tradeoffs(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """When tradeoffs approves a column drop, the DDL emits DROP COLUMN IF EXISTS."""
     project_dir = _project(tmp_path)
     task = _iowa_task()
@@ -831,7 +847,7 @@ def test_ddl_destructive_intent_surfaces_in_tradeoffs(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=ddl,
     )
-    result = _run(project_dir, client, task=task)
+    result = _run(project_dir, client, postgres_state_store_url, task=task)
     on_disk = (
         project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
@@ -839,7 +855,10 @@ def test_ddl_destructive_intent_surfaces_in_tradeoffs(tmp_path: Path) -> None:
     assert result.success is True
 
 
-def test_ddl_modify_path_emits_alter_add_column(tmp_path: Path) -> None:
+def test_ddl_modify_path_emits_alter_add_column(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """Adding a column to an existing artifact emits ALTER TABLE ADD COLUMN."""
     project_dir = _project(tmp_path)
     task = _iowa_task()
@@ -855,14 +874,14 @@ def test_ddl_modify_path_emits_alter_add_column(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=ddl,
     )
-    _run(project_dir, client, task=task)
+    _run(project_dir, client, postgres_state_store_url, task=task)
     on_disk = (
         project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
     assert "ADD COLUMN IF NOT EXISTS CITY_NAME" in on_disk
 
 
-def test_ddl_grants_runtime_role(tmp_path: Path) -> None:
+def test_ddl_grants_runtime_role(tmp_path: Path, postgres_state_store_url: str) -> None:
     """Emitted GRANT references the runtime role from `[snowflake.<target>]`."""
     project_dir = _project(tmp_path)
     client, _ = _scripted_run(
@@ -870,7 +889,7 @@ def test_ddl_grants_runtime_role(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
     on_disk = (
         project_dir / "el/iowa_liquor_sales/snowflake.sql"
     ).read_text(encoding="utf-8")
@@ -878,7 +897,7 @@ def test_ddl_grants_runtime_role(tmp_path: Path) -> None:
     assert "TO ROLE TRANSFORMER_DEV" in on_disk
 
 
-def test_build_manifest_includes_ddl_file(tmp_path: Path) -> None:
+def test_build_manifest_includes_ddl_file(tmp_path: Path, postgres_state_store_url: str) -> None:
     """The submit_step file_list — the manifest — includes the DDL file."""
     project_dir = _project(tmp_path)
     client, _payload = _scripted_run(
@@ -886,7 +905,7 @@ def test_build_manifest_includes_ddl_file(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     assert any(
         f.endswith("iowa_liquor_sales/snowflake.sql") for f in result.file_list
     )
@@ -907,7 +926,7 @@ def test_build_manifest_includes_ddl_file(tmp_path: Path) -> None:
     ],
 )
 def test_supports_each_source_pattern(
-    tmp_path: Path,
+    tmp_path: Path, postgres_state_store_url: str,
     source_type: str,
     extra_imports: str,
 ) -> None:
@@ -921,7 +940,7 @@ def test_supports_each_source_pattern(
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client, task=task)
+    result = _run(project_dir, client, postgres_state_store_url, task=task)
     assert result.success is True
 
 
@@ -930,7 +949,7 @@ def test_supports_each_source_pattern(
     ["merge_upsert", "truncate_load", "append_only", "watermark_incremental"],
 )
 def test_supports_each_transformation_strategy(
-    tmp_path: Path,
+    tmp_path: Path, postgres_state_store_url: str,
     strategy: str,
 ) -> None:
     project_dir = _project(tmp_path)
@@ -944,7 +963,7 @@ def test_supports_each_transformation_strategy(
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client, task=task)
+    result = _run(project_dir, client, postgres_state_store_url, task=task)
     assert result.success is True
     # System prompt for this turn included the strategy.
     first_call = client.calls[0]
@@ -968,7 +987,7 @@ def test_supports_each_transformation_strategy(
     ],
 )
 def test_artifact_name_validation_rejects_unsafe_values(
-    tmp_path: Path, bad_name: str
+    tmp_path: Path, postgres_state_store_url: str, bad_name: str
 ) -> None:
     """Unsafe artifact names must be rejected before any filesystem op.
 
@@ -982,10 +1001,13 @@ def test_artifact_name_validation_rejects_unsafe_values(
     task["inputs"]["artifact_name"] = bad_name
     client = _client_returning()  # no API call expected — error is pre-call
     with pytest.raises(ExtractLoadAgentError, match="artifact"):
-        _run(project_dir, client, task=task)
+        _run(project_dir, client, postgres_state_store_url, task=task)
 
 
-def test_convention_preamble_passed_through_when_present(tmp_path: Path) -> None:
+def test_convention_preamble_passed_through_when_present(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """When `carve/conventions.md` exists, its body is passed into the
     system prompt (Pillar 2 / M2-08 will populate this; Pillar 1 ships
     empty). The wiring must already be in place so M2-08 doesn't need
@@ -1001,7 +1023,7 @@ def test_convention_preamble_passed_through_when_present(tmp_path: Path) -> None
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    result = _run(project_dir, client)
+    result = _run(project_dir, client, postgres_state_store_url)
     assert result.success is True
 
     first_system = client.calls[0]["system"]
@@ -1009,7 +1031,10 @@ def test_convention_preamble_passed_through_when_present(tmp_path: Path) -> None
     assert "## Conventions" in first_system
 
 
-def test_convention_preamble_skipped_when_absent(tmp_path: Path) -> None:
+def test_convention_preamble_skipped_when_absent(
+    tmp_path: Path,
+    postgres_state_store_url: str,
+) -> None:
     """No `conventions.md` → no `## Conventions` section in the prompt."""
     project_dir = _project(tmp_path)
 
@@ -1018,7 +1043,7 @@ def test_convention_preamble_skipped_when_absent(tmp_path: Path) -> None:
         requirements_txt=_requirements_text(),
         ddl_sql=_ddl_text(),
     )
-    _run(project_dir, client)
+    _run(project_dir, client, postgres_state_store_url)
 
     first_system = client.calls[0]["system"]
     assert "## Conventions" not in first_system

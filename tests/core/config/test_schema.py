@@ -19,6 +19,11 @@ from carve.core.config.schema import (
     ServerConfig,
     SnowflakeConnection,
 )
+from carve.core.config.state_store import (
+    DEFAULT_STATE_STORE_URL,
+    StateStoreConfig,
+    resolve_state_store_url,
+)
 
 
 class TestProjectConfig:
@@ -178,8 +183,94 @@ class TestServerConfig:
         cfg = ServerConfig()
         assert cfg.host == "127.0.0.1"
         assert cfg.port == 8787
-        assert cfg.state_store.startswith("sqlite:///")
+        # v0.1-01: state_store defaults to the Postgres connection string;
+        # the legacy SQLite default is gone.
+        assert cfg.state_store == DEFAULT_STATE_STORE_URL
+        assert cfg.state_store.startswith("postgresql+psycopg://")
         assert cfg.auth_mode == "single_user"
+
+
+class TestStateStoreConfig:
+    """Schema rules for the v0.1-01 ``[state_store]`` runtime.toml section."""
+
+    def test_defaults(self) -> None:
+        cfg = StateStoreConfig()
+        assert cfg.url == DEFAULT_STATE_STORE_URL
+        assert cfg.url.startswith("postgresql+psycopg://")
+        assert cfg.pool_size == 10
+        assert cfg.max_overflow == 20
+
+    def test_override_url(self) -> None:
+        cfg = StateStoreConfig(
+            url="postgresql+psycopg://u:p@db.example.com:5432/carve"
+        )
+        assert cfg.url == "postgresql+psycopg://u:p@db.example.com:5432/carve"
+
+    def test_extra_fields_forbidden(self) -> None:
+        with pytest.raises(ValidationError):
+            StateStoreConfig.model_validate(
+                {
+                    "url": DEFAULT_STATE_STORE_URL,
+                    "unknown_key": True,
+                }
+            )
+
+    @pytest.mark.parametrize("size", [0, -1, 101])
+    def test_pool_size_bounds(self, size: int) -> None:
+        with pytest.raises(ValidationError):
+            StateStoreConfig(pool_size=size)
+
+    @pytest.mark.parametrize("overflow", [-1, 201])
+    def test_max_overflow_bounds(self, overflow: int) -> None:
+        with pytest.raises(ValidationError):
+            StateStoreConfig(max_overflow=overflow)
+
+
+class TestResolveStateStoreUrl:
+    """``resolve_state_store_url`` precedence: state_store.url, then the
+    legacy ``server.state_store`` alias, then the default."""
+
+    def test_default_when_neither_overridden(self) -> None:
+        cfg = Config(
+            project=ProjectConfig(name="x"),
+            models=ModelsConfig(anthropic_api_key="k"),
+        )
+        assert resolve_state_store_url(cfg) == DEFAULT_STATE_STORE_URL
+
+    def test_state_store_url_wins_over_default(self) -> None:
+        custom = "postgresql+psycopg://u:p@db.example.com/carve"
+        cfg = Config(
+            project=ProjectConfig(name="x"),
+            models=ModelsConfig(anthropic_api_key="k"),
+            state_store=StateStoreConfig(url=custom),
+        )
+        assert resolve_state_store_url(cfg) == custom
+
+    def test_legacy_server_state_store_alias_used_when_state_store_default(
+        self,
+    ) -> None:
+        """Legacy M1 projects set ``server.state_store`` in server.toml; the
+        loader falls back to that value when ``state_store.url`` is the
+        module default. New projects that drift away from the default win.
+        """
+        legacy_url = "postgresql+psycopg://legacy:legacy@db/carve"
+        cfg = Config(
+            project=ProjectConfig(name="x"),
+            models=ModelsConfig(anthropic_api_key="k"),
+            server=ServerConfig(state_store=legacy_url),
+        )
+        assert resolve_state_store_url(cfg) == legacy_url
+
+    def test_state_store_url_wins_over_legacy_alias(self) -> None:
+        new_url = "postgresql+psycopg://new:new@db/carve"
+        legacy_url = "postgresql+psycopg://legacy:legacy@db/carve"
+        cfg = Config(
+            project=ProjectConfig(name="x"),
+            models=ModelsConfig(anthropic_api_key="k"),
+            server=ServerConfig(state_store=legacy_url),
+            state_store=StateStoreConfig(url=new_url),
+        )
+        assert resolve_state_store_url(cfg) == new_url
 
 
 class TestConfig:
@@ -191,6 +282,8 @@ class TestConfig:
         assert cfg.project.name == "x"
         assert cfg.models.anthropic_api_key == "k"
         assert cfg.config_hash == ""  # populated by loader
+        # The new state_store subsection is populated with defaults.
+        assert cfg.state_store.url == DEFAULT_STATE_STORE_URL
 
     def test_extra_top_level_forbidden(self) -> None:
         with pytest.raises(ValidationError):
@@ -201,3 +294,15 @@ class TestConfig:
                     "unexpected_section": {},
                 }
             )
+
+    def test_state_store_section_parsed(self) -> None:
+        custom = "postgresql+psycopg://u:p@db.example.com/carve"
+        cfg = Config.model_validate(
+            {
+                "project": {"name": "x"},
+                "models": {"anthropic_api_key": "k"},
+                "state_store": {"url": custom, "pool_size": 5},
+            }
+        )
+        assert cfg.state_store.url == custom
+        assert cfg.state_store.pool_size == 5

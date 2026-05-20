@@ -1,4 +1,4 @@
 host = "0.0.0.0"
 port = 9000
-state_store = "sqlite:///.carve/state.db"
+state_store = "postgresql+psycopg://carve:carve@127.0.0.1:5432/carve"
 auth_mode = "single_user"

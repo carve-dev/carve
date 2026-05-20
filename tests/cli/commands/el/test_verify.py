@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -128,8 +127,10 @@ def _make_config(state_db: str) -> Config:
 
 
 @pytest.fixture
-def repo_with_build(tmp_path: Path) -> tuple[Repository, Config, Path]:
-    config = _make_config(state_db=f"sqlite:///{tmp_path}/.carve/state.db")
+def repo_with_build(
+    tmp_path: Path, postgres_state_store_url: str
+) -> tuple[Repository, Config, Path]:
+    config = _make_config(state_db=postgres_state_store_url)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)
@@ -142,7 +143,8 @@ def repo_with_build(tmp_path: Path) -> tuple[Repository, Config, Path]:
         goal="g",
         config_hash=config.config_hash,
         carve_version="0.0.1",
-        task_graph_json=json.dumps({"design": _design()}),
+        # v0.1-01: task_graph_json is JSONB; pass a dict, not a string.
+        task_graph_json={"design": _design()},
         file_path=".carve/plans/plan_1.json",
     )
     repo.save_plan(plan)
@@ -328,8 +330,8 @@ def test_verify_refuses_unsafe_artifact_name(
     assert code == 2
 
 
-def test_verify_no_build_exits_2(tmp_path: Path) -> None:
-    config = _make_config(state_db=f"sqlite:///{tmp_path}/.carve/state.db")
+def test_verify_no_build_exits_2(tmp_path: Path, postgres_state_store_url: str) -> None:
+    config = _make_config(state_db=postgres_state_store_url)
     (tmp_path / ".carve" / "plans").mkdir(parents=True)
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)

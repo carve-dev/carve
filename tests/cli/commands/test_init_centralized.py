@@ -27,10 +27,14 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def test_init_creates_centralized_layout(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_creates_centralized_layout(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """``carve init`` produces the flat layout — single connections.toml,
     root-level .env.example, empty ``el/`` artifact dir."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     # Centralised config files.
@@ -45,7 +49,7 @@ def test_init_creates_centralized_layout(runner: CliRunner, tmp_path: Path) -> N
 
 
 def test_init_writes_carve_toml_with_default_target(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``carve.toml`` has ``[project] default_target = "dev"`` and the
     ``[paths]`` keys (``agents_dir``, ``config_dir``).
@@ -55,7 +59,7 @@ def test_init_writes_carve_toml_with_default_target(
     still accepted by `PathsConfig` with a default so existing
     carve.toml files keep loading.
     """
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve.toml").read_text()
@@ -68,11 +72,11 @@ def test_init_writes_carve_toml_with_default_target(
 
 
 def test_init_seeds_dev_section_in_connections(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``carve/connections.toml`` contains ``[snowflake.dev]`` with
     ``${DEV_SNOWFLAKE_*}`` placeholders for every standard field."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -82,12 +86,12 @@ def test_init_seeds_dev_section_in_connections(
 
 
 def test_init_env_example_has_project_and_dev_blocks(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``.env.example`` has both the project-wide block (uncommented
     ``ANTHROPIC_API_KEY=``, commented ``GITHUB_TOKEN=``) and the
     ``# === dev target ===`` block with ``DEV_SNOWFLAKE_*`` lines."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / ".env.example").read_text()
@@ -106,19 +110,23 @@ def test_init_env_example_has_project_and_dev_blocks(
         assert f"DEV_SNOWFLAKE_{field}=" in content
 
 
-def test_init_does_not_create_dotenv_file(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_does_not_create_dotenv_file(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """``carve init`` writes ``.env.example`` but never ``.env``."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     assert (tmp_path / ".env.example").is_file()
     assert not (tmp_path / ".env").exists()
 
 
-def test_init_idempotent(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_idempotent(runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]) -> None:
     """Running ``carve init`` twice is a no-op: existing files skipped, no
     duplicate ``[snowflake.dev]`` section appended to connections.toml."""
-    first = runner.invoke(app, ["init", str(tmp_path)])
+    first = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert first.exit_code == 0, first.output
 
     conn_path = tmp_path / "carve" / "connections.toml"
@@ -126,7 +134,7 @@ def test_init_idempotent(runner: CliRunner, tmp_path: Path) -> None:
     first_conn = conn_path.read_text()
     first_env = env_example.read_text()
 
-    second = runner.invoke(app, ["init", str(tmp_path)])
+    second = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert second.exit_code == 0, second.output
 
     # No duplication of the dev section / env block.
@@ -136,8 +144,15 @@ def test_init_idempotent(runner: CliRunner, tmp_path: Path) -> None:
     assert first_env.count("# === dev target ===") == 1
 
 
-def test_init_initializes_state_store(runner: CliRunner, tmp_path: Path) -> None:
-    """``.carve/state.db`` is created with the migration head applied.
+def test_init_initializes_state_store(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+    postgres_state_store_url: str,
+) -> None:
+    """``carve init`` runs ``alembic upgrade head`` against the resolved
+    Postgres state store. v0.1-01 retired SQLite; the state lives in
+    Postgres now, and ``cli_env`` routes init at the per-test database.
 
     The asserted head is read from the alembic ``ScriptDirectory`` so the
     test self-updates as new migrations land — pinning a literal revision
@@ -149,33 +164,36 @@ def test_init_initializes_state_store(runner: CliRunner, tmp_path: Path) -> None
     from alembic.script import ScriptDirectory
     from sqlalchemy import text
 
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
-
-    db_path = tmp_path / ".carve" / "state.db"
-    assert db_path.is_file()
 
     project_root = Path(__file__).resolve().parents[3]
     alembic_cfg = AlembicConfig(str(project_root / "alembic.ini"))
     expected_head = ScriptDirectory.from_config(alembic_cfg).get_current_head()
     assert expected_head is not None
 
-    engine = create_engine(f"sqlite:///{db_path}")
+    engine = create_engine(postgres_state_store_url)
     try:
         inspector = inspect(engine)
         assert "alembic_version" in inspector.get_table_names()
         with engine.connect() as conn:
-            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            row = conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).fetchone()
             assert row is not None
             assert row[0] == expected_head
     finally:
         engine.dispose()
 
 
-def test_init_gitignore_uses_root_env(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_gitignore_uses_root_env(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """``.gitignore`` ignores root ``.env`` (single line); no per-target
     ``.env`` glob exists in the centralised model."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / ".gitignore").read_text()
@@ -187,7 +205,7 @@ def test_init_gitignore_uses_root_env(runner: CliRunner, tmp_path: Path) -> None
 
 
 def test_init_does_not_clobber_existing_files(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """Pre-existing ``carve.toml`` and other ``_write_if_missing``-managed
     files are preserved verbatim on a re-init.
@@ -204,7 +222,7 @@ def test_init_does_not_clobber_existing_files(
     (tmp_path / "carve.toml").write_text("# user-customised\n")
     (tmp_path / ".gitignore").write_text("# user-customised gitignore\n")
 
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     # Files routed through ``_write_if_missing`` are preserved verbatim.
@@ -213,17 +231,17 @@ def test_init_does_not_clobber_existing_files(
 
 
 def test_init_then_target_create_produces_two_sections(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``carve init`` followed by ``carve target create staging`` results in
     one centralised ``connections.toml`` with both ``[snowflake.dev]`` and
     ``[snowflake.staging]`` sections."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     result = runner.invoke(
         app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    )
+    , env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -244,7 +262,7 @@ def test_init_then_target_create_produces_two_sections(
 
 
 def test_init_escapes_directory_name_with_quotes(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """A directory name containing TOML metacharacters renders as a single
     escaped value rather than breaking the file or injecting bonus tables.
@@ -253,7 +271,7 @@ def test_init_escapes_directory_name_with_quotes(
 
     weird = tmp_path / 'weird"name\nwith[brackets]'
     weird.mkdir()
-    result = runner.invoke(app, ["init", str(weird)])
+    result = runner.invoke(app, ["init", str(weird)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     text = (weird / "carve.toml").read_text()
@@ -265,24 +283,24 @@ def test_init_escapes_directory_name_with_quotes(
 
 
 def test_init_refuses_filesystem_root(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
 ) -> None:
     """``carve init /`` exits non-zero rather than producing a config with
     an empty project name."""
     # Simulate by chdir'ing somewhere safe and pointing at "/".
     monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["init", "/"])
+    result = runner.invoke(app, ["init", "/"], env=cli_env)
     assert result.exit_code == 2, result.output
     assert "no directory name" in result.output
 
 
 def test_init_no_longer_creates_targets_subtree(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """P1.1-01: ``carve init`` creates ``el/`` (empty) and does NOT create
     ``targets/``. The target abstraction survives via connections.toml,
     but the per-target filesystem tree is gone."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     # `el/` is created (empty); builds populate it.
@@ -294,7 +312,7 @@ def test_init_no_longer_creates_targets_subtree(
 
 
 def test_existing_targets_dir_left_alone(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """When the project already has a ``targets/`` directory (pre-P1.1
     layout), ``carve init`` does not touch it — neither delete it nor
@@ -305,7 +323,7 @@ def test_existing_targets_dir_left_alone(
     sentinel = legacy_dir / "_sentinel.txt"
     sentinel.write_text("pre-P1.1 content\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     # Stale tree preserved verbatim.
@@ -317,16 +335,16 @@ def test_existing_targets_dir_left_alone(
 
 
 def test_target_create_does_not_create_targets_dir(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``carve target create staging`` adds the connections.toml section
     and .env.example block; does NOT create ``targets/staging/``."""
-    init_result = runner.invoke(app, ["init", str(tmp_path)])
+    init_result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert init_result.exit_code == 0, init_result.output
 
     result = runner.invoke(
         app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    )
+    , env=cli_env)
     assert result.exit_code == 0, result.output
 
     # Config got the new section / env-example block.

@@ -89,7 +89,11 @@ def test_version_matches_pyproject(runner: CliRunner) -> None:
         ("version", []),
     ],
 )
-def test_command_stub_exits_zero(runner: CliRunner, command: str, args: list[str]) -> None:
+def test_command_stub_exits_zero(
+    runner: CliRunner,
+    command: str,
+    args: list[str],
+) -> None:
     """Stubs that haven't grown a real implementation yet still exit 0."""
     result = runner.invoke(app, [command, *args])
     assert result.exit_code == 0, result.output
@@ -136,8 +140,12 @@ def test_real_command_exits_2_without_carve_toml(
     assert result.exit_code == 2, result.output
 
 
-def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None:
-    result = runner.invoke(app, ["init", str(tmp_path)])
+def test_init_creates_expected_layout(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     assert (tmp_path / "carve.toml").is_file()
@@ -153,11 +161,15 @@ def test_init_creates_expected_layout(runner: CliRunner, tmp_path: Path) -> None
     assert (tmp_path / ".gitignore").is_file()
 
 
-def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_writes_models_toml_placeholder(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """`carve init` must drop a placeholder `models.toml` so the user has a clear
     edit target. The file body itself is commented out — the user must uncomment
     and supply real values before `carve plan` will work."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "models.toml").read_text()
@@ -178,14 +190,18 @@ def test_init_writes_models_toml_placeholder(runner: CliRunner, tmp_path: Path) 
         raise AssertionError(f"unexpected active line in models.toml placeholder: {line!r}")
 
 
-def test_init_writes_connections_toml_template(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_writes_connections_toml_template(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """`connections.toml` ships a real `[snowflake.dev]` section.
 
     P1-01 changed init to call ``add_target_to_project("dev", root)``,
     so the section is uncommented and uses ``${DEV_SNOWFLAKE_*}``-prefixed
     placeholders.
     """
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -195,9 +211,13 @@ def test_init_writes_connections_toml_template(runner: CliRunner, tmp_path: Path
     assert 'password = "${DEV_SNOWFLAKE_PASSWORD}"' in content
 
 
-def test_init_writes_runner_toml_template(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_writes_runner_toml_template(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """`runner.toml` is the [runner] section — no header inside the file."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "runner.toml").read_text()
@@ -207,13 +227,17 @@ def test_init_writes_runner_toml_template(runner: CliRunner, tmp_path: Path) -> 
     assert "[runner]" not in content
 
 
-def test_init_writes_env_example_template(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_writes_env_example_template(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """`.env.example` lists project-wide vars + a ``# === dev target ===`` block.
 
     P1-01 introduced target-prefixed env-var names; the dev block lives
     alongside the project-wide section.
     """
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / ".env.example").read_text()
@@ -229,7 +253,7 @@ def test_init_writes_env_example_template(runner: CliRunner, tmp_path: Path) -> 
 
 
 def test_init_produces_loadable_config(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
 ) -> None:
     """A freshly-initialised project must round-trip through `load_config()`.
 
@@ -245,7 +269,7 @@ def test_init_produces_loadable_config(
     monkeypatch.setenv("DEV_SNOWFLAKE_DATABASE", "d")
     monkeypatch.setenv("DEV_SNOWFLAKE_SCHEMA", "s")
 
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     config = load_config(tmp_path)
@@ -257,9 +281,13 @@ def test_init_produces_loadable_config(
     assert config.connections.snowflake["dev"].account == "acc"
 
 
-def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_carve_toml_content(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """The exact content of `carve.toml` is consumed by the M1-02 loader."""
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve.toml").read_text()
@@ -274,16 +302,20 @@ def test_init_carve_toml_content(runner: CliRunner, tmp_path: Path) -> None:
     assert "targets_dir" not in content
 
 
-def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_is_idempotent_on_existing_files(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """Running `init` twice must not error; existing files are left alone."""
-    first = runner.invoke(app, ["init", str(tmp_path)])
+    first = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert first.exit_code == 0
 
     # Mutate one file; re-running init must not overwrite it.
     sentinel = "# user customization\n"
     (tmp_path / "carve.toml").write_text(sentinel)
 
-    second = runner.invoke(app, ["init", str(tmp_path)])
+    second = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert second.exit_code == 0
     assert (tmp_path / "carve.toml").read_text() == sentinel
 
@@ -293,7 +325,11 @@ def test_init_is_idempotent_on_existing_files(runner: CliRunner, tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
-def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> None:
+def test_init_uses_add_target_to_project(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """``carve init`` produces the same artifacts that ``carve target create dev``
     would, on a fresh project.
 
@@ -310,12 +346,12 @@ def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> N
     create_dir.mkdir()
 
     # `init` flow: produces dev directly.
-    result = runner.invoke(app, ["init", str(init_dir)])
+    result = runner.invoke(app, ["init", str(init_dir)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     # `target create` flow: init another project, then delete dev (force +
     # no-default-warning), then re-create dev via `target create`.
-    result = runner.invoke(app, ["init", str(create_dir)])
+    result = runner.invoke(app, ["init", str(create_dir)], env=cli_env)
     assert result.exit_code == 0, result.output
     result = runner.invoke(
         app,
@@ -329,11 +365,13 @@ def test_init_uses_add_target_to_project(runner: CliRunner, tmp_path: Path) -> N
             "--project-dir",
             str(create_dir),
         ],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--project-dir", str(create_dir)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -395,7 +433,11 @@ def _extract_env_block(content: str, name: str) -> list[str]:
     return out
 
 
-def test_top_level_target_flag_wired(runner: CliRunner, tmp_path: Path) -> None:
+def test_top_level_target_flag_wired(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """Running ``carve --target staging <subcommand>`` stows ``staging`` for
     downstream resolution.
 
@@ -404,11 +446,11 @@ def test_top_level_target_flag_wired(runner: CliRunner, tmp_path: Path) -> None:
     but a successful invocation exercises the typer plumbing for the flag.
     Crucially, the run must not error out due to the new top-level option.
     """
-    result = runner.invoke(app, ["init", str(tmp_path)])
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     result = runner.invoke(
         app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    )
+    , env=cli_env)
     assert result.exit_code == 0, result.output
 
     # Pass the top-level --target flag and verify it's captured. We use
@@ -426,6 +468,7 @@ def test_top_level_target_flag_wired(runner: CliRunner, tmp_path: Path) -> None:
             "--project-dir",
             str(tmp_path),
         ],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
 

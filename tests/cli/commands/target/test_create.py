@@ -15,19 +15,20 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _init_project(runner: CliRunner, tmp_path: Path) -> None:
-    result = runner.invoke(app, ["init", str(tmp_path)])
+def _init_project(runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]) -> None:
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
 
 def test_target_create_appends_section_to_connections(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``[snowflake.<new>]`` is appended with ``${<NAME>_*}`` placeholders."""
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -43,12 +44,13 @@ def test_target_create_appends_section_to_connections(
 
 
 def test_target_create_appends_block_to_env_example(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -60,49 +62,61 @@ def test_target_create_appends_block_to_env_example(
 
 
 def test_target_create_does_not_create_targets_dir(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """P1.1-01: ``carve target create staging`` adds the connections.toml
     section and .env.example block, but does NOT create ``targets/staging/``.
     EL artifacts live in the flat ``el/<name>/`` tree, target-agnostic."""
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
     assert not (tmp_path / "targets").exists()
 
 
 def test_target_create_refuses_existing_section(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """``carve init`` already created ``[snowflake.dev]``, so re-creating it
     without ``--force`` exits 2."""
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 2, result.output
     assert "already exists" in result.output
 
 
-def test_target_create_refuses_invalid_name(runner: CliRunner, tmp_path: Path) -> None:
-    _init_project(runner, tmp_path)
+def test_target_create_refuses_invalid_name(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "Staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 2, result.output
     assert "must match" in result.output
 
 
-def test_target_create_force_overwrites(runner: CliRunner, tmp_path: Path) -> None:
-    _init_project(runner, tmp_path)
+def test_target_create_force_overwrites(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
+    _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--force", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -111,14 +125,14 @@ def test_target_create_force_overwrites(runner: CliRunner, tmp_path: Path) -> No
 
 
 def test_target_create_preserves_comments_round_trip(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
     """Adding a new target preserves comments + ordering of prior sections.
 
     Acceptance: tomlkit edits preserve comments + ordering on
     ``carve/connections.toml``.
     """
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     conn = tmp_path / "carve" / "connections.toml"
     # Add a comment at the top of the file the user might have written.
     original = conn.read_text()
@@ -128,6 +142,7 @@ def test_target_create_preserves_comments_round_trip(
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = conn.read_text()

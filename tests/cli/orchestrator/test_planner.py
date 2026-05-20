@@ -9,7 +9,6 @@ agent's tool_use blocks. The plan agent terminates by calling
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -116,7 +115,7 @@ def _design(**overrides: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------- Config
 
 
-def _config(state_db: str = "sqlite:///.carve/state.db") -> Config:
+def _config(state_db: str) -> Config:
     return Config(
         project=ProjectConfig(name="planner-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
@@ -134,8 +133,8 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path) -> Repository:
-    config = _config()
+def repository(project_dir: Path, postgres_state_store_url: str) -> Repository:
+    config = _config(postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     return Repository(create_session_factory(engine))
@@ -145,10 +144,10 @@ def repository(project_dir: Path) -> Repository:
 
 
 def test_plan_emits_design_via_submit_plan_and_persists_drafted_row(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """submit_plan tool emission → Plan row with phase='drafted', no files written."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     # The plan agent's `submit_plan` call is now the loop terminator —
     # exactly one `messages.create` is made, so only one usage block
@@ -188,16 +187,17 @@ def test_plan_emits_design_via_submit_plan_and_persists_drafted_row(
     assert plan_row is not None
     assert plan_row.phase == "drafted"
     assert plan_row.parent_plan_id is None
-    # task_graph stores the design dict under "design".
-    task_graph = json.loads(plan_row.task_graph_json)
+    # task_graph stores the design dict under "design". v0.1-01 changed
+    # the column from TEXT to JSONB, so the ORM returns a dict directly.
+    task_graph = plan_row.task_graph_json
     assert task_graph["design"]["pipeline_name"] == "csv_ingest"
 
 
 def test_plan_records_zero_cost_for_unknown_model(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """An unknown `default_model` yields cost = 0 but still produces a plan."""
-    config = _config()
+    config = _config(postgres_state_store_url)
     config.models.default_model = "made-up-model"
 
     client = _client_returning(
@@ -222,10 +222,10 @@ def test_plan_records_zero_cost_for_unknown_model(
 
 
 def test_plan_errors_when_agent_does_not_call_submit_plan(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Agent ends turn without calling submit_plan → clear error, no plan row."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     client = _client_returning(
         _response(
@@ -247,10 +247,10 @@ def test_plan_errors_when_agent_does_not_call_submit_plan(
 
 
 def test_plan_rejects_invalid_pipeline_name(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """A pipeline_name with hyphens or weird chars is rejected."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     client = _client_returning(
         _response(
@@ -277,10 +277,10 @@ def test_plan_rejects_invalid_pipeline_name(
 
 
 def test_plan_raises_config_error_when_api_key_missing(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """`models.anthropic_api_key=None` surfaces ConfigError pointing at models.toml."""
-    config = _config()
+    config = _config(postgres_state_store_url)
     config.models.anthropic_api_key = None
 
     with pytest.raises(ConfigError) as exc_info:
@@ -299,10 +299,10 @@ def test_plan_raises_config_error_when_api_key_missing(
 
 
 def test_refine_links_parent_and_threads_design_into_context(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Refine path: parent_plan_id set; agent context includes the prior design."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     client = _client_returning(
         _response(
@@ -359,10 +359,10 @@ def test_refine_links_parent_and_threads_design_into_context(
 
 
 def test_refine_refuses_built_plan(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Refining a plan in phase='built' raises a clear error."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     # Plant a plan and mark it built.
     client = _client_returning(
@@ -378,6 +378,11 @@ def test_refine_refuses_built_plan(
         project_dir=project_dir,
         repository=repository,
         client=client,
+    )
+    # Pipeline must exist before stamping plans.pipeline_name (Postgres
+    # enforces the FK that SQLite ignored in the M1 fixture flow).
+    repository.create_or_update_pipeline(
+        name="csv_ingest", description="", pipeline_dir="el/csv_ingest"
     )
     repository.mark_plan_built(plan_id=plan.id, pipeline_name="csv_ingest")
 
@@ -396,10 +401,10 @@ def test_refine_refuses_built_plan(
 
 
 def test_pipeline_mode_includes_existing_files_in_context(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """`--pipeline <name>` reads on-disk files and inlines them into context."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     # Plant an existing pipeline directory and row under the per-target
     # layout. The planner inlines existing files from
@@ -450,10 +455,10 @@ def test_pipeline_mode_includes_existing_files_in_context(
 
 
 def test_pipeline_mode_rejects_unknown_pipeline(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """`--pipeline <name>` against a pipeline that doesn't exist errors out."""
-    config = _config()
+    config = _config(postgres_state_store_url)
     with pytest.raises(PlanGenerationError, match=r"not found"):
         generate_plan(
             goal="g",
@@ -466,10 +471,10 @@ def test_pipeline_mode_rejects_unknown_pipeline(
 
 
 def test_pipeline_mode_locks_pipeline_name_in_design(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """When --pipeline is set, the design's pipeline_name must match."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     pipeline_dir = project_dir / "targets" / "dev" / "el" / "existing_pl"
     pipeline_dir.mkdir(parents=True)
@@ -509,7 +514,7 @@ def test_pipeline_mode_locks_pipeline_name_in_design(
 
 
 def test_submit_plan_called_twice_rejects_second_call(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """A second `submit_plan` in the same turn surfaces as a tool error.
 
@@ -519,7 +524,7 @@ def test_submit_plan_called_twice_rejects_second_call(
     exits after the turn, so the second design never overwrites the
     first.
     """
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     first = _design(description="first design")
     second = _design(description="overwrite attempt")
@@ -558,10 +563,10 @@ def test_submit_plan_called_twice_rejects_second_call(
 
 
 def test_plan_forwards_observer_events(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """`generate_plan` must thread `observer` through to `AgentLoop`."""
-    config = _config()
+    config = _config(postgres_state_store_url)
 
     class _Recorder:
         def __init__(self) -> None:
@@ -630,7 +635,7 @@ def _dummy_plan_row(plan_id: str) -> Any:
         goal="seed",
         config_hash="h",
         carve_version="0.0.1",
-        task_graph_json="{}",
+        task_graph_json={},
         file_path=f".carve/plans/{plan_id}.json",
     )
 
@@ -641,7 +646,7 @@ def _dummy_plan_row(plan_id: str) -> Any:
 
 
 def test_destination_hint_overrides_agent_choice(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """CLI flags via destination_hint override what the agent submits.
 
@@ -649,7 +654,7 @@ def test_destination_hint_overrides_agent_choice(
     user passed `--table FORCED_TABLE` on `carve plan`. The post-submit
     enforcement step must replace the agent's choice with the flag's.
     """
-    config = _config()
+    config = _config(postgres_state_store_url)
     client = _client_returning(
         _response(
             content=[
@@ -678,12 +683,12 @@ def test_destination_hint_overrides_agent_choice(
 
 
 def test_goal_text_fqn_seeds_destination_when_no_flags(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """An FQN parsed from goal text becomes the destination when no
     CLI flags are provided. CLI flags would still take precedence — see
     the test above — but here we exercise the goal-only path."""
-    config = _config()
+    config = _config(postgres_state_store_url)
     client = _client_returning(
         _response(
             content=[
@@ -712,11 +717,11 @@ def test_goal_text_fqn_seeds_destination_when_no_flags(
 
 
 def test_cli_flags_beat_goal_text_fqn(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """When BOTH the goal text and a CLI flag specify a field, the
     flag wins. Goal-text parse is a fallback for unset flags."""
-    config = _config()
+    config = _config(postgres_state_store_url)
     client = _client_returning(
         _response(
             content=[

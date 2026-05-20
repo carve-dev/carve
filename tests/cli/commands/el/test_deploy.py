@@ -9,7 +9,6 @@ the surface contract.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -269,7 +268,7 @@ def repository_with_build(
         goal="iowa goal",
         config_hash=config.config_hash,
         carve_version="0.0.1",
-        task_graph_json=json.dumps({"design": _design()}),
+        task_graph_json={"design": _design()},
         file_path=".carve/plans/plan_1.json",
     )
     repo.save_plan(plan)
@@ -339,9 +338,9 @@ def test_deploy_refuses_same_source_and_dest(
     assert "differ" in console.export_text()
 
 
-def test_deploy_no_build_exits_2(project_dir: Path) -> None:
+def test_deploy_no_build_exits_2(project_dir: Path, postgres_state_store_url: str) -> None:
     """Source artifact exists but no Build row → exit 2."""
-    config = _make_config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _make_config(state_db=postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
@@ -363,11 +362,11 @@ def test_deploy_no_build_exits_2(project_dir: Path) -> None:
 
 
 def test_deploy_missing_deploy_connection(
-    project_dir: Path,
+    project_dir: Path, postgres_state_store_url: str
 ) -> None:
     """No `prod_deploy` block → exit 2 with doc-link error."""
     config = _make_config(
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev", "prod"),  # NO prod_deploy
     )
     engine = create_engine_from_config(config, project_dir=project_dir)
@@ -381,7 +380,7 @@ def test_deploy_missing_deploy_connection(
         goal="g",
         config_hash=config.config_hash,
         carve_version="0.0.1",
-        task_graph_json=json.dumps({"design": _design()}),
+        task_graph_json={"design": _design()},
         file_path=".carve/plans/plan_1.json",
     )
     repo.save_plan(plan)
@@ -1039,7 +1038,7 @@ def test_record_terminal_failure_does_not_persist_sql_text(
 def test_carve_deploy_legacy_alias_warns_and_forwards(
     project_dir: Path,
     repository_with_build: tuple[Repository, Config, str],
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
 ) -> None:
     """`carve deploy` (root-level) prints deprecation banner and runs."""
     _repo, config, _ = repository_with_build
@@ -1087,6 +1086,7 @@ def test_carve_deploy_legacy_alias_warns_and_forwards(
             "prod",
             "--yes",
         ],
+    env=cli_env,
     )
     # Banner should appear regardless of underlying success/fail.
     assert "deprecated" in result.output.lower()

@@ -76,12 +76,14 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def el_invocation(project_dir: Path) -> ElRunInvocation:
+def el_invocation(
+    project_dir: Path, postgres_state_store_url: str
+) -> ElRunInvocation:
     return ElRunInvocation(
         pipeline_name="iowa",
         active_target="dev",
         project_dir=project_dir,
-        config=_make_config(project_dir),
+        config=_make_config(postgres_state_store_url),
         failed_run_id="",
         error_text="",
     )
@@ -148,6 +150,15 @@ def _execute_factory(
     """
     state = {"call_count": 0}
     queue = list(outcomes) if outcomes else None
+
+    # Postgres enforces the runs.pipeline_name -> pipelines.name FK that
+    # SQLite ignored in the M1 fixture flow. Ensure the parent pipeline
+    # row exists before the first child run is inserted.
+    repository.create_or_update_pipeline(
+        name=pipeline_name,
+        description="recovery-test seed",
+        pipeline_dir=f"el/{pipeline_name}",
+    )
 
     def _execute(parent_run_id: str | None) -> ExecutionResult:
         state["call_count"] += 1
@@ -227,6 +238,7 @@ def test_recovery_deploy_phase1_drift_recovered(
     monkeypatch: pytest.MonkeyPatch,
     repository: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """Phase 1 drift detected → agent edits DDL → retry succeeds."""
     invocation = DeployPreflightInvocation(
@@ -234,7 +246,7 @@ def test_recovery_deploy_phase1_drift_recovered(
         source_target="dev",
         dest_target="prod",
         project_dir=project_dir,
-        config=_make_config(project_dir),
+        config=_make_config(postgres_state_store_url),
         failed_run_id="",
         error_text="",
         ddl_path=project_dir / "el/iowa/snowflake.sql",
@@ -265,6 +277,7 @@ def test_recovery_deploy_phase2_ddl_failure_recovered(
     monkeypatch: pytest.MonkeyPatch,
     repository: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """DDL stmt failure → agent fixes → retry succeeds."""
     invocation = DeployDdlApplyInvocation(
@@ -272,7 +285,7 @@ def test_recovery_deploy_phase2_ddl_failure_recovered(
         source_target="dev",
         dest_target="prod",
         project_dir=project_dir,
-        config=_make_config(project_dir),
+        config=_make_config(postgres_state_store_url),
         failed_run_id="",
         error_text="",
         ddl_path=project_dir / "el/iowa/snowflake.sql",
@@ -304,6 +317,7 @@ def test_recovery_deploy_phase3_verify_failure_recovered(
     monkeypatch: pytest.MonkeyPatch,
     repository: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """Verify failure → agent appends GRANT → retry succeeds."""
     invocation = DeployVerifyInvocation(
@@ -311,7 +325,7 @@ def test_recovery_deploy_phase3_verify_failure_recovered(
         source_target="dev",
         dest_target="prod",
         project_dir=project_dir,
-        config=_make_config(project_dir),
+        config=_make_config(postgres_state_store_url),
         failed_run_id="",
         error_text="",
         ddl_path=project_dir / "el/iowa/snowflake.sql",
@@ -362,6 +376,11 @@ def test_recovery_budget_exhausted(
     )
     # Always fail; bake the error per call so the loop-detect doesn't
     # trip on identical diagnoses (we want the budget-exhausted path).
+    # Seed the iowa pipeline so the runs.pipeline_name FK is satisfied
+    # on Postgres (SQLite ignored this constraint).
+    repository.create_or_update_pipeline(
+        name="iowa", description="recovery-test seed", pipeline_dir="el/iowa"
+    )
     state = {"n": 0}
 
     def execute(parent_run_id: str | None) -> ExecutionResult:
@@ -518,6 +537,11 @@ def test_recovery_chain_persisted_via_parent_run_id(
             ),
         ],
     )
+    # Seed the iowa pipeline so the runs.pipeline_name FK is satisfied
+    # on Postgres (SQLite ignored this constraint).
+    repository.create_or_update_pipeline(
+        name="iowa", description="recovery-test seed", pipeline_dir="el/iowa"
+    )
     state = {"n": 0}
 
     def execute(parent_run_id: str | None) -> ExecutionResult:
@@ -564,6 +588,7 @@ def test_recovery_per_context_budgets_independent(
     monkeypatch: pytest.MonkeyPatch,
     repository: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """Three deploy phases each get their own budget pool.
 
@@ -572,7 +597,7 @@ def test_recovery_per_context_budgets_independent(
     `run_with_recovery` carries its own attempt count; the orchestrator
     is the layer that drives them sequentially.
     """
-    config = _make_config(project_dir)
+    config = _make_config(postgres_state_store_url)
     ddl_path = project_dir / "el/iowa/snowflake.sql"
     phase_invocations: list[Invocation] = [
         DeployPreflightInvocation(

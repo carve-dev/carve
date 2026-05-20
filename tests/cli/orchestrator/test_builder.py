@@ -13,7 +13,6 @@ tool is the real one, so each tool_use ends up writing a file under
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -110,8 +109,8 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path) -> Repository:
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+def repository(project_dir: Path, postgres_state_store_url: str) -> Repository:
+    config = _config(state_db=postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     return Repository(create_session_factory(engine))
@@ -150,7 +149,7 @@ def _plant_drafted_plan(
         goal="ingest",
         config_hash="0123456789abcdef",
         carve_version="0.0.1",
-        task_graph_json=json.dumps({"design": design, "pipeline_name": pipeline_name}),
+        task_graph_json={"design": design, "pipeline_name": pipeline_name},
         file_path=f"/tmp/{plan_id}.json",
         phase="drafted",
         pipeline_name=pipeline_name_on_row,
@@ -213,10 +212,10 @@ def _success_responses(
 
 
 def test_build_writes_files_and_marks_plan_built(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Build agent writes both files → Pipeline + Build rows created, plan built."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_aaaaaa")
 
     client = _client_returning(*_success_responses())
@@ -253,8 +252,10 @@ def test_build_writes_files_and_marks_plan_built(
     assert build.pipeline_name == "csv_ingest"
     assert build.plan_id == plan.id
     assert build.target == "dev"
-    assert "main.py" in build.manifest_json
-    assert "requirements.txt" in build.manifest_json
+    # v0.1-01: manifest_json is JSONB; the dict carries a `files` list.
+    manifest_files = build.manifest_json.get("files", [])
+    assert any("main.py" in f for f in manifest_files)
+    assert any("requirements.txt" in f for f in manifest_files)
 
     # Plan flipped to built.
     plan_row = repository.get_plan(plan.id)
@@ -271,10 +272,10 @@ def test_build_writes_files_and_marks_plan_built(
 
 
 def test_build_design_is_inlined_into_system_prompt(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """The design appears in the build agent's system prompt, including destination."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000001_aaaaaa")
     client = _client_returning(*_success_responses())
 
@@ -295,10 +296,10 @@ def test_build_design_is_inlined_into_system_prompt(
 
 
 def test_build_marks_failed_when_main_py_not_written(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Agent writes only requirements.txt → run failed, plan stays drafted."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000002_aaaaaa")
 
     client = _client_returning(
@@ -339,9 +340,9 @@ def test_build_marks_failed_when_main_py_not_written(
 
 
 def test_build_refuses_built_plan_without_force(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000003_aaaaaa")
     # Build it once.
     build_plan(
@@ -363,9 +364,9 @@ def test_build_refuses_built_plan_without_force(
 
 
 def test_build_force_rebuilds_a_built_plan(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000004_aaaaaa")
     build_plan(
         plan_id=plan.id,
@@ -421,10 +422,10 @@ def test_build_force_rebuilds_a_built_plan(
 
 
 def test_build_for_existing_pipeline_replaces_files(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Building a plan that targets an existing pipeline overwrites the files."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
 
     # Plant the existing pipeline files + row under the flat layout.
     pipeline_dir = project_dir / "el" / "csv_ingest"
@@ -432,12 +433,14 @@ def test_build_for_existing_pipeline_replaces_files(
     (pipeline_dir / "main.py").write_text("# old version\n")
     (pipeline_dir / "requirements.txt").write_text("snowflake-connector-python\n")
     seed_plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_seed00")
-    repository.mark_plan_built(plan_id=seed_plan.id, pipeline_name="csv_ingest")
+    # Pipeline must exist before we stamp `plans.pipeline_name` — Postgres
+    # enforces the FK that SQLite ignored in the M1 fixture flow.
     repository.create_or_update_pipeline(
         name="csv_ingest",
         description="seed",
         pipeline_dir="el/csv_ingest",
     )
+    repository.mark_plan_built(plan_id=seed_plan.id, pipeline_name="csv_ingest")
     seed_build = repository.create_build(
         pipeline_name="csv_ingest",
         plan_id=seed_plan.id,
@@ -473,8 +476,12 @@ def test_build_for_existing_pipeline_replaces_files(
     assert "import snowflake.connector" in main_content
 
 
-def test_build_unknown_plan_raises(project_dir: Path, repository: Repository) -> None:
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+def test_build_unknown_plan_raises(
+    project_dir: Path,
+    repository: Repository,
+    postgres_state_store_url: str,
+) -> None:
+    config = _config(state_db=postgres_state_store_url)
     with pytest.raises(BuildError, match=r"not found"):
         build_plan(
             plan_id="plan_20260101_000099_aaaaaa",
@@ -489,13 +496,13 @@ def test_build_unknown_plan_raises(project_dir: Path, repository: Repository) ->
 
 
 def test_build_target_column_records_active_target(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """`carve build <id> --target staging` lands files under the flat
     `el/<name>/` tree but the Build row still stamps `target = staging`.
     P1.1-01: the target column reflects the catalog/runtime context the
     build was inspected against, not where the files live."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000010_aaaaaa")
 
     client = _client_returning(*_success_responses(target="staging"))
@@ -522,10 +529,10 @@ def test_build_target_column_records_active_target(
 
 
 def test_build_creates_build_row_with_correct_fields(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """The Build row carries pipeline_name, plan_id, target, and a populated manifest."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000011_aaaaaa")
 
     client = _client_returning(*_success_responses())
@@ -543,14 +550,15 @@ def test_build_creates_build_row_with_correct_fields(
     assert build.plan_id == plan.id
     assert build.target == "dev"
     # Manifest references the per-target paths the build wrote.
-    assert "el/csv_ingest/main.py" in build.manifest_json
-    assert "el/csv_ingest/requirements.txt" in build.manifest_json
+    manifest_files = build.manifest_json.get("files", [])
+    assert any("el/csv_ingest/main.py" in f for f in manifest_files)
+    assert any("el/csv_ingest/requirements.txt" in f for f in manifest_files)
 
 
 def test_build_sets_current_build_id_on_pipeline(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000012_aaaaaa")
 
     client = _client_returning(*_success_responses())
@@ -567,10 +575,10 @@ def test_build_sets_current_build_id_on_pipeline(
 
 
 def test_build_default_target_falls_through_to_config(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """No --target → resolves to ``config.project.default_target``."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     config.project.default_target = "production"
 
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000013_aaaaaa")
@@ -588,10 +596,10 @@ def test_build_default_target_falls_through_to_config(
 
 
 def test_build_invalid_pipeline_name_rejected(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """A design with a non-snake_case pipeline_name → BuildError before any IO."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(
         repository,
         plan_id="plan_20260101_000014_aaaaaa",
@@ -608,13 +616,13 @@ def test_build_invalid_pipeline_name_rejected(
 
 
 def test_two_builds_against_different_targets(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Two builds against dev/prod produce two Build rows; current_build_id
     ends at the latest. P1.1-01: both builds write to the SAME flat
     `el/<name>/` path — last build wins on disk (the pre-P1.1-02 transient
     behaviour the spec acknowledges)."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000015_aaaaaa")
 
     artifact_dev = build_plan(
@@ -662,11 +670,11 @@ def test_two_builds_against_different_targets(
 
 
 def test_build_writes_to_flat_el_path(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """P1.1-01: ``carve build <plan>`` writes to ``el/<name>/main.py``,
     not ``targets/dev/el/<name>/main.py``."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000017_flat01")
 
     client = _client_returning(*_success_responses())
@@ -685,7 +693,7 @@ def test_build_writes_to_flat_el_path(
 
 
 def test_build_writes_destination_toml(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """The build flow emits ``destination.toml`` next to ``main.py``.
 
@@ -694,7 +702,7 @@ def test_build_writes_destination_toml(
     defaults (ANALYTICS/RAW from the test config) so they appear
     commented-out in the file rather than as live overrides.
     """
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     # The default _config has dev's snowflake.database == "DB" / schema_ ==
     # None. The plan's design carries database="ANALYTICS", schema="RAW",
     # table="RAW_CSV". Because the plan's database differs from env,
@@ -723,11 +731,11 @@ def test_build_writes_destination_toml(
 
 
 def test_build_destination_override_applies_before_agent_runs(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """``destination_override`` mutates ``design.destination`` so the
     agent sees the user's chosen FQN AND destination.toml reflects it."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_destn2")
 
     client = _client_returning(*_success_responses())
@@ -753,12 +761,12 @@ def test_build_destination_override_applies_before_agent_runs(
 
 
 def test_build_destination_override_empty_string_clears_field(
-    project_dir: Path, repository: Repository
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
     """Passing ``""`` for a field via ``destination_override`` clears it
     from ``design.destination`` — the prompt-edit path uses this to
     revert an override back to "inherit from env."""
-    config = _config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+    config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000000_destn3")
 
     client = _client_returning(*_success_responses())

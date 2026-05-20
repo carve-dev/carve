@@ -50,7 +50,7 @@ def _build() -> Build:
         pipeline_name="iowa",
         plan_id="p1",
         target="dev",
-        manifest_json='{"files": []}',
+        manifest_json={"files": []},
     )
 
 

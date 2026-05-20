@@ -405,7 +405,7 @@ def test_phase_check_constraint_rejects_invalid_value(repo: Repository) -> None:
         goal="g",
         config_hash="h",
         carve_version="v",
-        task_graph_json="{}",
+        task_graph_json={},
         file_path=".carve/plans/bad.json",
         phase="garbage",
     )

@@ -23,7 +23,16 @@ if TYPE_CHECKING:
 
 # The docker-compose bundle in v0.1-02 ships exactly this connection
 # string; the OSS default matches so a fresh install + `carve serve`
-# Just Works. The hosted product overrides via env var.
+# Just Works.
+#
+# **Dev-only.** These credentials (`carve` / `carve` against a localhost
+# Postgres) are intended for local development only. They MUST NOT be
+# used for any internet-reachable install. Production deployments must
+# override via the ``DATABASE_URL`` env var or by setting
+# ``state_store.url`` in ``runtime.toml`` to a connection string whose
+# credentials you actually control. The hosted product never uses this
+# default — its control plane injects a managed connection string at
+# startup.
 DEFAULT_STATE_STORE_URL = "postgresql+psycopg://carve:carve@localhost:5432/carve"
 
 

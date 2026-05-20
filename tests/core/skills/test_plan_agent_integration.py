@@ -158,8 +158,8 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path) -> Repository:
-    config = _config("sqlite:///.carve/state.db")
+def repository(project_dir: Path, postgres_state_store_url: str) -> Repository:
+    config = _config(postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     return Repository(create_session_factory(engine))
@@ -171,6 +171,7 @@ def repository(project_dir: Path) -> Repository:
 def test_plan_agent_can_call_catalog_skill(
     project_dir: Path,
     repository: Repository,
+    postgres_state_store_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The plan agent calls `describe_table`, then submits a design.
@@ -235,7 +236,7 @@ def test_plan_agent_can_call_catalog_skill(
 
     artifact = generate_plan(
         goal="Ingest events into RAW.RAW.EVENTS",
-        config=_config("sqlite:///.carve/state.db"),
+        config=_config(postgres_state_store_url),
         project_dir=project_dir,
         repository=repository,
         client=client,

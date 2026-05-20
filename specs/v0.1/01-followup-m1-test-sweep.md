@@ -18,6 +18,8 @@ Bring the M1 test suite back to green against the v0.1-01 Postgres state store, 
 
 This spec is **test + doc work only**. No new functionality. No production code changes outside the one docstring touch-up.
 
+> **Updated during implementation (2026-05-20):** A second small production change landed in `src/carve/cli/commands/init.py` (user-authorized scope expansion during reviewer cleanup) — the misleading `+ .carve/state.db` print line and its surrounding docstring were updated to reflect that init now bootstraps a Postgres schema rather than a SQLite file. Still "no new functionality", but the "outside the one docstring touch-up" wording no longer holds literally. See the §Files-this-spec-produces callout and §Acceptance for the full picture.
+
 ## Out of scope
 
 - Any new feature, refactor, or runtime behavior change. v0.1-01 already landed the runtime correctness; this spec is the test sweep that comes after.
@@ -25,6 +27,8 @@ This spec is **test + doc work only**. No new functionality. No production code 
 - Performance tuning of the testcontainers Postgres fixture. v0.1-01 already used a session-scoped container with per-test database — that pattern is fine as-is.
 
 ## Files this spec produces
+
+> **Updated during implementation (2026-05-20):** Added two files that were touched during the sweep but missing from the original list — `tests/conftest.py` (the `cli_env` fixture the spec's Bucket C narrative calls for) and `tests/core/config/fixtures/valid_full/carve/server.toml` (one-line flip of the dev URL from `sqlite:///...` to `postgresql+psycopg://...` so the spec's own "zero `sqlite:///` in tests/" acceptance bullet holds).
 
 ```
 tests/migrations/test_migrations.py                     # MODIFY — Bucket B rewrite
@@ -50,9 +54,14 @@ tests/core/deploy/test_preflight.py                     # MODIFY — Bucket A
 tests/core/state/test_database.py                       # MODIFY — Bucket B rewrite + new unit tests (bullets 1, 2)
 tests/core/config/test_schema.py                        # MODIFY — Bucket B rewrite
 tests/test_cli.py                                       # MODIFY — top-level CLI smoke tests; Bucket C
+tests/conftest.py                                       # MODIFY — add the `cli_env` fixture (Bucket C support)
+tests/core/config/fixtures/valid_full/carve/server.toml # MODIFY — flip dev URL from sqlite:// to postgresql+psycopg:// so the SQLite-retirement grep stays clean
 src/carve/core/config/state_store.py                    # MODIFY — docstring: DEFAULT_STATE_STORE_URL labeled dev-only
+src/carve/cli/commands/init.py                          # MODIFY — see callout below: docstring + post-init print line
 docs/installation.md                                    # MODIFY — explicit "default credentials are dev-only" callout
 ```
+
+> **Updated during implementation (2026-05-20):** `src/carve/cli/commands/init.py` was added to this list mid-implementation. The original spec scoped production-code changes to a single docstring touch-up in `src/carve/core/config/state_store.py`; reviewer cleanup surfaced that `_initialize_state_store` still printed `+ .carve/state.db` after the SQLite-retirement, which contradicted what the function actually does. The user explicitly authorized expanding scope to fix the misleading print line and its docstring (now: `+ state store schema initialized (postgres)`). This is a strategic scope expansion beyond the "test + doc work only" guardrail and is also reflected in the §Acceptance callout below and in the existing major-drift proposal.
 
 ## Behavior
 
@@ -71,6 +80,8 @@ Files: `tests/core/runners/test_local_venv.py`, `tests/integration/test_extract_
 Tests in this bucket assert directly against the SQLite engine, schema reflection, or migration behavior. The Postgres equivalent works differently in places (JSONB vs TEXT, TIMESTAMPTZ vs TEXT timestamps, partial unique indexes on jobs not yet present in v0.1-01's schema). Each needs targeted review:
 
 - **`tests/migrations/test_migrations.py`** — the existing tests assume Alembic upgrades a clean SQLite. Switch the engine to the per-test Postgres database via `postgres_state_store_url`. Assertions about table types (TEXT vs JSONB) and timestamp columns (NOT NULL DEFAULT now() vs nullable naive) flip to the Postgres expectation. Bullet 4 of v0.1-01 ## Tests ("`alembic upgrade head` on empty Postgres → schema matches expected DDL") lands a new test here.
+
+  > **Updated during implementation (2026-05-20):** "Rewrite" was the right framing — the SQLite-only legacy-migration tests (the SQLite→Postgres migrator was already removed in `2a87d7e`) had no Postgres equivalent and were dropped rather than ported. The retained tests are the per-revision Alembic walk against Postgres (`0003` rename, `0004` builds + FK rewire, `0005` runs.target, `0006` recovery chains) plus the new `test_alembic_upgrade_head_on_empty_postgres`.
 - **`tests/core/state/test_database.py`** — exercises `create_engine_from_config`, `initialize_database`, and connection-lifecycle assertions. Rewrite against Postgres. Bullets 1 and 2 of v0.1-01 ## Tests land here as new test functions:
   - `test_model_metadata_reflects_against_postgres` — open a Postgres engine, `inspect(engine).get_table_names()` returns the expected M1-shape tables (plus whatever's already added in v0.1-01)
   - `test_engine_factory_rejects_non_postgres_url` — `pytest.raises(StateStoreBackendError, match="postgresql\\+psycopg://")` for `sqlite:///`, `mysql://`, and a malformed URL
@@ -147,6 +158,7 @@ This spec is itself test work; the deliverables ARE tests. The acceptance bar is
 - The three v0.1-01 ## Tests bullets that had no coverage now have dedicated tests
 - `src/carve/core/config/state_store.py` and `docs/installation.md` document the dev-only nature of the default credentials
 - No production code changes outside the docstring updates (this is a test sweep)
+  > **Updated during implementation (2026-05-20):** Held with one user-authorized scope expansion. `src/carve/cli/commands/init.py::_initialize_state_store` had its docstring updated *and* its post-init `console.print` line replaced (`{project_root}/.carve/state.db` → `state store schema initialized (postgres)`) so the user-visible output no longer references the retired SQLite file. The original spec wording is preserved as the intent; the print-line change is recorded here so future readers know this acceptance bullet was relaxed deliberately, not violated silently.
 - A reviewer can `grep "sqlite:///" tests/` and find zero hits (the SQLite source pattern is fully retired from the test surface)
 
 ## Design notes

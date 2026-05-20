@@ -27,6 +27,13 @@ After install, `carve --version` should work.
 
 ## First-run with bundled Postgres
 
+> **Warning — dev-only credentials.** The bundled `docker-compose.yml`
+> uses default credentials (`carve` / `carve`) suitable for local
+> development only. Do not expose this Postgres to the network. For any
+> production-shaped install, use [`--external-postgres`](#first-run-with-external-postgres)
+> with credentials you control, or override via the `DATABASE_URL` env
+> variable / `state_store.url` in `runtime.toml`.
+
 ```bash
 $ mkdir my-carve-project && cd my-carve-project
 $ carve init

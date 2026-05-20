@@ -46,12 +46,12 @@ def _usage() -> SimpleNamespace:
     )
 
 
-def _config() -> Config:
+def _config(state_store_url: str) -> Config:
     return Config(
         project=ProjectConfig(name="el-flow"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
         runner=RunnerConfig(),
-        server=ServerConfig(state_store="sqlite:///:memory:"),
+        server=ServerConfig(state_store=state_store_url),
         connections=ConnectionsConfig(
             snowflake={
                 "dev": ConnConfig(
@@ -215,13 +215,15 @@ def project_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_extract_load_flow_end_to_end(project_dir: Path) -> None:
+def test_extract_load_flow_end_to_end(
+    project_dir: Path, postgres_state_store_url: str
+) -> None:
     task = _task()
     client = _scripted_client()
     result = run_extract_load_agent(
         task=task,
         active_target="dev",
-        config=_config(),
+        config=_config(postgres_state_store_url),
         project_dir=project_dir,
         client=client,
         max_turns=10,

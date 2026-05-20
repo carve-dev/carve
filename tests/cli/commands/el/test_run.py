@@ -92,10 +92,14 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path, venv_cache_dir: Path) -> Repository:
+def repository(
+    project_dir: Path,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
+) -> Repository:
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev", "prod"),
     )
     engine = create_engine_from_config(config, project_dir=project_dir)
@@ -147,13 +151,16 @@ def _plant_legacy_pipelines_artifact(
 
 
 def test_el_run_resolves_artifact_in_active_target(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`carve el run iowa_liquor` reads from `el/iowa_liquor/main.py`
     (P1.1-01 flat layout)."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -175,14 +182,17 @@ def test_el_run_resolves_artifact_in_active_target(
 
 
 def test_el_run_target_flag_stamps_run_row(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`--target prod` does NOT change the on-disk path (flat layout)
     but still flows through to the runtime: the run row records
     `target=prod` and the subprocess sees `CARVE_ACTIVE_TARGET=PROD`."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev", "prod"),
     )
     _plant_target_artifact(
@@ -213,7 +223,10 @@ def test_el_run_target_flag_stamps_run_row(
 
 
 def test_el_run_carve_active_target_env_var_uppercase(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """The subprocess sees `CARVE_ACTIVE_TARGET=DEV` (uppercased).
 
@@ -222,7 +235,7 @@ def test_el_run_carve_active_target_env_var_uppercase(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -251,7 +264,10 @@ def test_el_run_carve_active_target_env_var_uppercase(
 
 
 def test_el_run_legacy_pipelines_fallback_removed(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """P1.1-01: the M1.1-06 `pipelines/<name>/` fallback is GONE.
 
@@ -260,7 +276,7 @@ def test_el_run_legacy_pipelines_fallback_removed(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_legacy_pipelines_artifact(
@@ -283,11 +299,14 @@ def test_el_run_legacy_pipelines_fallback_removed(
 
 
 def test_el_run_missing_artifact_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     console = Console(record=True, width=120)
@@ -310,12 +329,15 @@ def test_el_run_missing_artifact_exits_2(
 
 
 def test_el_run_creates_run_row_with_target(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`runs.target` is stamped with the resolved active target."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev", "prod"),
     )
     _plant_target_artifact(
@@ -339,12 +361,15 @@ def test_el_run_creates_run_row_with_target(
 
 
 def test_el_run_re_runnable(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """No replay guard — running an artifact twice is the expected operation."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -374,7 +399,10 @@ def test_el_run_re_runnable(
 
 
 def test_el_run_target_id_references_most_recent_build(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """When a successful Build exists, `runs.target_id` points at it.
 
@@ -385,7 +413,7 @@ def test_el_run_target_id_references_most_recent_build(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -395,10 +423,12 @@ def test_el_run_target_id_references_most_recent_build(
         body="print('ok')\n",
     )
     # Seed a Plan + Build so `latest_build_for` returns something.
-    repository.save_plan(_make_plan("plan_target_id", "with_build"))
+    # Pipeline first — Postgres enforces the plans.pipeline_name FK that
+    # SQLite ignored.
     repository.create_or_update_pipeline(
         name="with_build", description="", pipeline_dir="el/with_build"
     )
+    repository.save_plan(_make_plan("plan_target_id", "with_build"))
     build = repository.create_build(
         pipeline_name="with_build", plan_id="plan_target_id", target="dev"
     )
@@ -450,7 +480,8 @@ def _make_plan(plan_id: str, pipeline_name: str) -> Any:
         goal="g",
         config_hash="h",
         carve_version="0.0.1",
-        task_graph_json="{}",
+        # v0.1-01: task_graph_json is JSONB; expects a dict, not a string.
+        task_graph_json={},
         file_path="x",
         phase="built",
         pipeline_name=pipeline_name,
@@ -463,12 +494,15 @@ def _make_plan(plan_id: str, pipeline_name: str) -> Any:
 
 
 def test_active_target_not_defined_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`--target foo` without a `[snowflake.foo]` section exits 2 pre-spawn."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     console = Console(record=True, width=120)
@@ -485,12 +519,15 @@ def test_active_target_not_defined_exits_2(
 
 
 def test_project_root_containment_enforced(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """A pathological pipeline name that escapes the project root is refused."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     console = Console(record=True, width=120)
@@ -511,7 +548,10 @@ def test_project_root_containment_enforced(
 
 
 def test_el_run_watch_reruns_on_file_change(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`--watch` triggers a fresh Run when a file in the artifact dir changes.
 
@@ -521,7 +561,7 @@ def test_el_run_watch_reruns_on_file_change(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -583,7 +623,10 @@ def test_el_run_watch_reruns_on_file_change(
 
 
 def test_el_run_watch_exits_on_ctrl_c(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """Stop-signal between runs terminates the watch loop with the last exit code.
 
@@ -595,7 +638,7 @@ def test_el_run_watch_exits_on_ctrl_c(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -640,7 +683,10 @@ def test_el_run_watch_exits_on_ctrl_c(
 
 
 def test_el_run_watch_picks_up_requirements_change(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """A change to `requirements.txt` triggers a re-run; venv re-resolves.
 
@@ -651,7 +697,7 @@ def test_el_run_watch_picks_up_requirements_change(
     """
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -731,14 +777,17 @@ def test_carve_active_target_not_set_in_parent_after_run() -> None:
 
 
 def test_el_run_watch_returns_sentinel_when_stopped_before_first_run(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """If `stop_event` is set before any iteration runs, the sentinel
     return value (-1) is returned — distinguishing 'watch never ran' from
     'watch ran and the last run succeeded' (0)."""
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
     _plant_target_artifact(
@@ -766,7 +815,7 @@ def test_el_run_watch_returns_sentinel_when_stopped_before_first_run(
 def test_el_run_watch_refuses_symlinked_artifact_dir_outside_project(
     repository: Repository,
     venv_cache_dir: Path,
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path_factory: pytest.TempPathFactory, postgres_state_store_url: str
 ) -> None:
     """A symlinked artifact directory pointing outside the project root is
     refused with exit 2 before the watcher schedules. Defense-in-depth:
@@ -794,7 +843,7 @@ def test_el_run_watch_refuses_symlinked_artifact_dir_outside_project(
 
     config = _make_config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_root}/.carve/state.db",
+        state_db=postgres_state_store_url,
         targets=("dev",),
     )
 

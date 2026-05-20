@@ -15,18 +15,19 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _init_project(runner: CliRunner, tmp_path: Path) -> None:
-    result = runner.invoke(app, ["init", str(tmp_path)])
+def _init_project(runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]) -> None:
+    result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
 
 def test_target_list_marks_default(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
 ) -> None:
-    _init_project(runner, tmp_path)
+    _init_project(runner, tmp_path, cli_env)
     runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
+    env=cli_env,
     )
     # Set DEV_* env vars so the secrets column doesn't matter for this test.
     for var in (
@@ -40,7 +41,7 @@ def test_target_list_marks_default(
     ):
         monkeypatch.setenv(var, "x")
 
-    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)])
+    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     # The default is dev — there should be a `*` somewhere on the dev row.
     out = result.output
@@ -49,21 +50,25 @@ def test_target_list_marks_default(
     assert "*" in out
 
 
-def test_target_list_empty_state(runner: CliRunner, tmp_path: Path) -> None:
+def test_target_list_empty_state(
+    runner: CliRunner,
+    tmp_path: Path,
+    cli_env: dict[str, str],
+) -> None:
     """No ``[snowflake.*]`` sections shows the empty-state message."""
     # Use a bare directory (no init).
-    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)])
+    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     assert "No targets yet" in result.output
 
 
 def test_target_list_secrets_status(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
 ) -> None:
     """``Secrets`` column reports ``✗ missing`` when env vars aren't set, and
     ``✓ all set`` when they are."""
-    _init_project(runner, tmp_path)
-    runner.invoke(app, ["target", "create", "staging", "--project-dir", str(tmp_path)])
+    _init_project(runner, tmp_path, cli_env)
+    runner.invoke(app, ["target", "create", "staging", "--project-dir", str(tmp_path)], env=cli_env)
 
     # Only set DEV_* vars, leaving STAGING_* unset.
     for var in (
@@ -86,7 +91,7 @@ def test_target_list_secrets_status(
     ):
         monkeypatch.delenv(var, raising=False)
 
-    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)])
+    result = runner.invoke(app, ["target", "list", "--project-dir", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     assert "all set" in result.output
     assert "missing" in result.output

@@ -178,7 +178,7 @@ def command(
 
 
 def _initialize_state_store(project_root: Path) -> None:
-    """Create `.carve/state.db` with the M1 schema.
+    """Create the Postgres state-store schema for a fresh project.
 
     `carve init` runs before `models.toml` exists, so we can't call
     `load_config()` here. Instead we synthesise a minimal Config that
@@ -193,4 +193,4 @@ def _initialize_state_store(project_root: Path) -> None:
     engine = create_engine_from_config(config, project_dir=project_root)
     initialize_database(engine)
     engine.dispose()
-    console.print(f"[green]+[/green] {project_root / '.carve' / 'state.db'}")
+    console.print("[green]+[/green] state store schema initialized (postgres)")

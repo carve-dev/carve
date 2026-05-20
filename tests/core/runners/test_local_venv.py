@@ -45,6 +45,7 @@ from carve.core.steps.python import PythonStep, PythonStepConfig
 
 
 def _build_config(
+    state_store_url: str,
     *,
     venv_cache_dir: str = ".carve/venvs",
     snowflake: dict[str, SnowflakeConnection] | None = None,
@@ -53,7 +54,7 @@ def _build_config(
         project=ProjectConfig(name="runner-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
         runner=RunnerConfig(venv_cache_dir=venv_cache_dir),
-        server=ServerConfig(state_store="sqlite:///.carve/state.db"),
+        server=ServerConfig(state_store=state_store_url),
         connections=ConnectionsConfig(snowflake=snowflake or {}),
     )
 
@@ -64,8 +65,8 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repo(project_dir: Path) -> Repository:
-    config = _build_config()
+def repo(project_dir: Path, postgres_state_store_url: str) -> Repository:
+    config = _build_config(postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     factory = create_session_factory(engine)
@@ -74,23 +75,24 @@ def repo(project_dir: Path) -> Repository:
 
 @pytest.fixture
 def runner(
-    project_dir: Path, repo: Repository
+    project_dir: Path, repo: Repository, postgres_state_store_url: str
 ) -> LocalVenvRunner:
     cache = project_dir / ".carve" / "venvs"
     cache.mkdir(parents=True, exist_ok=True)
-    config = _build_config(venv_cache_dir=str(cache))
+    config = _build_config(postgres_state_store_url, venv_cache_dir=str(cache))
     return LocalVenvRunner(config.runner, repo)
 
 
 def _make_context(
     project_dir: Path,
     repo: Repository,
+    state_store_url: str,
     *,
     target: str = "dev",
     snowflake: dict[str, SnowflakeConnection] | None = None,
 ) -> RunContext:
     run_id = repo.create_run(kind="step", target_id="t")
-    config = _build_config(snowflake=snowflake)
+    config = _build_config(state_store_url, snowflake=snowflake)
     return RunContext(
         run_id=run_id,
         project_dir=project_dir,
@@ -151,6 +153,7 @@ def test_simple_script_runs_to_success_and_logs_stdout(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "hello.py"
     script.write_text('print("hello from carve")\n')
@@ -162,7 +165,7 @@ def test_simple_script_runs_to_success_and_logs_stdout(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     handle = runner.execute(step, context)
     assert handle.run_id == context.run_id
@@ -180,12 +183,13 @@ def test_wait_returns_step_result_with_status(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "ok.py"
     script.write_text("print('ok')\n")
 
     step = PythonStep(PythonStepConfig(id="ok", script="ok.py", timeout_seconds=60))
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     result = runner.wait(context.run_id)
@@ -202,6 +206,7 @@ def test_failing_script_records_failed_status_with_exit_code(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "boom.py"
     script.write_text("import sys\nsys.exit(7)\n")
@@ -209,7 +214,7 @@ def test_failing_script_records_failed_status_with_exit_code(
     step = PythonStep(
         PythonStepConfig(id="boom", script="boom.py", timeout_seconds=60)
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     status = _wait_terminal(repo, context.run_id)
@@ -228,6 +233,7 @@ def test_timeout_triggers_cancellation(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "slow.py"
     script.write_text("import time\ntime.sleep(60)\n")
@@ -235,7 +241,7 @@ def test_timeout_triggers_cancellation(
     step = PythonStep(
         PythonStepConfig(id="slow", script="slow.py", timeout_seconds=1)
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     status = _wait_terminal(repo, context.run_id, timeout=20.0)
@@ -250,12 +256,13 @@ def test_cancel_is_idempotent_after_completion(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "fast.py"
     script.write_text("print('done')\n")
 
     step = PythonStep(PythonStepConfig(id="fast", script="fast.py", timeout_seconds=60))
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -267,7 +274,7 @@ def test_cancel_is_idempotent_after_completion(
 # ------------------------------------------------------------ Snowflake env
 
 
-def test_snowflake_env_is_built_for_configured_target() -> None:
+def test_snowflake_env_is_built_for_configured_target(postgres_state_store_url: str) -> None:
     snowflake = {
         "dev": SnowflakeConnection(
             account="acc",
@@ -279,7 +286,7 @@ def test_snowflake_env_is_built_for_configured_target() -> None:
             schema="s",
         )
     }
-    config = _build_config(snowflake=snowflake)
+    config = _build_config(postgres_state_store_url, snowflake=snowflake)
     context = RunContext(
         run_id="r",
         project_dir=Path("/tmp"),
@@ -296,8 +303,8 @@ def test_snowflake_env_is_built_for_configured_target() -> None:
     assert env["SNOWFLAKE_SCHEMA"] == "s"
 
 
-def test_snowflake_env_is_empty_for_unconfigured_target() -> None:
-    config = _build_config(snowflake={})
+def test_snowflake_env_is_empty_for_unconfigured_target(postgres_state_store_url: str) -> None:
+    config = _build_config(postgres_state_store_url, snowflake={})
     context = RunContext(
         run_id="r",
         project_dir=Path("/tmp"),
@@ -307,7 +314,7 @@ def test_snowflake_env_is_empty_for_unconfigured_target() -> None:
     assert _snowflake_env(context) == {}
 
 
-def test_snowflake_env_handles_missing_optional_fields() -> None:
+def test_snowflake_env_handles_missing_optional_fields(postgres_state_store_url: str) -> None:
     snowflake = {
         "dev": SnowflakeConnection(
             account="acc",
@@ -317,7 +324,7 @@ def test_snowflake_env_handles_missing_optional_fields() -> None:
             database="d",
         )
     }
-    config = _build_config(snowflake=snowflake)
+    config = _build_config(postgres_state_store_url, snowflake=snowflake)
     context = RunContext(
         run_id="r",
         project_dir=Path("/tmp"),
@@ -333,6 +340,7 @@ def test_snowflake_env_is_injected_into_subprocess(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """End-to-end: configured Snowflake creds reach the subprocess env."""
     script = project_dir / "show_env.py"
@@ -354,7 +362,7 @@ def test_snowflake_env_is_injected_into_subprocess(
     step = PythonStep(
         PythonStepConfig(id="env", script="show_env.py", timeout_seconds=60)
     )
-    context = _make_context(project_dir, repo, snowflake=snowflake)
+    context = _make_context(project_dir, repo, postgres_state_store_url, snowflake=snowflake)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -368,6 +376,7 @@ def test_step_env_overrides_are_passed_through(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "show_my_var.py"
     script.write_text(
@@ -382,7 +391,7 @@ def test_step_env_overrides_are_passed_through(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -398,6 +407,7 @@ def test_path_traversal_in_script_is_rejected(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """A script that resolves outside ``project_dir`` is rejected."""
     # Set up a script outside the project root.
@@ -411,7 +421,7 @@ def test_path_traversal_in_script_is_rejected(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     with pytest.raises(ValueError, match="outside project_dir"):
         runner.execute(step, context)
@@ -421,6 +431,7 @@ def test_absolute_path_outside_project_is_rejected(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     step = PythonStep(
         PythonStepConfig(
@@ -429,7 +440,7 @@ def test_absolute_path_outside_project_is_rejected(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     with pytest.raises(ValueError, match="outside project_dir"):
         runner.execute(step, context)
@@ -442,12 +453,13 @@ def test_get_status_reflects_repo_state(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "ok.py"
     script.write_text("print('ok')\n")
 
     step = PythonStep(PythonStepConfig(id="s", script="ok.py", timeout_seconds=60))
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -463,12 +475,13 @@ async def test_stream_logs_yields_lines_and_terminates(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "two.py"
     script.write_text("print('one')\nprint('two')\n")
 
     step = PythonStep(PythonStepConfig(id="s", script="two.py", timeout_seconds=60))
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
 
@@ -485,11 +498,11 @@ async def test_stream_logs_yields_lines_and_terminates(
 # Sanity: the runner's `python_executable` defaults to the current interpreter
 # so tests don't need an alternative interpreter configured.
 def test_python_executable_defaults_to_sys_executable(
-    project_dir: Path, repo: Repository
+    project_dir: Path, repo: Repository, postgres_state_store_url: str,
 ) -> None:
     import sys
 
-    config = _build_config()
+    config = _build_config(postgres_state_store_url)
     runner = LocalVenvRunner(config.runner, repo)
     assert runner.python_executable == sys.executable
 
@@ -506,6 +519,7 @@ def test_step_env_overrides_inherited_env(
     repo: Repository,
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
+    postgres_state_store_url: str,
 ) -> None:
     monkeypatch.setenv("CARVE_OVERRIDE_ME", "from-parent")
 
@@ -522,7 +536,7 @@ def test_step_env_overrides_inherited_env(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -544,6 +558,7 @@ def test_anthropic_api_key_is_stripped_from_subprocess_env(
     repo: Repository,
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
+    postgres_state_store_url: str,
 ) -> None:
     """ANTHROPIC_API_KEY must not be inherited by the user subprocess."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-must-not-leak")
@@ -563,7 +578,7 @@ def test_anthropic_api_key_is_stripped_from_subprocess_env(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -581,6 +596,7 @@ def test_step_env_can_reintroduce_anthropic_key_intentionally(
     repo: Repository,
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
+    postgres_state_store_url: str,
 ) -> None:
     """A step can opt back in to ANTHROPIC_API_KEY via `env`."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-parent")
@@ -599,7 +615,7 @@ def test_step_env_can_reintroduce_anthropic_key_intentionally(
             timeout_seconds=60,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     _wait_terminal(repo, context.run_id)
@@ -619,6 +635,7 @@ def test_cancel_kills_forked_child_of_user_script(
     runner: LocalVenvRunner,
     repo: Repository,
     project_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """A child forked by the user script must die when the run is cancelled.
 
@@ -651,7 +668,7 @@ def test_cancel_kills_forked_child_of_user_script(
             timeout_seconds=1,
         )
     )
-    context = _make_context(project_dir, repo)
+    context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
     status = _wait_terminal(repo, context.run_id, timeout=20.0)

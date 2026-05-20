@@ -41,8 +41,8 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path) -> Repository:
-    config = _make_config(state_db=f"sqlite:///{project_dir}/.carve/state.db")
+def repository(project_dir: Path, postgres_state_store_url: str) -> Repository:
+    config = _make_config(state_db=postgres_state_store_url)
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     return Repository(create_session_factory(engine))
@@ -165,7 +165,7 @@ def _make_plan(plan_id: str, pipeline_name: str) -> object:
         goal="g",
         config_hash="h",
         carve_version="0.0.1",
-        task_graph_json="{}",
+        task_graph_json={},
         file_path="x",
         phase="built",
         pipeline_name=pipeline_name,

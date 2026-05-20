@@ -76,10 +76,14 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def repository(project_dir: Path, venv_cache_dir: Path) -> Repository:
+def repository(
+    project_dir: Path,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
+) -> Repository:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
@@ -106,24 +110,28 @@ def _plant_pipeline(
     pipeline_dir.mkdir(parents=True, exist_ok=True)
     (pipeline_dir / "main.py").write_text(script_body)
 
+    # Postgres enforces the plans.pipeline_name -> pipelines.name FK that
+    # SQLite ignored; create the pipeline row before plans/builds that
+    # reference it. v0.1-01 also flipped task_graph_json from TEXT to
+    # JSONB, so the column expects a dict, not a JSON-encoded string.
+    repository.create_or_update_pipeline(
+        name=pipeline_name,
+        description="",
+        pipeline_dir=f"el/{pipeline_name}",
+    )
+
     if plan_id is not None:
         plan = Plan(
             id=plan_id,
             goal="seed",
             config_hash="cafef00dbeefcafe",
             carve_version="0.0.1",
-            task_graph_json="{}",
+            task_graph_json={},
             file_path=f".carve/plans/{plan_id}.json",
             phase="built",
             pipeline_name=pipeline_name,
         )
         repository.save_plan(plan)
-
-    repository.create_or_update_pipeline(
-        name=pipeline_name,
-        description="",
-        pipeline_dir=f"el/{pipeline_name}",
-    )
     if plan_id is not None:
         # Pin a Build so lookups via current_build_id work.
         build = repository.create_build(
@@ -139,11 +147,14 @@ def _plant_pipeline(
 
 
 def test_run_by_name_executes_and_records_success(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     _plant_pipeline(
         project_dir,
@@ -175,11 +186,14 @@ def test_run_by_name_executes_and_records_success(
 
 
 def test_run_by_name_unknown_pipeline_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -194,11 +208,14 @@ def test_run_by_name_unknown_pipeline_exits_2(
 
 
 def test_run_by_name_failed_subprocess_returns_1(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     _plant_pipeline(
         project_dir,
@@ -221,12 +238,15 @@ def test_run_by_name_failed_subprocess_returns_1(
 
 
 def test_re_running_a_successful_pipeline_succeeds(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """No replay guard — re-runs are the expected operation."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     _plant_pipeline(
         project_dir,
@@ -256,12 +276,15 @@ def test_re_running_a_successful_pipeline_succeeds(
 
 
 def test_run_by_plan_resolves_to_pipeline(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """`carve run --plan <id>` runs the pipeline that the plan built."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     plan_id = "plan_20260101_000000_aaaaaa"
     _plant_pipeline(
@@ -289,11 +312,14 @@ def test_run_by_plan_resolves_to_pipeline(
 
 
 def test_run_by_plan_unknown_plan_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_plan(
@@ -307,11 +333,14 @@ def test_run_by_plan_unknown_plan_exits_2(
 
 
 def test_run_by_plan_invalid_format_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_plan(
@@ -326,19 +355,22 @@ def test_run_by_plan_invalid_format_exits_2(
 
 
 def test_run_by_plan_drafted_plan_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """A plan still in `drafted` phase has no pipeline_name; we refuse to run."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     plan = Plan(
         id="plan_20260101_000000_dadbed",
         goal="g",
         config_hash="h",
         carve_version="0.0.1",
-        task_graph_json="{}",
+        task_graph_json={},
         file_path=".carve/plans/x.json",
         phase="drafted",
     )
@@ -356,7 +388,10 @@ def test_run_by_plan_drafted_plan_exits_2(
 
 
 def test_run_by_name_missing_main_py_exits_2(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """Pipeline row exists but neither `el/<name>/` nor the legacy
     `targets/<active>/el/<name>/` fallback has main.py. P1.1-01: this
@@ -364,7 +399,7 @@ def test_run_by_name_missing_main_py_exits_2(
     """
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     repository.create_or_update_pipeline(
         name="orphan",
@@ -384,12 +419,15 @@ def test_run_by_name_missing_main_py_exits_2(
 
 
 def test_run_resolves_from_flat_el_path(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """P1.1-01: ``carve el run <name>`` reads ``el/<name>/main.py``."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     _plant_pipeline(
         project_dir,
@@ -414,14 +452,17 @@ def test_run_resolves_from_flat_el_path(
 
 
 def test_run_legacy_targets_path_fallback_warns(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """P1.1-01: when `el/<name>/` is absent but the legacy
     `targets/<active>/el/<name>/` tree has main.py, the runner falls
     back and emits a deprecation warning naming the migration."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     # Plant only under the legacy per-target tree; no `el/<name>/`.
     legacy_dir = project_dir / "targets" / "dev" / "el" / "legacy_pipe"
@@ -450,14 +491,17 @@ def test_run_legacy_targets_path_fallback_warns(
 
 
 def test_run_legacy_pipelines_path_removed(
-    project_dir: Path, repository: Repository, venv_cache_dir: Path
+    project_dir: Path,
+    repository: Repository,
+    venv_cache_dir: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """P1.1-01: the M1.1-06 `pipelines/<name>/` fallback is GONE. A
     script planted only there is not recognized — exit 2 with the
     standard 'no such artifact' error."""
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     legacy_dir = project_dir / "pipelines" / "old_pipe"
     legacy_dir.mkdir(parents=True)
@@ -498,7 +542,7 @@ def test_run_surfaces_logs_appended_within_same_tick(
     project_dir: Path,
     repository: Repository,
     venv_cache_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, postgres_state_store_url: str
 ) -> None:
     """Two logs sharing a `datetime.now()` tick must both reach stdout."""
     fixed_dt = datetime(2026, 1, 1, 12, 0, 0)
@@ -509,7 +553,7 @@ def test_run_surfaces_logs_appended_within_same_tick(
 
     config = _config(
         venv_cache_dir=venv_cache_dir,
-        state_db=f"sqlite:///{project_dir}/.carve/state.db",
+        state_db=postgres_state_store_url,
     )
     _plant_pipeline(
         project_dir,
