@@ -2,16 +2,8 @@
 
 The connection string is resolved from `Config` via
 :func:`carve.core.config.state_store.resolve_state_store_url`. Postgres is
-the only supported runtime backend; v0.1-01 retired the SQLite path. The
-engine factory has a one-way door:
-
-* ``postgresql+psycopg://...`` URLs are accepted everywhere
-* ``sqlite:///<path>`` URLs are rejected at runtime with a friendly error
-  string that points the user at ``carve migrate-state``
-
-The migration tool itself constructs a *source* SQLite engine via
-:func:`create_sqlite_source_engine` — that helper is the only sanctioned
-SQLite entry point in the codebase.
+the only supported backend; v0.1-01 retired SQLite outright. Non-Postgres
+URLs raise :class:`StateStoreBackendError` with a friendly message.
 
 `initialize_database` runs Alembic migrations to ``head`` so a fresh
 database lands on the latest schema (the OSS auto-migrate-on-startup
@@ -40,21 +32,20 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 
 class StateStoreBackendError(RuntimeError):
-    """Raised when the runtime is asked to open a non-Postgres state store.
+    """Raised when a non-Postgres state store URL is provided.
 
-    The migration tool's source-connection path catches this and falls
-    back to :func:`create_sqlite_source_engine`; every other caller
-    treats this as fatal.
+    Carve has no migration tool — v0.1+ is Postgres-only from day one.
+    The error message points users at the bundled docker-compose path
+    (or an external-Postgres connection string) as the fix.
     """
 
 
 def create_engine_from_config(config: Config, *, project_dir: Path | None = None) -> Engine:
     """Build a SQLAlchemy engine from the given Carve config.
 
-    Only Postgres URLs are accepted. SQLite URLs raise
-    :class:`StateStoreBackendError` with a message pointing the user at
-    ``carve migrate-state``. ``project_dir`` is accepted for backward
-    compatibility but is unused for Postgres.
+    Only Postgres URLs are accepted. Anything else raises
+    :class:`StateStoreBackendError`. ``project_dir`` is accepted for
+    backward compatibility but is unused for Postgres.
     """
     del project_dir  # unused for Postgres; kept for API compatibility
     url = resolve_state_store_url(config)
@@ -67,19 +58,6 @@ def create_engine_from_config(config: Config, *, project_dir: Path | None = None
         max_overflow=config.state_store.max_overflow,
         pool_pre_ping=True,
     )
-
-
-def create_sqlite_source_engine(url: str) -> Engine:
-    """Build a read-only SQLAlchemy engine for a SQLite migration source.
-
-    The migration tool (`carve migrate-state`) is the only caller. The
-    URL must start with ``sqlite:///``; anything else raises ``ValueError``.
-    File-resolution is the caller's responsibility — the migration tool
-    accepts already-absolute paths on its CLI flag.
-    """
-    if not url.startswith("sqlite:///"):
-        raise ValueError(f"create_sqlite_source_engine requires a sqlite URL; got {url!r}")
-    return create_engine(url, echo=False, future=True)
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -100,16 +78,12 @@ def initialize_database(engine: Engine) -> None:
     re-running on an up-to-date database is a fast no-op (Alembic checks
     the `alembic_version` table).
 
-    For an existing M1-era Postgres database that pre-dates Alembic
-    (extremely unlikely, but kept defensively to mirror the M1 behavior),
-    the function detects the legacy schema and stamps the baseline before
-    running ``upgrade head``. SQLite is rejected here too — `carve serve`
-    surfaces the friendly error via the engine factory before reaching
-    this function, but a direct caller would otherwise see a confusing
-    Alembic stack trace.
+    Non-Postgres engines are rejected with a friendly error; the engine
+    factory normally catches this earlier but `initialize_database`
+    surfaces the same message if called directly.
     """
     if engine.url.get_backend_name() != "postgresql":
-        raise StateStoreBackendError(_SQLITE_MESSAGE)
+        raise StateStoreBackendError(_NON_POSTGRES_MESSAGE)
 
     cfg = _alembic_config(engine)
 
@@ -144,25 +118,16 @@ def _alembic_config(engine: Engine) -> AlembicConfig:
 # ---------------------------------------------------------------------------
 
 
-_SQLITE_MESSAGE = (
-    "Carve no longer runs against SQLite. Migrate your state store with "
-    "`carve migrate-state --from sqlite:///<path> --to <postgres-url>` and "
-    "set `state_store.url` in runtime.toml to the Postgres connection "
-    "string. See docs/upgrade-from-walking-skeleton.md for the full guide."
+_NON_POSTGRES_MESSAGE = (
+    "Carve requires Postgres for its state store. Set DATABASE_URL or "
+    "`state_store.url` in runtime.toml to a Postgres connection string "
+    "(postgresql+psycopg://user:pass@host:port/db). For local development, "
+    "the bundled `docker-compose.yml` brings up Postgres with sensible "
+    "defaults — see docs/installation.md."
 )
 
 
 def _reject_non_postgres_url(url: str) -> None:
-    """Reject anything that isn't a Postgres URL at runtime.
-
-    The check is intentionally a substring match on the scheme rather
-    than a full parse: ``sqlite:///``, ``sqlite://`` and any future
-    typo'd variant should all surface the same friendly message.
-    """
-    if url.startswith("sqlite:"):
-        raise StateStoreBackendError(_SQLITE_MESSAGE)
+    """Reject any URL that isn't a Postgres connection string."""
     if not (url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")):
-        raise StateStoreBackendError(
-            f"Unsupported state store URL {url!r}. Carve requires Postgres "
-            f"(postgresql+psycopg://...). See docs/upgrade-from-walking-skeleton.md."
-        )
+        raise StateStoreBackendError(_NON_POSTGRES_MESSAGE)

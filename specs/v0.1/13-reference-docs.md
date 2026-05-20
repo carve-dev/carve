@@ -88,7 +88,6 @@ A complete, authoritative reference for the `carve` CLI surface. Structure:
 | `carve memory show/edit/append-decision/refresh` | Project memory                | [v0.1-06](../v0.1/06-project-memory.md) |
 | `carve metrics costs/runs/agents`     | Aggregate metrics                   | [v0.1-09](../v0.1/09-rest-api.md) |
 | `carve workspaces list/clear`         | Workspace cache for separate-remote | [v0.1-03](../v0.1/03-flat-layout.md) |
-| `carve migrate-state`                 | One-shot SQLite → Postgres          | [v0.1-01](../v0.1/01-state-store-postgres.md) |
 | `carve auth login`                    | OAuth login to Claude subscription  | M1.1 |
 | `carve auth token mint/rotate/revoke` | API token management                | [v0.1-09](../v0.1/09-rest-api.md) |
 | `carve docs open/regen/serve`         | Static HTML UI commands             | [v0.1-11](../v0.1/11-static-html-ui.md) |

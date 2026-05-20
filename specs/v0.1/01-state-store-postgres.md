@@ -1,10 +1,10 @@
-# v0.1-01 — State store migration: SQLite → Postgres
+# v0.1-01 — State store: Postgres (SQLite retired)
 
 > Aligns the M1 state store (SQLAlchemy + SQLite) to the v0.1 positioning's Postgres-from-day-one decision ([positioning #11](../_strategy/2026-05-positioning.md), [ARCHITECTURE §5.7](../ARCHITECTURE.md), [PROJECT_PLAN spec set item 1](../PROJECT_PLAN.md)).
 
 ## Status
 
-- **Status:** Drafting
+- **Status:** Mostly landed (2026-05-19); M1 test sweep deferred to v0.1-01-followup
 - **Depends on:** None (foundation spec)
 - **Blocks:** every subsequent v0.1 spec — the state store is foundational
 - **Audit reference:** M1-03 was HISTORICAL with a code-revision flag; this spec ships that revision
@@ -15,24 +15,31 @@ Replace SQLite with Postgres as Carve's state store backend, in a single coheren
 
 1. Updates the SQLAlchemy engine configuration to default to Postgres
 2. Audits and (where needed) revises the six existing Alembic migrations to work cleanly against Postgres
-3. Ships a one-shot `carve migrate-state` CLI tool so the small set of existing walking-skeleton users with SQLite state stores can migrate without data loss
-4. Updates test infrastructure to run against Postgres
+3. Updates test infrastructure to run against Postgres (via testcontainers-python)
 
-After this spec lands, every subsequent v0.1 spec assumes a Postgres state store. The SQLite path remains available only as a source for the migration tool — new installs use Postgres exclusively.
+After this spec lands, every subsequent v0.1 spec assumes a Postgres state store. SQLite is retired outright — the engine factory rejects any non-Postgres URL.
+
+### No migration tool
+
+The original draft of this spec included a one-shot `carve migrate-state` CLI for M1 walking-skeleton users. **That tool was removed during implementation** when it became clear that Carve has no released users yet, so there is no SQLite data anywhere that needs preserving. Local-dev `.carve/state.db` files from prior development can be deleted safely; new Postgres installs start empty.
+
+The original migrator code is preserved in git history at commit `23bcf88` for reference. If a future release ever needs to support live data migration (e.g., for a self-hosted-to-hosted-product import path), that's a new spec.
 
 ## Out of scope
 
+- A SQLite → Postgres migration tool. Removed — see *No migration tool* above.
 - The `docker-compose.yml` bundling Postgres for first-run UX — that's [v0.1-02 OSS packaging](./02-oss-packaging.md).
 - New tables introduced by other v0.1 specs (jobs, asks, lineage, webhooks, archive tables, etc.) — those land in their respective specs via additional Alembic migrations on top of the post-this-spec baseline.
 - Multi-tenancy `tenant_id` columns on every table — covered in [v0.1-07 runtime](./07-runtime.md) and [v0.1-09 rest-api](./09-rest-api.md) where the actual tenant-aware code paths land. This spec keeps the M1-shape schema; multi-tenancy is additive later.
 - Read replicas, partitioned tables, PgBouncer configuration — those are hosted-product concerns.
+- Migrating M1-era test fixtures from SQLite-backed `_make_config` helpers to the new Postgres fixture. Spec implied this work but the scope ballooned past the iteration budget; deferred to **v0.1-01-followup** (see *Deferred work* at the end of this spec).
 
 ## Files this spec produces
 
 ```
-src/carve/core/state/database.py             # MODIFY — engine factory targets Postgres
-src/carve/core/state/models.py               # MODIFY — JSONB where TEXT/JSON used; type adjustments
-src/carve/cli/migrate_state.py               # NEW — `carve migrate-state` command
+src/carve/core/state/database.py             # MODIFY — engine factory targets Postgres; rejects everything else
+src/carve/core/state/models.py               # MODIFY — JSONB where TEXT/JSON used; TIMESTAMPTZ for timestamps
+src/carve/core/state/repository.py           # MODIFY — JSONB write fix (manifest_json no longer json.dumps'd)
 migrations/env.py                            # MODIFY — Postgres-aware Alembic env
 migrations/versions/0001_baseline.py         # AUDIT — port to Postgres if SQLite-specific
 migrations/versions/0002_pipeline_centric.py # AUDIT
@@ -41,11 +48,16 @@ migrations/versions/0004_build_entity.py     # AUDIT
 migrations/versions/0005_runs_target.py      # AUDIT
 migrations/versions/0006_recovery_chains.py  # AUDIT
 alembic.ini                                  # MODIFY — connection string template is Postgres
-tests/conftest.py                            # MODIFY — Postgres fixtures (testcontainers-python or sibling pattern)
-tests/integration/test_migrate_state.py      # NEW — end-to-end SQLite→Postgres migration test
-src/carve/core/config/state_store.py         # NEW (or extend existing config) — read state_store_url from runtime.toml + env
-docs/upgrade-from-walking-skeleton.md        # NEW — user-facing migration guide
+tests/conftest.py                            # MODIFY — Postgres fixtures (testcontainers-python)
+src/carve/core/config/state_store.py         # NEW — read state_store_url from runtime.toml + env
+docs/installation.md                         # NEW — first-install walkthrough (bundled + external Postgres)
 ```
+
+Plus the JSONB call-site sweep (6 readers + 2 writers) and the `.replace(tzinfo=None)` removal across 12 sites — these are derived consequences of the JSONB and TIMESTAMPTZ shifts and didn't get their own per-file entries in the original draft. Files touched by that sweep:
+
+- `src/carve/cli/commands/build.py`, `el/deploy.py`, `el/verify.py`, `el/list.py`
+- `src/carve/cli/orchestrator/builder.py`, `planner.py`
+- `src/carve/core/deploy/preflight.py`
 
 ## Behavior
 
@@ -53,7 +65,7 @@ docs/upgrade-from-walking-skeleton.md        # NEW — user-facing migration gui
 
 - `runtime.toml` gains a `[state_store]` section with `url = "${DATABASE_URL}"` (env-var interpolation, per [PRD §7.3](../PRD.md))
 - `DATABASE_URL` defaults to `postgresql+psycopg://carve:carve@localhost:5432/carve` (matching the docker-compose bundle in [v0.1-02](./02-oss-packaging.md))
-- The engine factory accepts either a fully-qualified Postgres URL or `sqlite:///<path>` as a fallback for the migration-source case **only** — runtime operation against SQLite is rejected with a clear error pointing to `carve migrate-state`
+- The engine factory accepts **Postgres URLs only**. Any other scheme (sqlite, mysql, anything) raises `StateStoreBackendError` with a friendly message pointing at `docs/installation.md`.
 - Engine creation uses a connection pool sized for the expected worker count (default pool size 10, max overflow 20; configurable in `[state_store]` block)
 
 ### Model changes
@@ -81,64 +93,43 @@ Walk each of `0001` through `0006` and verify:
 
 Where a migration is clean, leave it alone. Where it isn't, rewrite the relevant `op.*` calls. Bumping the migration's `revision` is not necessary — the chain stays continuous.
 
-### The `carve migrate-state` tool
-
-A one-shot CLI command:
-
-```bash
-carve migrate-state --from sqlite:///path/to/.carve/state.db --to postgresql+psycopg://...
-```
-
-Behavior:
-
-1. **Validate** — connect to both sides, confirm SQLite source has expected M1-shape schema (revision matches one of 0001..0006), confirm Postgres target is empty or at the same revision after upgrade
-2. **Upgrade Postgres** — run `alembic upgrade head` against the Postgres target to ensure schema matches the latest migration
-3. **Copy** — for each table in dependency-safe order (Pipelines → Plans → Builds → Runs → Logs), `SELECT *` from SQLite, `INSERT INTO` Postgres in batches of 1000 rows
-4. **Verify** — `SELECT COUNT(*)` on both sides per table; fail if any mismatch
-5. **Report** — print summary: tables migrated, row counts, elapsed time, target URL
-6. **Idempotency** — if Postgres target already has rows in a table, the tool refuses to overwrite unless `--force` is passed
-7. **Non-destructive** — never deletes from SQLite. The original `.db` file is preserved as a user-managed backup. The tool prints a message recommending the user back it up to durable storage before discarding.
-
-Edge cases:
-
-- **Partial M1 state** — some users may have run only a subset of M1 specs and have a partial DB. The tool's validation step detects this via the Alembic version table and prints a clear error.
-- **In-flight runs in SQLite** — the tool refuses to run if any `runs` row has `status IN ('running', 'queued')` on the source side, with a message instructing the user to wait for runs to complete first.
-- **Postgres target unreachable** — clear error with the resolved connection string (with credentials masked) and the underlying psycopg error.
-
 ### Test infrastructure
 
-- `tests/conftest.py` provides a `postgres_state_store` session-scoped fixture that brings up a Postgres container (via `testcontainers-python` — already a transitive dep through some test pkgs, otherwise add to `dev-dependencies`)
-- Existing M1 tests that used a SQLite in-memory DB are migrated to use the Postgres fixture; assertions on JSON column shapes update to use Postgres `->`/`->>` operators where applicable
-- New `tests/integration/test_migrate_state.py` creates a SQLite DB populated with synthetic M1-shape data, runs the migrator, and asserts row counts + content equivalence
+- `tests/conftest.py` provides a session-scoped Postgres container fixture (`_postgres_container`) and a per-test database fixture (`postgres_state_store_url`) via `testcontainers-python`. The session container amortizes the 5–10s container startup cost; per-test `CREATE DATABASE` is sub-100ms.
+- A `postgres_config` fixture builds a minimal `Config` pointing at the per-test database for tests that previously built `ServerConfig(state_store=...)` manually.
+- Migrating the rest of the M1-era tests from their SQLite-based `_make_config` helpers to these fixtures is deferred to v0.1-01-followup (see *Deferred work*).
 
 ### Documentation
 
-`docs/upgrade-from-walking-skeleton.md` — a short user-facing guide covering:
+`docs/installation.md` — first-install walkthrough covering:
 
-- Why we moved to Postgres (one paragraph, links to positioning #11)
-- Prerequisites (Docker for the bundled compose, OR a running Postgres instance)
-- The migration command, with example output
-- What to verify after migration (`carve runs list` should show the same recent runs)
-- How to roll back (the original `state.db` is untouched; revert by changing `DATABASE_URL` back to SQLite — but the runtime will refuse to start, so the only realistic rollback is `git checkout` to a pre-v0.1.0 commit)
+- Python install via `pipx` / `uv tool` / `pip`
+- Bundled Postgres path: `carve init` → `docker compose up -d` → `carve serve`
+- External Postgres path: `carve init --external-postgres <url>` → `carve serve`
+- Verification: `/healthz`, `/readyz`, `carve runs list`
+- Note that a stale `.carve/state.db` from earlier development can be deleted safely
 
 ## Tests
 
 - **Unit:** model definitions import and metadata reflection works against Postgres
-- **Unit:** engine factory rejects non-Postgres URLs at runtime (`sqlite:///` → friendly error pointing at `carve migrate-state`)
-- **Unit:** migration tool's validation step correctly identifies a partial-M1 source
+- **Unit:** engine factory rejects non-Postgres URLs at runtime with a friendly message pointing at `docs/installation.md`
 - **Integration:** start with an empty Postgres, `alembic upgrade head` → schema matches expected DDL
-- **Integration:** start with a populated SQLite (synthetic M1-shape data, ~100 rows across all tables), run migrator → row counts match on both sides
-- **Integration:** rerun migrator against already-populated Postgres → refuses with non-zero exit (and proceeds with `--force`)
-- **Integration:** existing M1 test suite passes against Postgres (this is the regression bar)
+- **Integration:** existing M1 test suite passes against Postgres (this is the regression bar — see *Deferred work*)
 
 ## Acceptance
 
 - A fresh `carve serve` against an empty Postgres bootstraps the schema and accepts plans/builds/runs
-- An existing walking-skeleton user with `.carve/state.db` can run `carve migrate-state --from sqlite:///.carve/state.db --to ${DATABASE_URL}` and have all their history available in Postgres afterward
-- The full M1 test suite passes against Postgres
-- `carve serve` with a SQLite `DATABASE_URL` fails immediately with a friendly error mentioning `carve migrate-state`
-- Zero data loss in the migration tool's verify step across all six tables
-- `docs/upgrade-from-walking-skeleton.md` walks a user through the migration in under 15 minutes
+- The full M1 test suite passes against Postgres (gated by v0.1-01-followup)
+- `carve serve` with any non-Postgres `DATABASE_URL` fails immediately with a friendly error pointing at the docker-compose path or external-Postgres flag
+- `docs/installation.md` walks a new user from `pip install carve` to a green `/healthz` in under 15 minutes
+
+## Deferred work
+
+The following items were spec'd but are deferred to **v0.1-01-followup** (or folded into v0.1-02 OSS packaging where overlap makes sense):
+
+1. **M1 test fixture sweep.** ~7 test files build a local `_make_config` helper that constructs `ServerConfig(state_store="sqlite:///...")`. The new engine factory rejects SQLite, so these tests fail at fixture-creation time. Each needs to thread the `postgres_state_store_url` fixture through and pass it into the Config. Fix plan at [`.carve-build/fixes/v0.1-01-iter1.md`](../../.carve-build/fixes/v0.1-01-iter1.md) enumerates the files (Buckets A/B/C). Partial sweep landed in commit `23bcf88` (3 files: `test_pipelines.py`, `test_listing.py`, `test_recovery.py` plus `test_extract_load_agent._config()` signature change). Remaining: ~4 mechanical files + 3 Bucket B rewrites + 1 Bucket C semantic rewrite.
+2. **Three new unit tests** for spec ## Tests bullets that have no dedicated coverage: model metadata reflection (bullet 1), engine factory rejection of non-Postgres URLs (bullet 2; `grep StateStoreBackendError tests/` currently returns zero hits), `alembic upgrade head` schema-shape assertion on empty Postgres (bullet 3).
+3. **Security-reviewer Informational** findings: superuser-requirement note (no longer relevant — the migrator used `SET LOCAL session_replication_role = 'replica'` which required superuser; that code is gone). The dev-only label on `DEFAULT_STATE_STORE_URL` carries forward as a small follow-up.
 
 ## Design notes
 
