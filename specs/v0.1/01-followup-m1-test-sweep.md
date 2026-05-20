@@ -4,9 +4,10 @@
 
 ## Status
 
-- **Status:** Drafting
+- **Status:** Landed (2026-05-20, commit `4429000`)
 - **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) — uses the Postgres testcontainers fixture that v0.1-01 added to `tests/conftest.py`
 - **Blocks:** nothing structurally — but it gates the v0.1 regression bar ("the full M1 test suite passes against Postgres" per v0.1-01 ## Acceptance). v0.1-02 onward can be developed in parallel; they just need this spec landed before v0.1.0 ships.
+- **See also:** [`01-followup-database-url-env-precedence.md`](./01-followup-database-url-env-precedence.md) — small production-code followup that lets the `cli_env` monkeypatch shim collapse.
 
 ## Goal
 
@@ -96,20 +97,30 @@ Two options for each affected test:
 **Option C1 (preferred when the test exercises post-init behavior):**
 
 - Use the `postgres_state_store_url` fixture
-- Pass `env={"DATABASE_URL": postgres_state_store_url}` to `CliRunner.invoke(...)` so the spawned init resolves to the test's Postgres database
+- Pass `env={"DATABASE_URL": postgres_state_store_url}` to `CliRunner.invoke(...)`
+- **And** consume the `cli_env` fixture, which (in addition to returning the env dict) installs a function-scoped monkeypatch on `carve.core.state.database.resolve_state_store_url` so the resolved URL falls back to the per-test database URL when the bootstrap Config has no override. This shim exists because production `resolve_state_store_url` does not currently honor `DATABASE_URL` natively during `carve init` (it only honors `${DATABASE_URL}` interpolation inside an already-loaded `runtime.toml`, and `carve init` runs before that file exists). The shim collapses once [`01-followup-database-url-env-precedence`](./01-followup-database-url-env-precedence.md) lands native env-var precedence.
 
 **Option C2 (when the test only checks init's file-writes, not the post-init state):**
 
 - Add a `--skip-postgres-bootstrap` flag to `carve init` that lands the files but defers `initialize_database` to the first `carve serve` call
 - Note: this requires a small production-code change. Out of scope for this spec unless the test cost of doing C1 is unreasonable; default is C1.
 
-A helper in `tests/conftest.py` is worth adding to avoid boilerplate:
+A helper in `tests/conftest.py` is **required** (not merely "worth adding") to make this work:
 
 ```python
 @pytest.fixture
-def cli_env(postgres_state_store_url: str) -> dict[str, str]:
-    """Env dict for CliRunner.invoke; routes the spawned process at the per-test Postgres."""
-    return {"DATABASE_URL": postgres_state_store_url}
+def cli_env(
+    postgres_state_store_url: str, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, str]:
+    """Env dict for CliRunner.invoke; also patches the one runtime
+    call site for resolve_state_store_url (carve.core.state.database)
+    so the resolved URL falls back to the per-test DB when the
+    bootstrap Config has no override. The fallback closes over
+    postgres_state_store_url rather than reading os.environ at call
+    time (works around a production gap tracked in
+    01-followup-database-url-env-precedence).
+    """
+    ...
 ```
 
 Test sites then call `runner.invoke(app, [...], env=cli_env)` consistently.
@@ -158,7 +169,8 @@ This spec is itself test work; the deliverables ARE tests. The acceptance bar is
 - The three v0.1-01 ## Tests bullets that had no coverage now have dedicated tests
 - `src/carve/core/config/state_store.py` and `docs/installation.md` document the dev-only nature of the default credentials
 - No production code changes outside the docstring updates (this is a test sweep)
-  > **Updated during implementation (2026-05-20):** Held with one user-authorized scope expansion. `src/carve/cli/commands/init.py::_initialize_state_store` had its docstring updated *and* its post-init `console.print` line replaced (`{project_root}/.carve/state.db` → `state store schema initialized (postgres)`) so the user-visible output no longer references the retired SQLite file. The original spec wording is preserved as the intent; the print-line change is recorded here so future readers know this acceptance bullet was relaxed deliberately, not violated silently.
+  > **Caveat 1 (test-side shim, applied during implementation 2026-05-20):** The spec landed without modifying `src/carve/core/config/state_store.py`'s behavior, but the test sweep depends on a function-scoped monkeypatch in `cli_env` (`tests/conftest.py`) that masks a production gap — `resolve_state_store_url` does not currently honor `DATABASE_URL` natively during `carve init`. The production gap is tracked in [`01-followup-database-url-env-precedence`](./01-followup-database-url-env-precedence.md); once that lands, the monkeypatch in `cli_env` becomes a no-op and is removed.
+  > **Caveat 2 (user-authorized scope expansion, 2026-05-20):** Held with one user-authorized scope expansion. `src/carve/cli/commands/init.py::_initialize_state_store` had its docstring updated *and* its post-init `console.print` line replaced (`{project_root}/.carve/state.db` → `state store schema initialized (postgres)`) so the user-visible output no longer references the retired SQLite file. The original spec wording is preserved as the intent; the print-line change is recorded here so future readers know this acceptance bullet was relaxed deliberately, not violated silently.
 - A reviewer can `grep "sqlite:///" tests/` and find zero hits (the SQLite source pattern is fully retired from the test surface)
 
 ## Design notes
@@ -171,6 +183,7 @@ This spec is itself test work; the deliverables ARE tests. The acceptance bar is
 ## Open questions
 
 - **Should we add `--skip-postgres-bootstrap` to `carve init`?** *Implementation default.* No in this spec; let tests use C1 (env-override). Add the flag in a future spec if the post-init-no-Postgres workflow becomes important for offline-CI scenarios. If a test really can't use C1, the engineer can flag it.
+- **Does C1's env-override actually work today against unmodified production?** *Resolved during implementation (2026-05-20).* No — it requires the `cli_env` fixture to additionally monkeypatch `resolve_state_store_url` so the resolved URL honors `DATABASE_URL` when the bootstrap Config has no override. The production gap (env-var precedence in `resolve_state_store_url`) is tracked in [`01-followup-database-url-env-precedence`](./01-followup-database-url-env-precedence.md). When that lands, the `cli_env` fixture collapses to the one-line dict version originally shown in §Bucket C.
 - **Are there any `_make_config` helpers I should refactor into a shared util?** *Implementation default.* No. Each test file's `_make_config` is small and local; consolidating creates an indirection that's worse than the slight duplication.
 - **Should the new `test_engine_factory_rejects_non_postgres_url` test be parameterized over additional URL shapes (mssql, oracle, postgresql+asyncpg)?** *Implementation default.* Test the three obvious ones (sqlite, mysql, malformed). Adding more is low value; the rejection logic is a single substring check, not per-dialect.
 - **Should we also exercise `state_store.url` env-var interpolation in `test_schema.py`?** *Implementation default.* Yes if it doesn't already; v0.1-01's `state_store.py` does the interpolation and v0.1-01's tests probably already cover it but verify during implementation.
