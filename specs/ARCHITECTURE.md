@@ -741,7 +741,7 @@ Tables grouped by domain. Postgres features used: partial unique indexes (§4.2)
 ### 9.1 Project state
 
 - `pipelines(name PK, current_build_id, default_target, created_at, updated_at)`
-- `schedules(pipeline FK, cron, target, paused, last_fired_at, next_fires_at)`
+- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, last_fired_at, next_fires_at)` — the `id` PK matches the scheduler loop's `schedule.id` usage ([v0.1-07 runtime](v0.1/07-runtime.md)); the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 and can be dropped if multi-schedule (`[[schedule]]`) ever lands (deferred, see use-cases UC2).
 - `tokens(id PK, name, hashed_token, scopes, created_by, created_at, last_used_at)`
 
 ### 9.2 Plans, builds, asks

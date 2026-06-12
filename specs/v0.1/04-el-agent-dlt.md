@@ -177,6 +177,8 @@ For each invocation, the agent picks **exactly one** strategy. Selection happens
 
 The prompt is explicit that REST API config is preferred over native dlt where it applies, and that curated library trumps all other strategies when applicable.
 
+> **CDC scope note.** "database CDC" in strategy 3 means dlt's database-replication sources (e.g. Postgres `pg_replication`). SaaS CDC such as Salesforce Change Data Capture is **not** a v0.1 target — dlt ships no SaaS CDC source, and the curated Salesforce source is cursor/`SystemModstamp`-based. CDC for SaaS sources is a post-v0.1 enhancement (see use-cases UC3).
+
 ### Outputs per strategy
 
 For all four strategies the agent writes:
