@@ -1,6 +1,8 @@
 # Carve v0.1 — spec set
 
-14 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
+16 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
+
+> **Foundational reading order:** specs 15 (agent harness) and 16 (extensibility) are the AI-layer foundation the agent specs (04/08/12 + recovery/SQL) run on — read them right after 01–03, despite their late numbers (a placement reorg is a noted follow-up).
 
 All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per the *Implementation approach* section of `PROJECT_PLAN.md`). Each spec below is one `/build-spec` iteration: dependency check → phase plan → engineer → reviewer fan-out → fix iterations → spec-keeper sync → PR open for review.
 
@@ -24,6 +26,8 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 | 12 | [`12-ask-verb.md`](./12-ask-verb.md)                                | Read-only `carve ask` verb with no-write-skill guardrail              | Drafting |
 | 13 | [`13-reference-docs.md`](./13-reference-docs.md)                    | `cli-reference.md`, `config-schema.md`, `glossary.md`, `governance.md` rewrites | Drafting |
 | 14 | [`14-deploy-pr.md`](./14-deploy-pr.md)                              | `carve deploy <pipeline>`: component git-promotion via configurable handoff (files→commit→push→PR, default `pr`) + cross-repo linked PRs | Drafting |
+| 15 | [`15-agent-harness.md`](./15-agent-harness.md)                      | **AI foundation** — subagent delegation, terminal-grade tools (edit/bash/grep/web), permission modes/sandbox, verify-by-execution loop | Drafting |
+| 16 | [`16-extensibility.md`](./16-extensibility.md)                      | **AI foundation** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`; connector→skill library), hooks, MCP import | Drafting |
 
 ## Status legend
 
