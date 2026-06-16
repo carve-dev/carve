@@ -1,6 +1,6 @@
 # Carve v0.1 — spec set
 
-16 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
+18 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
 
 > **Foundational reading order:** specs 15 (agent harness) and 16 (extensibility) are the AI-layer foundation the agent specs (04/08/12 + recovery/SQL) run on — read them right after 01–03, despite their late numbers (a placement reorg is a noted follow-up).
 
@@ -28,6 +28,8 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 | 14 | [`14-deploy-pr.md`](./14-deploy-pr.md)                              | `carve deploy <pipeline>`: component git-promotion via configurable handoff (files→commit→push→PR, default `pr`) + cross-repo linked PRs | Drafting |
 | 15 | [`15-agent-harness.md`](./15-agent-harness.md)                      | **AI foundation** — subagent delegation, terminal-grade tools (edit/bash/grep/web), permission modes/sandbox, verify-by-execution loop | Drafting |
 | 16 | [`16-extensibility.md`](./16-extensibility.md)                      | **AI foundation** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`; connector→skill library), hooks, MCP import | Drafting |
+| 17 | [`17-recovery-engineer.md`](./17-recovery-engineer.md)              | Recovery: diagnose-then-delegate; dlt-exception classification; `Investigation` entity; auto-pause/resume | Drafting |
+| 18 | [`18-sql-layer.md`](./18-sql-layer.md)                              | SQL: dialect-aware tool layer (sqlglot + per-dialect introspect + role-gated exec) + thin specialist; Snowflake + DuckDB first-class | Drafting |
 
 ## Status legend
 
