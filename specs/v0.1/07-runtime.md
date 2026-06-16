@@ -5,15 +5,16 @@
 ## Status
 
 - **Status:** Drafting
+- **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), "Resolved design decisions (2026-06-16)"). The reconciler reconciles the pipeline *definition* only (steps, DAG, component refs, pins — owned by [v0.1-08](./08-multi-step-pipeline.md)); the **schedule is data** — this spec's scheduler reads the `schedules` table as its source of truth, seeded once from a pipeline's optional `[seed_schedule]` block (the seed + `carve schedule reseed` live in [v0.1-08](./08-multi-step-pipeline.md); this spec owns the live `schedules` table, the scheduler that reads it, and `carve schedule list/show/pause/resume`). This **supersedes UC2's code-vs-runtime-override TTL-precedence machinery** (see [Design notes](#design-notes)). Deploy events are untouched (pending the Wave 2 deploy revision).
 - **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) (partial unique indexes, FOR UPDATE SKIP LOCKED), [v0.1-03 flat-layout](./03-flat-layout.md) (path resolution at run time)
 - **Blocks:** [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) (which ships the actual step-type implementations on top of this spec's executor framework), [v0.1-09 rest-api](./09-rest-api.md), [v0.1-11 static-html-ui](./11-static-html-ui.md)
 - **Built on:** the `LocalVenvRunner` subprocess primitive from M1-05 (HISTORICAL — preserved). This spec wraps that primitive in a scheduler + queue + worker layer; M1-05's code is not replaced.
 
 ## Goal
 
-Build the narrow, opinionated runtime that turns a `pipelines/<name>.toml` cron declaration into a scheduled run with predictable execution semantics. Concretely:
+Build the narrow, opinionated runtime that turns a pipeline's **live schedule row** (seeded once from its optional `[seed_schedule]` block, then owned as data) into scheduled runs with predictable execution semantics. Concretely:
 
-1. **Scheduler** — a loop that fires due pipelines onto a Postgres-backed job queue
+1. **Scheduler** — a loop that reads the `schedules` table as its source of truth and fires due pipelines onto a Postgres-backed job queue
 2. **Job queue** — schema-enforced "at most one queued and one running per pipeline" semantics via partial unique indexes
 3. **Workers** — long-running processes that claim jobs via optimistic-claim semantics and execute them
 4. **Heartbeats** — workers signal liveness every 10 seconds while holding a job
@@ -21,15 +22,17 @@ Build the narrow, opinionated runtime that turns a `pipelines/<name>.toml` cron 
 6. **Archiver** — moves completed rows from active tables to archive tables on a configurable window, with verify-then-delete safety
 7. **Step executor framework** — the abstract interface that the three v0.1 step types (`dlt`, `dbt`, `sql` — implemented in spec 08) plug into
 8. **`carve serve` and `carve worker` CLI** — the two entry points users invoke to run Carve
+9. **`carve schedule` CLI** — the live-data surface (`list/show/pause/resume/set-cron`) that mutates the `schedules` table instantly, with a `schedule_changes` audit trail
 
 The runtime is deliberately narrow per design decision [5.6](../ARCHITECTURE.md): no asset-graph reactivity, no conditional branching, no fan-out beyond intra-pipeline parallelism, no cross-pipeline triggers, no first-class backfills. This spec ships exactly what's needed for scheduled dbt + dlt + sql execution.
 
 ## Out of scope
 
 - The concrete `dlt`, `dbt`, `sql` step type implementations (lives in spec 08; this spec ships only the abstract `StepExecutor` interface and the framework that calls into it)
-- The pipeline TOML schema for `pipelines/<name>.toml` (lives in spec 08)
-- REST/MCP endpoints for runtime operations (lives in spec 09)
+- The pipeline TOML schema for `pipelines/<name>.toml`, the definition reconciler, the `[seed_schedule]` *seed* applied at first registration, and `carve schedule reseed` (all live in spec 08). This spec owns the *live* `schedules` table, the scheduler that reads it, and the `carve schedule list/show/pause/resume/set-cron` mutation surface.
+- REST/MCP endpoints for runtime operations (lives in spec 09; the schedules router wraps this spec's `schedules` repository)
 - The static HTML UI's run-history view (lives in spec 11)
+- Deploy events / `deploy.*` (Wave 2, gated — left as-is per the control-plane revision; pending the Wave 2 deploy revision of spec 14)
 - Multi-tenant routing, RBAC enforcement, or hosted scaling concerns (hosted product, separate workstream)
 
 ## Files this spec produces
@@ -48,12 +51,14 @@ src/carve/runtime/events.py                             # NEW — runtime event 
 
 src/carve/cli/serve.py                                  # NEW — `carve serve` command
 src/carve/cli/worker.py                                 # NEW — `carve worker` command
+src/carve/cli/schedule.py                               # NEW — `carve schedule list/show/pause/resume` (live-data mutation surface; audited)
 
-src/carve/core/state/models.py                          # MODIFY — add Job, JobArchive, Worker, RunArchive, LogArchive, StepRunArchive, Event tables
+src/carve/core/state/models.py                          # MODIFY — add Job, JobArchive, Worker, RunArchive, LogArchive, StepRunArchive, Event, ScheduleChange tables
 migrations/versions/0008_runtime_tables.py              # NEW — Alembic migration for the above
 src/carve/core/state/repositories/jobs.py               # NEW — job repository (claim, enqueue, mark_done, list, archive)
 src/carve/core/state/repositories/workers.py            # NEW — worker registration
 src/carve/core/state/repositories/archive.py            # NEW — archive flow helpers (verify-then-delete)
+src/carve/core/state/repositories/schedules.py          # NEW — live-schedule reads (list_due, set_last_fired) + audited mutations (pause/resume/set_cron)
 
 tests/unit/test_scheduler_cron_evaluation.py            # NEW
 tests/unit/test_job_queue_dedup.py                      # NEW — verifies partial unique index behavior
@@ -66,6 +71,8 @@ tests/integration/test_worker_crash_recovery.py         # NEW — kill -9 a work
 tests/integration/test_concurrent_claims.py             # NEW — N workers race for one job; exactly one wins
 tests/integration/test_manual_trigger_dedup.py          # NEW — 50 manual requests → 1 running + 1 queued
 tests/integration/test_scheduled_dedup.py               # NEW — scheduled fires while queued exists → schedule.skipped
+tests/unit/test_schedule_source_of_truth.py             # NEW — scheduler fires from the `schedules` table; a [seed_schedule] edit (no reseed) does NOT change live firing
+tests/integration/test_schedule_pause_resume_audited.py # NEW — `carve schedule pause/resume` is instant, emits schedule.* + writes a schedule_changes row
 
 docs/runtime.md                                         # NEW — user-facing reference: scheduling, retries, alerts, worker scaling
 docs/runtime-troubleshooting.md                         # NEW — common failure modes and recovery
@@ -139,6 +146,21 @@ CREATE TABLE events (
   tenant_id BIGINT NOT NULL DEFAULT 1
 );
 CREATE INDEX ix_events_unprocessed ON events(occurred_at) WHERE processed_at IS NULL;
+
+-- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)
+CREATE TABLE schedule_changes (
+  id BIGSERIAL PRIMARY KEY,
+  pipeline TEXT NOT NULL,
+  change_kind TEXT NOT NULL,        -- pause | resume | set_cron | set_timezone | reseed
+  before JSONB,                     -- prior schedule row state (NULL on first registration)
+  after JSONB,                      -- new schedule row state
+  actor_token_id TEXT,              -- who made the change (token id); NULL for the code seed
+  source TEXT NOT NULL,             -- cli | api | mcp | ui | seed | reseed
+  reason TEXT,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id BIGINT NOT NULL DEFAULT 1
+);
+CREATE INDEX ix_schedule_changes_pipeline_changed_at ON schedule_changes(pipeline, changed_at DESC);
 ```
 
 Notes:
@@ -146,6 +168,7 @@ Notes:
 - Partial unique indexes include `tenant_id` so the constraint is per-tenant in hosted
 - Archive tables use `LIKE ... INCLUDING ALL EXCLUDING INDEXES` to inherit columns + types but specify their own indexes (different access patterns)
 - `runs`, `logs`, `step_runs` tables themselves were added in earlier specs (01 carries them forward from M1; 08 may extend with cols); this spec only adds their archives
+- The `schedules` table (`id PK, pipeline FK UNIQUE, cron, target, paused, timezone, last_fired_at, next_fires_at` — ARCHITECTURE §9.3) is **not** created here: the reconciler ([v0.1-08](./08-multi-step-pipeline.md)) inserts/updates the row at first registration, applying the pipeline's optional `[seed_schedule]` block as the **initial seed**. Thereafter the row is **live data**: this spec's scheduler reads it as the source of truth, and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it instantly. The `id` PK the scheduler loop references (`schedule.id`) is the one already present from that reconciliation. This spec adds only the `schedule_changes` audit log above.
 
 ### Scheduler
 
@@ -178,6 +201,28 @@ Key properties:
 - Cron evaluation via `croniter` (already pinned in M1); each schedule's `this_tick_at(now)` returns the canonical cron-tick timestamp for the current window
 - Sleeps until the next 30-second wall-clock boundary, not `now + 30s` — keeps fires aligned with cron expressions like `*/5 * * * *`
 - A `Clock` abstraction makes the loop deterministic in tests (no `time.sleep`)
+- **The scheduler reads the `schedules` table as the single source of truth.** It does not read `pipelines/<name>.toml`, the reconciler, or any `[seed_schedule]` block — the live row (cron, timezone, `paused`) is authoritative. A paused row (`paused = true`) is skipped by `list_due`. This is the data tier of the three-tier code/data split ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): definition is code (reconciled by spec 08), schedule is data (this table), run state is data.
+
+### Schedule mutations (live data)
+
+The schedule is **data**, mutated instantly via `carve schedule` (and the equivalent REST/MCP surface wired in spec 09). `src/carve/cli/schedule.py` ships:
+
+```
+carve schedule list                         # all schedules with cron, timezone, paused, last/next fire
+carve schedule show <pipeline>
+carve schedule pause <pipeline> [--reason]
+carve schedule resume <pipeline> [--reason]
+carve schedule set-cron <pipeline> "<cron>" [--timezone TZ] [--reason]
+```
+
+These call `state_store.schedules` mutators (`pause`, `resume`, `set_cron`), each of which, in one transaction:
+1. Updates the `schedules` row (recomputes `next_fires_at` via `croniter` on a cron/timezone change).
+2. Appends a `schedule_changes` row capturing `before`/`after`, `actor_token_id`, `source`, and optional `reason`.
+3. Emits the matching `schedule.*` event.
+
+The change takes effect on the **next scheduler tick** (≤ the 30s loop interval) — no deploy, no reconcile, no PR. RBAC is enforced via the `schedule` scope (hosted; the OSS single-token install is unscoped). This is the audited, instant path the control-plane model specifies; `carve schedule reseed` (spec 08) is the separate code→data re-seed for when a team deliberately wants to re-apply `[seed_schedule]` (it writes a `schedule_changes` row with `source = "reseed"`).
+
+> **Supersedes UC2's TTL-precedence machinery.** UC2 previously routed schedule changes through plan/build/deploy/PR, with runtime *overrides* that survived reconciles until a TTL (`schedule override` / `clear-override`, `member_override_max_ttl`). Under the control-plane model the schedule is just data, so there is no code-vs-override conflict to arbitrate and **no TTL, no override-survival logic, no `member_override_max_ttl`** — `carve schedule pause/resume/set-cron` *are* the change, audited via `schedule_changes`. See [Design notes](#design-notes).
 
 ### Job queue
 
@@ -473,6 +518,9 @@ Every state transition emits an event into the `events` table via `src/carve/run
 | Event                      | Payload includes                                                  |
 |----------------------------|-------------------------------------------------------------------|
 | `schedule.skipped`         | pipeline, scheduled_for, reason                                   |
+| `schedule.paused` / `resumed` | pipeline, actor_token_id, source, reason                       |
+| `schedule.changed`         | pipeline, before (cron/tz), after (cron/tz), actor_token_id, source, reason |
+| `schedule.reseeded`        | pipeline, before, after, source="reseed" (emitted by `carve schedule reseed`, spec 08) |
 | `job.queued`               | job_id, pipeline, target, trigger, scheduled_for                  |
 | `job.claimed`              | job_id, worker_id                                                 |
 | `job.reclaimed`            | job_id, prior_claimed_by, reason                                  |
@@ -487,6 +535,8 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 ## Tests
 
 - **Unit (scheduler):** cron `*/5 * * * *` fires at expected times under a controlled `Clock`; missed ticks (clock jumps forward by 20 minutes) produce one fire, not four
+- **Unit (schedule source of truth):** the scheduler fires from the `schedules` table row, not from `pipelines/<name>.toml`; a paused row is skipped by `list_due`; mutating a `[seed_schedule]` block (without `carve schedule reseed`) does not change which ticks fire
+- **Integration (schedule mutation audited):** `carve schedule pause`/`resume`/`set-cron` updates the row, takes effect within one scheduler loop interval, emits the matching `schedule.*` event, and appends a `schedule_changes` row with `before`/`after`/`actor_token_id`/`source` — no deploy/reconcile involved
 - **Unit (job_queue dedup):** two consecutive `enqueue_scheduled` for the same pipeline+scheduled_for: the second raises `QueuedJobAlreadyExists`
 - **Unit (job_queue manual upsert):** `enqueue_manual` on a pipeline with an existing queued job updates it; the returned job_id matches the existing job's id
 - **Unit (optimistic claim):** spawn 10 concurrent `claim_next` calls against 1 queued job; exactly one returns a job, nine return None
@@ -504,6 +554,7 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 ## Acceptance
 
 - `carve serve --workers 1` against a freshly-initialized Postgres runs end-to-end: scheduler fires due jobs, worker claims and runs them, reaper reclaims stale claims, archiver moves old rows
+- The scheduler treats the `schedules` table as the source of truth; `carve schedule pause/resume/set-cron` changes firing within one loop interval without a deploy or reconcile, and every such change appends a `schedule_changes` audit row
 - Per ARCHITECTURE §13.1 budgets:
   - Scheduler latency: jobs fire within 30 seconds of their cron time
   - Run startup overhead: under 10 seconds from claim to first step execution
@@ -518,6 +569,8 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 
 ## Design notes
 
+- **Why is the schedule data, not code — and why does this supersede UC2?** The control-plane model ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), "Three-tier code/data ownership") splits ownership by concern: the pipeline *definition* (steps, DAG, component refs, pins) is code reconciled into state by spec 08; the *schedule* is data living in the `schedules` table; *run state* is data. So this spec's scheduler reads the `schedules` row as the source of truth, and operators change it instantly via `carve schedule` (CLI/API/UI), audited by the `schedule_changes` log + the `schedule` RBAC scope. This **reverses UC2's earlier resolution** that schedule changes go through plan/build/deploy/PR with kubectl-style runtime *overrides* that survived reconciles until a TTL. Because the schedule is now plain data, there is no code-vs-override precedence to arbitrate: the **TTL-precedence machinery is deleted** (no `schedule override`/`clear-override`, no Option-B survival logic, no `member_override_max_ttl`), and the reconciler never touches the schedule. The tradeoff (accepted in the ADR): schedules reconstitute from the backed-up state store + the code `[seed_schedule]`, not from `git clone`.
+- **Why does the reconciler not own the schedule?** Keeping the reconciler scoped to the definition is what makes graduation (simple → multi) and instant ops changes coexist: a deploy or reconcile can update steps/DAG/pins without ever clobbering a live cadence change an on-call engineer just made. The seed-once-then-data rule (`[seed_schedule]` applied only at first registration; `carve schedule reseed` to deliberately re-apply) is the single bridge between the two tiers.
 - **Why a single Postgres-backed queue instead of a dedicated job queue system (Celery, RQ, Temporal, Dramatiq)?** Three reasons. (1) Carve already requires Postgres; adding Redis or Temporal expands the operational footprint significantly. (2) The optimistic-claim pattern in Postgres handles the v0.1 scale comfortably (~100s of jobs per minute is well within Postgres's reach). (3) Job-queue systems are general-purpose and bring complexity Carve doesn't need (priorities, delays, dead-letter queues, fan-out). Per design decision [5.6 narrow runtime](../ARCHITECTURE.md), we keep it small.
 - **Why partial unique indexes for the dedup invariant?** Because enforcing "at most one queued / one running per pipeline" at the schema level means application code can't break the invariant by accident. The alternative (application-level locking or check-then-insert) has race conditions under concurrent inserts. Postgres's partial unique indexes are exactly the right tool here.
 - **Why is the per-pipeline serialization (`PipelineAlreadyRunning`) checked at `transition_to_running` rather than at `claim_next`?** Because claim_next runs against the `queued` partial unique index, which doesn't know about running jobs. The transition to running is when we need to re-check. The cost is one extra round trip per job; the benefit is that the check is unambiguous (one query, one constraint).
@@ -532,3 +585,4 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 - **Archive table partitioning.** *Implementation default.* No partitioning in OSS (a single-team install's archive grows slowly enough that partitioning is unjustified complexity). Hosted partitions by month for query performance — that's a hosted-side concern, out of scope for this spec.
 - **Backpressure when the queue is overloaded.** *Implementation default.* No special handling in v0.1; if the queue grows unbounded, that's the user's signal to add workers. Future enhancement: a `max_queue_depth` setting that rejects new triggers above the threshold. Defer until someone hits it.
 - **Behavior when Postgres becomes unreachable mid-run.** *Implementation default.* Workers attempt to reconnect with backoff; heartbeats stop; reaper reclaims the job after threshold. The in-flight subprocess (dlt/dbt) keeps running and may complete its destination writes — those are idempotent enough (dlt's incremental state, dbt's run_results) that the eventual rerun won't double-write. Documented in `docs/runtime-troubleshooting.md`.
+- **Ownership of `schedule_changes` and the `carve schedule` live-mutation surface.** *Needs human confirmation — smallest-reasonable choice made.* The reference model and ADR name the `schedule_changes` audit log + the `schedule` RBAC scope but do not pin which spec ships them; spec 08 explicitly delegates the live `schedules` table and `carve schedule list/show/pause/resume` to this spec (08 §"Out of scope"). So this spec ships the `schedule_changes` table (migration 0008) and `cli/schedule.py`, while spec 08 retains `[seed_schedule]` + `carve schedule reseed`. Confirm this split (vs. ARCHITECTURE §9.3 listing `schedules` among earlier tables) when specs 08/09 are next touched.

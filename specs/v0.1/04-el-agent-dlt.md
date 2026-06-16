@@ -1,6 +1,8 @@
 # v0.1-04 — EL specialist agent: generates dlt code
 
-> The wedge of v0.1. The EL specialist takes a goal slice from the orchestrator and produces working dlt code in `el/<pipeline_name>/`, picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper). Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
+> **Revised for the control-plane model** (see [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): the EL agent authors *into a named `dlt` component* — its `el/<name>/` directory in simple mode, or its own repo in separate mode — not a privileged fused `el/`. Dependency hints are emitted by component name. The four authoring strategies, provenance header, skills, and CDC scope note are unchanged in behavior; the changes here are framing/naming alignment to the component model.
+
+> The wedge of v0.1. The EL specialist takes a goal slice from the orchestrator and produces working dlt code in the target `dlt` component (the `el/<component_name>/` directory in simple mode), picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper). Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
 
 ## Status
 
@@ -13,12 +15,12 @@
 
 Ship the EL specialist agent that authors dlt code. Concretely:
 
-- Receives pre-scoped context from the orchestrator (goal slice, destination, existing sources, memory files, optional curated-library match, optional brownfield pipeline references)
+- Receives pre-scoped context from the orchestrator (goal slice, the target `dlt` component name, destination, existing sources, memory files, optional curated-library match, optional brownfield pipeline references)
 - Picks one of four authoring strategies based on the goal and context
-- Writes dlt files into `el/<pipeline_name>/` plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries
+- Writes dlt files into the target component — in simple mode its `el/<component_name>/` directory, resolved by name per [v0.1-03](./03-flat-layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries
 - Records provenance headers per [v0.1-03](./03-flat-layout.md)
-- Returns a structured plan task to the orchestrator: files written, their hashes, expected outputs, dependencies on dbt sources
-- Operates idempotently on modifications: re-running against an existing pipeline diffs cleanly, preserves user edits below the provenance header
+- Returns a structured plan task to the orchestrator: files written, their hashes, expected outputs, dependencies on dbt sources (keyed by component name)
+- Operates idempotently on modifications: re-running against an existing component diffs cleanly, preserves user edits below the provenance header
 
 This spec ships the agent definition, system prompt, the skills the agent calls, and the initial curated source library structure. The first wave of curated sources (Stripe, Salesforce, etc.) is a separate post-v0.1 effort; this spec ships the framework that those slot into.
 
@@ -26,10 +28,10 @@ This spec ships the agent definition, system prompt, the skills the agent calls,
 
 - The orchestration agent's classification + specialist-picking logic — that's part of M1's reasoning loop (HISTORICAL). This spec produces an EL specialist that the orchestrator routes work to; it doesn't change the orchestrator.
 - The dbt specialist agent — that's v0.2 (Pillar 3).
-- The pipeline composition step (`pipelines/<name>.toml`) — written by the runtime specialist, covered in [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md). The EL agent emits a structured "this pipeline needs to be composed with these dependencies" hint that the orchestrator then routes to the runtime specialist.
+- The pipeline composition step (`pipelines/<name>.toml`, whose steps reference components by name via `component = "<name>"`) — written by the runtime specialist, covered in [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md). The EL agent emits a structured "this pipeline needs to be composed with these dependencies" hint, keyed by the component name it authored into, that the orchestrator then routes to the runtime specialist.
 - The actual contents of the curated source library beyond a small reference example (e.g., a "Hacker News API" sample). Curating the top-30 Airbyte ports is a separate workstream after v0.1.
 - The CLI/REST/MCP surface for invoking the agent directly (e.g., `carve agents test extract-load`). That's part of [v0.1-09 rest-api](./09-rest-api.md) and [v0.1-10 mcp-server](./10-mcp-server.md).
-- Orchestration-only mode (PRD §6.2 mode 2). When the user has existing dlt code, the orchestrator does NOT route to the EL agent for that pipeline — it routes to the runtime specialist to compose the existing artifact. This spec handles modes 1 (authoring) and 3 (mix); mode 2 is a no-op for this agent.
+- Orchestration-only mode (PRD §6.2 mode 2). When the user has an existing `dlt` component (in this repo or a separate-remote one), the orchestrator does NOT route to the EL agent for that pipeline — it routes to the runtime specialist to compose the existing component by name. This spec handles modes 1 (authoring) and 3 (mix); mode 2 is a no-op for this agent.
 
 ## Files this spec produces
 
@@ -46,7 +48,7 @@ src/carve/core/skills/dlt_library.py                    # NEW — list, lookup, 
 src/carve/core/skills/rest_api_explorer.py              # NEW — bounded HTTP HEAD/GET/OPTIONS probing for API discovery
 src/carve/core/skills/dbt_source_lookup.py              # NEW — search the user's dbt sources.yml for matches
 src/carve/core/skills/existing_dlt_inspect.py           # NEW — read existing user-authored dlt code for brownfield context
-src/carve/core/skills/file_io.py                        # MODIFY (if exists from M1) — extend write guardrail with el/<name>/ scope
+src/carve/core/skills/file_io.py                        # MODIFY (if exists from M1) — extend write guardrail to the target dlt component's path (el/<name>/ in simple mode; resolved per spec 03)
 src/carve/integrations/dlt/code_emitter.py              # NEW — utilities the agent uses to emit valid dlt code with provenance header
 src/carve/integrations/dlt/requirements_writer.py       # NEW — manage requirements.txt with pinned deps
 src/carve/integrations/dlt/dlt_config_merger.py         # NEW — additive merges into .dlt/config.toml.template per-destination
@@ -78,7 +80,7 @@ max_iterations = 30
 
 allowed_skills = [
   "read_file",
-  "write_file",          # scoped to el/<name>/, .dlt/*.template via guardrail (spec 03)
+  "write_file",          # scoped to the target dlt component's path (el/<name>/ in simple mode), .dlt/*.template via guardrail (spec 03)
   "list_files",
   "dlt_library_list",
   "dlt_library_lookup",
@@ -123,11 +125,12 @@ The EL agent expects:
 {
   "goal_slice": "Generate a dlt pipeline that ingests the Stripe charges API into raw_stripe, incremental on created_at",
   "classification": "new_pipeline",                  # or modify_pipeline, etc.
-  "pipeline_name": "stripe_charges",                 # the el/<name>/ directory it'll write to
+  "component_name": "stripe_charges",                # the target dlt component; in simple mode this is the el/<name>/ directory it writes into
+  "component_root": "el/stripe_charges/",            # resolved write root for the component, per spec 03 (el/<name>/ in simple mode; the cloned workspace path in separate-remote mode)
   "memory": {
     "conventions":    "...",                          # subset of carve/conventions.md
     "standards":      "...",                          # subset of carve/standards.md (full document; cheap)
-    "el_notes":       "...",                          # optional, present only if el/<name>/NOTES.md exists
+    "el_notes":       "...",                          # optional, present only if the component's NOTES.md exists (el/<name>/NOTES.md in simple mode)
   },
   "destination": {
     "kind":           "snowflake",
@@ -136,12 +139,12 @@ The EL agent expects:
     "available_targets": ["dev", "prod"],
   },
   "existing_sources": [
-    {"name": "stripe", "schema": "raw_stripe", "tables": ["charges", "customers"], ...},
-  ],                                                  # from dbt sources.yml in same-repo or remote-cached dbt project
+    {"name": "stripe", "schema": "raw_stripe", "tables": ["charges", "customers"], "dbt_component": "analytics"},
+  ],                                                  # from the dbt component's sources.yml (the detected project in simple mode; the cloned repo in separate-remote)
   "dlt_library_match": "stripe",                     # set when the orchestrator's library-lookup skill matched
   "dlt_library_match_confidence": "high",             # "high" | "medium" | "low" — orchestrator's heuristic
-  "existing_el_artifacts": [                          # for brownfield context
-    {"name": "salesforce_accounts", "path": "el/salesforce_accounts/", "provenance": "user-authored"},
+  "existing_components": [                             # other dlt components, for brownfield context
+    {"name": "salesforce_accounts", "type": "dlt", "path": "el/salesforce_accounts/", "provenance": "user-authored"},
   ],
   "modification_target": null,                        # when modifying an existing pipeline, references the existing files
 }

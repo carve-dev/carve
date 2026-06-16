@@ -55,7 +55,7 @@ These refine the model above; concrete config shapes are in [`control-plane-refe
 
 ## Still-open sub-decisions
 
-4. **Deploy under the control-plane model.** *Direction set:* `carve deploy` promotes a component (its repo) + the control-plane composition, and cross-repo **linked-PR coordination** (ingest-first ordering) becomes first-class — graduation makes it worth building, so spec 14's separate-remote deferral should be revisited. `carve el deploy` retires or shrinks to a thin target-readiness `verify`. *Open: exact v0.1 scope of the linked-PR flow — build it now, or pair it with the v0.2 dbt agent.*
+4. **Deploy under the control-plane model — RESOLVED (2026-06-16): linked-PR ships in v0.1.** `carve deploy` promotes a component (its repo) + the control-plane composition, and cross-repo **linked-PR coordination** (ingest-first ordering) is **built in v0.1**, not deferred to v0.2 — spec 14's separate-remote deferral is reversed. `carve el deploy` retires or shrinks to a thin target-readiness `verify`. This is the **Wave 2** work item (spec 14 + ARCHITECTURE §7.5/§9.4/§10).
 5. **v0.1 scope/bundling.** Control plane + EL component + simple-mode is the v0.1 wedge; multi-component separation is the bigger appeal it must not preclude. *Open: does the shipping order / pillar bundling change under control-plane framing?*
 6. **Pillar restructure.** Re-articulate the four pillars around control-plane vs components (the README rewrite).
 

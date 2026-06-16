@@ -1,5 +1,7 @@
 # v0.1-08 — Multi-step pipeline composition: TOML schema, step DAG, dlt/dbt/sql step types
 
+> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). This spec is the **binding contract**: pipeline steps reference components **by name** (`component = "<name>"`), name-based indirection resolves a name to a local path (simple mode) or a remote repo @ pinned ref (multi mode), the `[schedule]` block becomes a `[seed_schedule]` *seed* (the live schedule is data, owned by the runtime per spec 07), and the spec gains the `carve component` / `carve components show` / `carve schedule reseed` surfaces.
+
 > Plugs the three v0.1 step types (`dlt`, `dbt`, `sql`) into the runtime framework from spec 07; defines the pipeline TOML schema; ships the runtime specialist agent that authors `pipelines/<name>.toml` entries. Per [PRD §6.10 pipeline composition](../PRD.md), [ARCHITECTURE §4.6 step executors](../ARCHITECTURE.md), [ARCHITECTURE §4.7 failure modes](../ARCHITECTURE.md), [ARCHITECTURE §10.2/10.3 dlt and dbt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 8](../PROJECT_PLAN.md).
 
 ## Status
@@ -13,14 +15,14 @@
 
 Bring the runtime to life with real pipelines:
 
-1. **The `pipelines/<name>.toml` schema** — pipeline metadata, `[schedule]` block, ordered `[[steps]]` tables that form a DAG
+1. **The `pipelines/<name>.toml` schema** — pipeline metadata, an optional `[seed_schedule]` block (the schedule *seed*, not the source of truth), ordered `[[steps]]` tables that form a DAG, where `dlt` and `dbt` steps reference a component **by name** (`component = "<name>"`)
 2. **The step DAG executor** — topological walk with intra-pipeline parallelism, per-step failure mode enforcement, Jinja templating for cross-step outputs
-3. **The three concrete step type implementations** — `dlt`, `dbt`, `sql` — each implementing the `StepExecutor` protocol from spec 07
+3. **The three concrete step type implementations** — `dlt`, `dbt`, `sql` — each implementing the `StepExecutor` protocol from spec 07. `dlt`/`dbt` steps resolve their component name through the spec-03 resolver (local path in simple mode, remote workspace @ pinned ref in multi mode); `sql` steps stay inline (`file` + `connection`).
 4. **Failure mode framework** — `fail`, `warn`, `continue`, `retry` (with attempts + backoff), `skip_downstream`
 5. **The runtime specialist agent** — authors and modifies `pipelines/<name>.toml` files when the orchestrator routes pipeline-composition tasks to it
-6. **CLI commands** for pipeline management (`carve pipelines list`, `show`, `validate`, `diff`)
+6. **CLI commands** for pipeline management (`carve pipelines list`, `show`, `validate`, `diff`), component graduation/inspection (`carve component`, `carve components show`), and re-seeding the schedule from code (`carve schedule reseed`)
 
-After this spec lands, a user can describe a multi-step pipeline ("ingest Stripe, then run the stg_stripe dbt models, then refresh the search index via SQL"), `carve plan` produces a multi-step composition, `carve build` materializes the dlt code + pipeline TOML, and the runtime schedules and executes it end-to-end.
+After this spec lands, a user can describe a multi-step pipeline ("ingest Stripe, then run the stg_stripe dbt models, then refresh the search index via SQL"), `carve plan` produces a multi-step composition, `carve build` materializes the dlt component code + pipeline TOML, and the runtime schedules and executes it end-to-end. The same `pipelines/<name>.toml` is **identical across simple and multi mode** — only the resolution behind the component names changes.
 
 ## Out of scope
 
@@ -29,6 +31,9 @@ After this spec lands, a user can describe a multi-step pipeline ("ingest Stripe
 - First-class backfills (out per same; manual `carve run --target prod --param ...` is the workaround)
 - The REST/MCP surface for pipelines (lives in spec 09)
 - The static UI's pipeline-detail view (lives in spec 11)
+- **The `[components.<name>]` schema, `carve.toml` control-plane reframe, and the topology/locator resolution itself** — those live in [v0.1-03 flat-layout](./03-flat-layout.md). This spec *consumes* the resolver and references components by name; it does not define the `[components.*]` block or the simple-mode discovery convention.
+- **The schedule as live data** (`schedules` table, `carve schedule list/show/pause/resume`, the scheduler that reads it) — that lives in [v0.1-07 runtime](./07-runtime.md). This spec ships only the `[seed_schedule]` *seed* applied at first registration and the `carve schedule reseed` command that re-applies it.
+- **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [v0.1-14 deploy-pr](./14-deploy-pr.md). Graduation (`carve component <name> --separate-remote …`) writes the component block and validates it (this spec); promoting that component's repo through an environment is a deploy concern (spec 14).
 
 ## Files this spec produces
 
@@ -46,10 +51,13 @@ src/carve/core/agents/runtime_specialist.py              # NEW — runtime agent
 src/carve/core/agents/prompts/runtime_specialist.md      # NEW — system prompt
 carve/agents/runtime.toml                                # NEW — built-in agent definition
 
-src/carve/core/config/pipeline_schema.py                 # NEW — Pydantic models for pipelines/<name>.toml
+src/carve/core/config/pipeline_schema.py                 # NEW — Pydantic models for pipelines/<name>.toml (steps reference component = "<name>")
+src/carve/runtime/reconciler.py                          # NEW — definition reconciler: on `carve serve` boot + loop, reconciles each pipelines/<name>.toml's definition (steps/DAG/component refs) into state, and applies [seed_schedule] to the schedules table ONLY at first registration. Owned here; invoked by spec 07's serve loop.
 src/carve/core/skills/pipeline_inspect.py                # NEW — read pipeline TOMLs (for the runtime specialist)
 
 src/carve/cli/pipelines.py                               # NEW — `carve pipelines` Typer command group
+src/carve/cli/components.py                              # NEW — `carve component <name> --separate-remote ...` (graduation) + `carve components show`
+src/carve/cli/schedule_reseed.py                         # NEW — `carve schedule reseed <pipeline>` (re-applies [seed_schedule] to the schedules table)
 
 migrations/versions/0009_step_runs_outputs.py            # NEW — extends step_runs with outputs JSONB column if not already there
 
@@ -63,6 +71,10 @@ tests/unit/test_step_executor_dbt.py                     # NEW — same shape fo
 tests/unit/test_step_executor_sql.py                     # NEW — exec SQL against fixture Postgres
 tests/integration/test_pipeline_3_step_end_to_end.py     # NEW — dlt → dbt → sql against fixture infrastructure
 tests/integration/test_runtime_agent_authoring.py        # NEW — agent produces a coherent pipelines/<name>.toml from a goal
+tests/unit/test_component_resolution.py                  # NEW — component = "<name>" resolves to local path (simple) vs remote workspace @ ref (multi); same TOML, both modes
+tests/integration/test_component_graduation.py           # NEW — `carve component <name> --separate-remote` writes the block, clones, validates, backfills omitted dbt-step names
+tests/unit/test_seed_schedule_first_registration.py      # NEW — [seed_schedule] applied only at first registration; edits are a no-op without reseed
+tests/integration/test_schedule_reseed.py                # NEW — `carve schedule reseed` re-applies the seed; overwrites live schedule rows for that pipeline
 
 docs/pipelines.md                                        # NEW — user reference for the TOML schema
 docs/step-types.md                                       # NEW — reference for each step type's config
@@ -81,17 +93,18 @@ docs/failure-modes.md                                    # NEW — when to use e
 description = "Stripe charges ingest + staging transforms + search refresh"
 owner = "data-team"
 
-# Scheduling (spec 07)
-[schedule]
+# Schedule SEED — applied ONLY at first registration (spec 07 owns the live schedule as data).
+# Editing this block is a no-op thereafter unless you run `carve schedule reseed <pipeline>`.
+[seed_schedule]
 cron = "0 2 * * *"               # 2am daily
-target = "prod"                   # which target this pipeline runs against in scheduled mode
-paused = false
+timezone = "UTC"                  # reference-model field
+target = "prod"                   # which target the seeded schedule runs against (see open questions)
 
 # Steps (DAG)
 [[steps]]
 id = "ingest_stripe"
 type = "dlt"
-artifact = "stripe_charges"       # resolves to el/stripe_charges/
+component = "stripe_charges"      # → el/stripe_charges/ (simple) OR the remote repo @ ref (multi)
 depends_on = []
 [steps.failure_mode]
 mode = "retry"
@@ -101,6 +114,7 @@ backoff = "exponential"
 [[steps]]
 id = "stage_stripe"
 type = "dbt"
+component = "analytics"           # optional in simple mode (single detected dbt project); backfilled on graduation
 command = "build"
 select = "stg_stripe_charges+"    # dbt selector syntax
 depends_on = ["ingest_stripe"]
@@ -110,7 +124,7 @@ mode = "fail"                     # default; included here for clarity
 [[steps]]
 id = "refresh_search"
 type = "sql"
-file = "sql/refresh_charges_search.sql"
+file = "sql/refresh_charges_search.sql"   # sql steps reference a file + connection, NOT a named component
 connection = "prod"
 depends_on = ["stage_stripe"]
 [steps.failure_mode]
@@ -127,6 +141,8 @@ depends_on = ["ingest_stripe"]
 loaded_rows = "{{ steps.ingest_stripe.outputs.rows_loaded }}"
 ```
 
+**This TOML is identical across simple and multi mode.** In simple mode, `carve.toml` has no `[components.*]` blocks: `component = "stripe_charges"` resolves by convention to `./el/stripe_charges/`, and the dbt step's `component` may be **omitted** (it resolves to the single detected dbt project). In multi mode, `[components.stripe_charges]` and `[components.analytics]` (defined in `carve.toml` per spec 03) point those names at separate-remote repos pinned to a `ref` — but the pipeline file above does not change. Graduation backfills the omitted dbt-step `component` name (see *Component resolution & graduation* below).
+
 Pydantic schema (in `src/carve/core/config/pipeline_schema.py`):
 
 ```python
@@ -134,10 +150,13 @@ class PipelineMeta(BaseModel):
     description: str = ""
     owner: str = ""
 
-class ScheduleBlock(BaseModel):
+class SeedSchedule(BaseModel):
+    # SEED only — applied to the `schedules` table at first registration (spec 07).
+    # NOT the live source of truth; editing this is a no-op unless `carve schedule reseed`.
+    # `paused`/`enabled` is deliberately absent: pause/resume is live data, set via CLI/API/UI.
     cron: str                      # validated via croniter on load
-    target: str = "prod"
-    paused: bool = False
+    timezone: str = "UTC"          # reference-model field
+    target: str = "prod"           # target the seeded schedule runs against (see open questions)
 
 class FailureMode(BaseModel):
     mode: Literal["fail", "warn", "continue", "retry", "skip_downstream"] = "fail"
@@ -156,12 +175,13 @@ class PipelineStep(BaseModel):
 
 class DltStepConfig(BaseModel):
     type: Literal["dlt"] = "dlt"
-    artifact: str                  # name of el/<artifact>/ directory
+    component: str                 # NAME of a dlt component; resolves to el/<name>/ (simple) or remote @ ref (multi)
     write_disposition: Optional[Literal["append", "replace", "merge"]] = None  # override config.toml
     resource_select: Optional[list[str]] = None    # subset of resources to run
 
 class DbtStepConfig(BaseModel):
     type: Literal["dbt"] = "dbt"
+    component: Optional[str] = None  # NAME of a dbt component; OPTIONAL in simple mode (single detected dbt project), backfilled on graduation
     command: Literal["build", "run", "test", "snapshot", "seed"] = "build"
     select: Optional[str] = None
     exclude: Optional[str] = None
@@ -169,18 +189,57 @@ class DbtStepConfig(BaseModel):
     full_refresh: bool = False
 
 class SqlStepConfig(BaseModel):
-    type: Literal["sql"] = "sql"
+    type: Literal["sql"] = "sql"   # sql stays inline: a file + connection, NOT a named component (v0.1)
     file: str                      # path relative to project root
     connection: str                # target name from carve/connections.toml
 
 class Pipeline(BaseModel):
     name: str                      # derived from filename, not in TOML
     pipeline: PipelineMeta = Field(default_factory=PipelineMeta)
-    schedule: Optional[ScheduleBlock] = None
+    seed_schedule: Optional[SeedSchedule] = None
     steps: list[PipelineStep] = []
 ```
 
-Loading validates: unique step ids, valid `depends_on` refs (all referenced ids exist), no cycles, valid cron (if schedule present), valid type-specific configs.
+The `component` field on `dlt`/`dbt` steps **replaces the old `artifact` field** (which lived only on dlt steps), unifying dlt + dbt step references under one name-based key — per the control-plane reference model. A `dlt` step's `component` is required; a `dbt` step's `component` is optional (omitting it means "the single detected dbt project" in simple mode). `sql` steps are unchanged: they reference a file + connection inline.
+
+Loading validates: unique step ids, valid `depends_on` refs (all referenced ids exist), no cycles, valid cron (if `[seed_schedule]` present), valid type-specific configs, and — for `dlt`/`dbt` steps — that the referenced `component` name **resolves** (via the spec-03 resolver: an `el/<name>/` directory or a `[components.<name>]` block; the omitted dbt name resolves to the single detected dbt project). An unresolvable component name is a validation error surfaced by `carve pipelines validate`.
+
+### Component resolution (name-based indirection)
+
+A step's `component = "<name>"` is a **name**, not a path. Resolution is a separate per-component concern owned by spec 03's locator and the `[components.<name>]` block — this spec consumes it:
+
+- **Simple mode** (`carve.toml` has no `[components.*]`): the name resolves by convention. A `dlt` step's `component = "stripe_charges"` → `paths.el_dir / "stripe_charges"`. A `dbt` step's `component` (named or omitted) → the single detected dbt project (`paths.dbt_project_path`). No pins.
+- **Multi mode** (`[components.<name>]` present in `carve.toml`): the name resolves through the locator to a workspace clone at the component's pinned `ref` (`.carve/workspaces/<name>/`, per spec 03), with the same `type`/`mode`/`url`/`ref`/`branch` fields the reference model defines.
+
+The step executors below ask the resolver for a concrete path at execution time; the pipeline TOML is unchanged between modes. Because the pin is **per-component** (one resolved version used by every pipeline that references it), two pipelines referencing `component = "analytics"` always run the same pinned dbt code.
+
+### Component graduation (simple → multi)
+
+Moving a component into its own repo is a one-command operation that touches `carve.toml`, not the pipeline TOMLs:
+
+```
+carve component <name> --separate-remote <url> [--ref <pin>] [--branch <name>]
+carve component <name> --separate-local <path>
+carve component <name> --same-repo                 # reverse graduation
+```
+
+`carve component <name> --separate-remote …` (per the reference model's graduation flow):
+
+1. Writes the `[components.<name>]` block into `carve.toml` (`type` inferred from the existing convention — a `dlt` component for an `el/<name>/` dir, a `dbt` component for the detected dbt project; `mode = "separate-remote"`, `url`, optional `ref`/`branch`).
+2. Clones the repo into `.carve/workspaces/<name>/` (via spec 03's `sync_workspace`) and validates it resolves.
+3. **Backfills** `component = "<name>"` into any `dbt` steps that had omitted it (simple-mode convenience), so the now-multi project still resolves by name.
+
+This is a control-plane edit only — **no pipeline rewrites beyond the backfill, no state migration, no re-runs; schedules keep firing and run history is intact.** It is reversible (`--same-repo`) and incremental (per component). "Born multi" (`carve init --dbt-url <url>`, spec 03/05) is the same machinery triggered at init. Extracting the component's code to its new repo is a user git action; Carve may offer a helper but does not own the move. Promoting the new component repo through an environment is **deploy** (spec 14, Wave 2) — out of scope here.
+
+### Schedule seed semantics
+
+`[seed_schedule]` is a **seed**, not the source of truth. Per the three-tier ownership in [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md): the pipeline *definition* (steps, DAG, component refs) is code reconciled into state; the *schedule* (cron, cadence, enabled/paused) is **data** in the `schedules` table (spec 07), set via CLI/API/UI.
+
+- At **first registration** of a pipeline (the definition reconciler — `src/carve/runtime/reconciler.py`, shipped by this spec and invoked by `carve serve` on boot + loop — sees a `pipelines/<name>.toml` with no corresponding `schedules` row), `[seed_schedule]`'s `cron`/`timezone`/`target` are written into the `schedules` table once. The same reconciler keeps the pipeline *definition* (steps/DAG/component refs) in sync with the TOML; it never touches an existing `schedules` row.
+- **Thereafter the live schedule is data.** Editing `[seed_schedule]` in the TOML is a **no-op** — the reconciler never overwrites the schedule from code. Pause/resume and cron changes go through `carve schedule pause/resume`/the API (spec 07), audited via the `schedule_changes` log + the `schedule` RBAC scope, not git.
+- `carve schedule reseed <pipeline>` is the explicit escape hatch: it re-applies the current `[seed_schedule]` block to the `schedules` row for that pipeline, overwriting the live values. Without it, `[seed_schedule]` edits stay inert.
+
+This **reverses UC2's prior decision** that schedule changes flow through plan/build/deploy/PR, and **deletes UC2's code-vs-override TTL-precedence machinery** — the reconciler reconciles the definition only and never touches the schedule. Tradeoff: schedules reconstitute from the (backed-up) state store + the code seed, not from `git clone`. A pipeline with **no** `[seed_schedule]` registers unscheduled (manual/API-triggered only) until a schedule is set as data.
 
 ### Step DAG execution
 
@@ -293,15 +352,17 @@ class DltStepExecutor:
     step_type = "dlt"
 
     async def execute(self, *, step, run, paths) -> StepResult:
-        artifact_dir = paths.el_dir / step.config.artifact
-        if not artifact_dir.exists():
-            return StepResult(status="failed", error_message=f"dlt artifact not found: {step.config.artifact}", ...)
+        # Name-based indirection: resolve the component name to a concrete dir.
+        # Simple mode → el/<name>/; multi mode → the workspace clone @ pinned ref (spec 03 resolver).
+        component_dir = resolve_dlt_component(step.config.component, paths)
+        if component_dir is None or not component_dir.exists():
+            return StepResult(status="failed", error_message=f"dlt component not found: {step.config.component}", ...)
 
         env = self._build_env(run.target, step.config)
-        cmd = self._build_command(artifact_dir, step.config)
+        cmd = self._build_command(component_dir, step.config)
         result = await self._run_subprocess(cmd, env, cwd=paths.root, timeout_s=14400)  # 4hr default
 
-        outputs = self._extract_outputs(artifact_dir, result)
+        outputs = self._extract_outputs(component_dir, result)
         return StepResult(
             status="succeeded" if result.returncode == 0 else "failed",
             outputs=outputs,
@@ -311,6 +372,7 @@ class DltStepExecutor:
         )
 ```
 
+- `resolve_dlt_component(name, paths)` delegates to spec 03's dlt locator: in simple mode it returns `paths.el_dir / name`; in multi mode (`[components.<name>]` present) it returns the workspace clone at the pinned `ref`. The executor does no path math itself.
 - `_build_env` injects `DESTINATION__SNOWFLAKE__CREDENTIALS__*` and similar dlt-convention env vars from the resolved target config (per ARCHITECTURE §10.2)
 - `_build_command` is `dlt pipeline run --pipeline <name>` plus optional `--resources` for `resource_select`
 - `_extract_outputs` parses `.dlt/pipelines/<name>/state.json` for rows_loaded per resource, schema changes, errors; returns a structured dict
@@ -319,7 +381,7 @@ class DltStepExecutor:
 
 `src/carve/runtime/step_types/dbt.py`:
 
-- Resolves the dbt project path via `ProjectPaths.dbt_project_path` (spec 03's resolver)
+- Resolves the dbt project path **by component name** via spec 03's dbt locator: `component = "analytics"` → the workspace clone @ pinned ref in multi mode, or the local detected project in simple mode; an **omitted** `component` resolves to the single detected dbt project (`ProjectPaths.dbt_project_path`). A named component that doesn't resolve is a step failure with a clear message.
 - Invokes `dbt {command} --target {target} --select {select} --vars '{vars_json}'`
 - For `command="build"`, parses `<dbt_project>/target/run_results.json` for per-model status, timings, error messages
 - For `command="test"`, surfaces test failures as the step's `error_message` (one entry per failing test)
@@ -353,7 +415,7 @@ allowed_skills = [
   "write_file",                 # scoped to pipelines/**
   "list_files",
   "pipeline_inspect",           # spec-08 skill: read existing pipelines/<name>.toml
-  "list_el_artifacts",          # which el/<name>/ dirs exist? (filename listing only, no contents)
+  "list_components",            # which component names exist? (el/<name>/ dirs + [components.*] blocks; names only, no contents)
   "list_dbt_models",            # via the dbt manifest (HISTORICAL — uses M2-era manifest reader)
   "destination_schema_query",   # to verify target schemas exist
   "mcp:*",
@@ -368,29 +430,32 @@ max_skill_calls_per_invocation = 30
 classifications = [
   "compose_pipeline",                  # new pipelines/<name>.toml
   "modify_pipeline_steps",             # change step order, add/remove steps, update failure modes
-  "change_schedule",                   # change [schedule] cron or pause
-  "schedule_existing_artifact",        # orchestration-only mode (PRD §6.2 mode 2): compose a TOML against existing user-authored dlt/dbt
+  "seed_schedule",                     # set the [seed_schedule] block on a NEW pipeline (a seed, not a live edit)
+  "schedule_existing_component",       # orchestration-only mode (PRD §6.2 mode 2): compose a TOML against an existing user-authored dlt/dbt component
 ]
 ```
 
+> **Schedule changes are not a TOML edit.** Changing a *live* schedule's cron or pausing/resuming is data, handled by `carve schedule …` (spec 07) — the runtime specialist does **not** rewrite `[seed_schedule]` to change a running schedule (editing it is a no-op without reseed). The specialist only sets `[seed_schedule]` when first composing a pipeline; the `seed_schedule` classification covers that authoring case. A request like "pause the stripe pipeline" routes to the schedule CLI/API, not to this agent.
+
 System prompt highlights:
 
-1. **Role** — author/modify `pipelines/<name>.toml` files. The dlt code and dbt models exist (or will exist via other specialists); the runtime specialist's job is to compose them.
-2. **Inputs** — pre-scoped context includes: goal, target dlt/dbt artifacts (their paths and outputs), conventions + standards from memory (spec 06), existing pipeline TOMLs for reference
-3. **Output** — a structured Task result that emits the new/modified TOML file
-4. **Schedule semantics** — when to suggest cron vs leave unscheduled; how to pick reasonable defaults
+1. **Role** — author/modify `pipelines/<name>.toml` files. The dlt code and dbt models exist in their components (or will via other specialists); the runtime specialist's job is to compose them by **referencing components by name**.
+2. **Inputs** — pre-scoped context includes: goal, the **component names** to reference (with their resolved paths/outputs), conventions + standards from memory (spec 06), existing pipeline TOMLs for reference
+3. **Output** — a structured Task result that emits the new/modified TOML file, with `component = "<name>"` on dlt/dbt steps
+4. **Schedule semantics** — when to seed a cron via `[seed_schedule]` on a new pipeline vs leave unscheduled; that `[seed_schedule]` is a *seed* only (live schedule changes go through the schedule CLI/API, not the TOML)
 5. **Step ordering** — dlt before dbt; transforms before notifications/exports; SQL post-steps last
 6. **Failure mode picking** — `retry` for transient-prone (ingest); `fail` for hard transforms; `warn` for nice-to-have post-steps
 7. **Cross-step outputs** — when to use Jinja templating to pass values
+8. **Component naming** — reference dlt/dbt components by name; in simple mode the dbt step's `component` may be omitted (single detected dbt project). The specialist does not write `[components.*]` blocks or set pins (that's `carve component` / spec 03).
 
 ### Runtime specialist's role in orchestration-only mode
 
 Per [PRD §6.2](../PRD.md) mode 2, users with existing dlt/dbt code want Carve to orchestrate without authoring. The runtime specialist handles this:
 
-- Orchestrator detects (via the el-agent dispatch logic from spec 04) that the user's goal touches a user-authored artifact
-- Routes directly to the runtime specialist with the goal classified as `schedule_existing_artifact`
-- Runtime specialist's pre-scoped context includes: the user's existing artifact path + a structured summary of what it does (extracted by the `existing_dlt_inspect` / `existing_dbt_inspect` skills)
-- The specialist writes a `pipelines/<name>.toml` that references the existing artifact by path
+- Orchestrator detects (via the el-agent dispatch logic from spec 04) that the user's goal touches a user-authored component
+- Routes directly to the runtime specialist with the goal classified as `schedule_existing_component`
+- Runtime specialist's pre-scoped context includes: the existing component's name + a structured summary of what it does (extracted by the `existing_dlt_inspect` / `existing_dbt_inspect` skills)
+- The specialist writes a `pipelines/<name>.toml` that references the existing component **by name** (`component = "<name>"`). In simple mode that name resolves to the existing `el/<name>/` dir or detected dbt project; if the user already split the component out, its `[components.<name>]` block (spec 03) resolves the same name to the remote repo @ ref — the pipeline TOML is the same either way.
 - No EL agent invocation; no dlt code generation
 
 This is what makes mode 2 work end-to-end: the user keeps their dlt code, gets Carve's runtime scheduling, observability, and composition.
@@ -411,9 +476,35 @@ Authoring of pipeline TOMLs is via `carve plan` / `carve build` (per PRD §6.10 
 
 REST/MCP coverage of this CLI surface lands in spec 09; this spec ships only the CLI implementation.
 
+### CLI: `carve component` / `carve components show`
+
+```
+carve component <name> --separate-remote <url> [--ref <pin>] [--branch <name>]   # graduate to a remote repo
+carve component <name> --separate-local <path>                                   # graduate to a local path
+carve component <name> --same-repo                                               # reverse graduation
+carve components show                       # list every component: name, type (dlt|dbt), mode, url, resolved ref/branch, resolved path/workspace
+carve components show <name>                # one component's full resolution detail + which pipelines/steps reference it
+```
+
+`carve component <name> --separate-remote …` performs the graduation flow described under *Component graduation* above (write the `[components.<name>]` block, clone+validate the workspace, backfill omitted dbt-step names). `carve components show` is the always-on inspection surface that makes the otherwise-hidden simple-mode convention legible (it lists convention-discovered components too, even when `carve.toml` has no `[components.*]` blocks).
+
+> The `[components.<name>]` block schema and the locator/sync that back these commands are defined in [v0.1-03 flat-layout](./03-flat-layout.md); this spec ships the `carve component` / `carve components show` CLI surface on top of that resolver. Deploying a graduated component's repo through an environment is [v0.1-14 deploy-pr](./14-deploy-pr.md) (Wave 2), out of scope here.
+
+### CLI: `carve schedule reseed`
+
+```
+carve schedule reseed <pipeline>            # re-apply pipelines/<pipeline>.toml's [seed_schedule] to the schedules table
+```
+
+Re-applies the current `[seed_schedule]` block to the live `schedules` row for that pipeline, overwriting the live `cron`/`timezone`/`target`. This is the **only** path by which an edited `[seed_schedule]` block takes effect — absent this command, `[seed_schedule]` edits are inert (the reconciler never touches the schedule; see *Schedule seed semantics*). It errors if the pipeline has no `[seed_schedule]` block. The everyday schedule controls (`carve schedule list/show/pause/resume`) are spec 07's, operating on the `schedules` table as data; this command is the narrow code→data re-seed bridge.
+
+REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the CLI implementation.
+
 ## Tests
 
-- **Unit (schema):** valid TOML loads cleanly; invalid TOMLs (missing required fields, unknown step types, duplicate step ids, missing depends_on refs, cycles, bad cron) raise structured errors
+- **Unit (schema):** valid TOML loads cleanly (`component = "<name>"` on dlt/dbt steps; `[seed_schedule]`); invalid TOMLs (missing required fields, a dlt step missing `component`, unknown step types, duplicate step ids, missing depends_on refs, cycles, bad cron) raise structured errors; an `artifact = ...` key on a dlt step (the old name) is rejected with a migration-pointing message
+- **Unit (component resolution):** a `component` name resolves to `el/<name>/` in simple mode and to the workspace clone @ pinned ref in multi mode for the **same** pipeline TOML; an omitted dbt-step `component` resolves to the single detected dbt project; an unresolvable name fails validation
+- **Unit (seed schedule):** `[seed_schedule]` parses (`cron`/`timezone`/`target`); a missing block yields an unscheduled pipeline; `paused`/`enabled` keys in the block are rejected (live data, not seedable)
 - **Unit (DAG):** topological order is correct for representative DAGs (linear, fan-out, fan-in, diamond); ready_steps correctly accounts for completed/failed/skipped sets
 - **Unit (failure modes each):** one test per mode, exercising the transition rules from the table above
 - **Unit (Jinja sandbox):** template renders against the standard namespace; attempts to access filesystem or import os raise sandbox errors
@@ -425,8 +516,12 @@ REST/MCP coverage of this CLI surface lands in spec 09; this spec ships only the
 - **Integration (failure modes in practice):** a pipeline where step 2 fails under `warn`; pipeline run completes as `partial`; step 3 runs; the warning surfaces in logs
 - **Integration (skip_downstream):** step 2 fails under `skip_downstream`; step 3 (depends on 2) is marked skipped; step 4 (sibling) runs
 - **Integration (retry):** step that fails twice then succeeds under `mode=retry max_attempts=3`; pipeline succeeds; step_runs table shows three attempts with the third succeeding
-- **Integration (runtime agent):** `carve plan "schedule the stripe ingest to run nightly at 2am and then build the staging models"` produces a coherent `pipelines/stripe.toml` referencing the existing dlt artifact + a dbt step
-- **Integration (orchestration-only mode):** existing user-authored dlt at `el/legacy_salesforce/` (no provenance header); `carve plan "schedule legacy_salesforce daily"` produces a TOML referencing the existing artifact without invoking the EL agent
+- **Integration (runtime agent):** `carve plan "schedule the stripe ingest to run nightly at 2am and then build the staging models"` produces a coherent `pipelines/stripe.toml` referencing the existing dlt component by name (`component = "stripe_charges"`) + a dbt step, with a `[seed_schedule]` cron
+- **Integration (orchestration-only mode):** existing user-authored dlt at `el/legacy_salesforce/` (no provenance header); `carve plan "schedule legacy_salesforce daily"` produces a TOML with `component = "legacy_salesforce"` without invoking the EL agent
+- **Integration (component graduation):** a simple-mode project with a dbt step whose `component` is omitted; `carve component analytics --separate-remote <test-git-url> --ref <sha>` writes the `[components.analytics]` block, clones the workspace, validates, and backfills `component = "analytics"` into the dbt step; the same pipeline runs unchanged afterward (no re-run, schedules intact); `--same-repo` reverses it
+- **Integration (multi-mode resolution parity):** the identical `pipelines/stripe.toml` runs end-to-end in simple mode and in multi mode (with `[components.*]` pointing at separate-remote repos @ ref); both produce equivalent results — proving name indirection
+- **Integration (seed schedule first-registration):** registering a pipeline with `[seed_schedule]` writes one `schedules` row; editing the block and re-reconciling does **not** change the live schedule; `carve schedule reseed <pipeline>` re-applies it and the `schedules` row updates
+- **Integration (carve components show):** in a simple-mode project with no `[components.*]` blocks, `carve components show` lists the convention-discovered dlt + dbt components with their resolved paths; after graduation it shows the graduated component's `mode`/`url`/`ref`
 
 ## Acceptance
 
@@ -435,11 +530,14 @@ REST/MCP coverage of this CLI surface lands in spec 09; this spec ships only the
 - Each of the five failure modes behaves per the table above
 - Cross-step output references resolve via the sandboxed Jinja context
 - Cycle detection rejects invalid DAGs at `carve pipelines validate` time, before the runtime ever sees them
-- The runtime specialist agent authors a working `pipelines/<name>.toml` from a natural-language goal
-- Orchestration-only mode (mode 2) end-to-end: a user with existing user-authored dlt code can compose a scheduled pipeline via `carve plan` without the EL agent running
+- The runtime specialist agent authors a working `pipelines/<name>.toml` from a natural-language goal, referencing components by name
+- **The same `pipelines/<name>.toml` runs in simple mode and multi mode** — `component = "<name>"` resolves to a local path or a remote repo @ pinned ref with no edit to the pipeline file
+- **Graduation works without rewrites:** `carve component <name> --separate-remote …` writes the block, clones+validates, backfills omitted dbt-step names; schedules keep firing and run history is intact; `--same-repo` reverses it
+- **`[seed_schedule]` is a seed, not the source of truth:** it seeds the `schedules` row at first registration only; editing it is inert until `carve schedule reseed`; `carve components show` makes the simple-mode convention legible
+- Orchestration-only mode (mode 2) end-to-end: a user with existing user-authored dlt code can compose a scheduled pipeline via `carve plan` (referencing the existing component by name) without the EL agent running
 - All three step executors invoke the correct subprocess command with the right env vars and parse their outputs into structured step `outputs`
-- `carve pipelines validate` catches schema errors, cycles, and missing references with clear messages
-- The full v0.1 plan→build→run→deploy→schedule loop works end-to-end against real Snowflake (this is the v0.1.0 acceptance bar)
+- `carve pipelines validate` catches schema errors, cycles, missing references, and **unresolvable component names** with clear messages
+- The full v0.1 plan→build→run→deploy→schedule loop works end-to-end against real Snowflake (this is the v0.1.0 acceptance bar). *(The deploy leg is unchanged by this revision and pending the Wave 2 deploy revision of spec 14.)*
 
 ## Design notes
 
@@ -447,8 +545,11 @@ REST/MCP coverage of this CLI surface lands in spec 09; this spec ships only the
 - **Why Jinja for cross-step values instead of native Python expressions?** Because step authors (users via standards.md, and the agent) work in TOML, not Python. Jinja is the universal templating language for TOML/YAML config files (Ansible, dbt itself). Sandboxed Jinja keeps the surface limited to the namespace we expose.
 - **Why does the `sql` step type only support single-file single-target execution?** Because anything richer pushes back toward "carve has its own SQL engine," which we explicitly aren't building. Users who need multi-statement SQL with conditional logic should put that in a dbt model. The `sql` step is for thin operational glue (refresh a materialized view, post a row count to an analytics table).
 - **Why `skip_downstream` instead of more elaborate conditional logic?** Per [ARCHITECTURE §15](../ARCHITECTURE.md), we don't ship general conditional branching. `skip_downstream` is the one form of conditionality we allow because it falls out naturally from the failure-mode framework — "if this step failed, the next steps don't apply" is a common, easily-explained pattern.
-- **Why the runtime specialist agent rather than letting the orchestrator write pipeline TOMLs directly?** Because the orchestration agent's job is classification + impact context + dispatch. Adding "also write pipeline TOMLs" to its remit would bloat its prompt and reduce its specialism. A focused runtime specialist with a small skill set (read pipelines, write to pipelines/, list artifacts) is easier to reason about and easier to test.
-- **Why allow the runtime specialist to read but never modify dlt/dbt artifacts?** Same separation of concerns. The EL agent (spec 04) owns dlt code; the dbt specialist (v0.2) will own dbt models. Runtime specialist composes them. If a goal requires both new dlt code AND new pipeline composition, the orchestrator routes to both specialists and merges their Task results into one Plan.
+- **Why the runtime specialist agent rather than letting the orchestrator write pipeline TOMLs directly?** Because the orchestration agent's job is classification + impact context + dispatch. Adding "also write pipeline TOMLs" to its remit would bloat its prompt and reduce its specialism. A focused runtime specialist with a small skill set (read pipelines, write to pipelines/, list components) is easier to reason about and easier to test.
+- **Why allow the runtime specialist to read but never modify dlt/dbt components?** Same separation of concerns. The EL agent (spec 04) owns dlt code; the dbt specialist (v0.2) will own dbt models. Runtime specialist composes them by reference. If a goal requires both new dlt code AND new pipeline composition, the orchestrator routes to both specialists and merges their Task results into one Plan.
+- **Why reference components by NAME rather than by path?** This is the one idea the control-plane model hangs on ([../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). Name-based indirection lets simple mode hide all the machinery (the name resolves by convention), lets graduation move a component's code to its own repo without touching any pipeline TOML, and lets the runtime pin a version per component. It is Dagster's code-location trick scoped to dlt/dbt/sql. A path on the step would couple the composition to a layout and make graduation a rewrite.
+- **Why is `[seed_schedule]` a seed instead of the schedule source of truth?** Because pausing a pipeline or nudging a cron is an operational act that should be instant and audited (CLI/API/UI + the `schedule_changes` log), not a code change requiring plan/build/deploy/PR. Per the three-tier ownership in [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), the pipeline *definition* is code (reconciled) but the *schedule* is data. This **reverses UC2's earlier decision** and **deletes its code-vs-override TTL-precedence machinery** — the reconciler reconciles the definition only and never touches the schedule. The code still carries a seed so a fresh registration has a sensible default and the schedule can reconstitute from (backed-up) state + code; `carve schedule reseed` is the deliberate bridge back from code to data.
+- **Why do `sql` steps stay inline (file + connection) instead of becoming named components?** A `sql` step is thin operational glue authored in the control-plane repo; there's no independent lifecycle to version or deploy separately, so the name-indirection apparatus would be overhead with no payoff in v0.1. (Whether ad-hoc sql ever graduates to a named/separable component is an open point in the reference model; left inline for now.)
 
 ## Open questions
 
@@ -456,4 +557,7 @@ REST/MCP coverage of this CLI surface lands in spec 09; this spec ships only the
 - **Intra-pipeline parallelism slot count.** *Implementation default.* Default 4 slots per worker. Tunable in `runtime.toml`. The cap matters when a pipeline has many independent dlt resources fanned out at one level.
 - **How `partial` pipeline-run status surfaces in retries/scheduling.** *Implementation default.* A `partial` run is *not* automatically retried by the scheduler — it's treated as completed. Users who want auto-retry on partial use `mode=fail` on the warning-emitting step instead. Documented in `docs/failure-modes.md`.
 - **Whether `step.outputs` is size-capped.** *Implementation default.* 64KB per step's outputs JSONB column. If a step produces more (huge row counts as outputs, etc.), it's truncated with a flag — agents reading the outputs see partial data, which is acceptable for downstream Jinja but visible. Users authoring sql steps with large output dicts should structure them down.
-- **Behavior when the runtime specialist agent is asked to compose a pipeline involving an artifact that doesn't exist.** *Implementation default.* The specialist returns `status="needs_user_input"` in its Task result with a message: "The artifact `<name>` doesn't exist. Either author it first (e.g., `carve plan 'ingest X'`) or reference an existing artifact." The orchestrator surfaces this in the plan summary; the user decides.
+- **Behavior when the runtime specialist agent is asked to compose a pipeline involving a component that doesn't exist.** *Implementation default.* The specialist returns `status="needs_user_input"` in its Task result with a message: "The component `<name>` doesn't exist. Either author it first (e.g., `carve plan 'ingest X'`) or reference an existing component." The orchestrator surfaces this in the plan summary; the user decides.
+- **Whether `target` belongs in `[seed_schedule]`.** *Needs human confirmation.* The reference model's `[seed_schedule]` example shows only `cron` + `timezone`, but a scheduled job needs a target (spec 07's `jobs.target` is NOT NULL). The smallest reasonable choice taken here: keep `target` as a seedable field (`default = "prod"`) alongside `cron`/`timezone`, since it is part of *what gets seeded into the schedules row*, not a live-mutated control like pause. If the runtime instead derives target from `carve.toml`'s `default_target` at registration, drop `target` from the block. Flagged for the spec-07 owner to confirm the `schedules` row's target source.
+- **Simple-mode dbt-step `component`: omit-and-backfill vs always-name.** *Following the reference model's lean.* The reference model leans "omit in simple mode, backfill on graduation" (cleanest simple mode) but lists it as an open point. This spec implements that lean: a `dbt` step's `component` is optional and graduation backfills it. If the project later prefers zero graduation-churn, switch to always-naming the dbt component in simple mode — the schema already permits a name.
+- **`ref` vs `branch` on a graduated component.** *Deferred to spec 03.* `carve component … --separate-remote` accepts `--ref` (pin) or `--branch` (track HEAD), mirroring the reference model's per-component fields; the exact precedence/default (track default branch when neither is set) is defined by spec 03's `[components.<name>]` schema, not here.
