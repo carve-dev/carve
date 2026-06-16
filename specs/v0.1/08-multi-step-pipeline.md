@@ -2,14 +2,16 @@
 
 > **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). This spec is the **binding contract**: pipeline steps reference components **by name** (`component = "<name>"`), name-based indirection resolves a name to a local path (simple mode) or a remote repo @ pinned ref (multi mode), the `[schedule]` block becomes a `[seed_schedule]` *seed* (the live schedule is data, owned by the runtime per spec 07), and the spec gains the `carve component` / `carve components show` / `carve schedule reseed` surfaces.
 
-> Plugs the three v0.1 step types (`dlt`, `dbt`, `sql`) into the runtime framework from spec 07; defines the pipeline TOML schema; ships the runtime specialist agent that authors `pipelines/<name>.toml` entries. Per [PRD §6.10 pipeline composition](../PRD.md), [ARCHITECTURE §4.6 step executors](../ARCHITECTURE.md), [ARCHITECTURE §4.7 failure modes](../ARCHITECTURE.md), [ARCHITECTURE §10.2/10.3 dlt and dbt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 8](../PROJECT_PLAN.md).
+> **Also revised for the AI-harness model** ([../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)). The control-plane runtime specialist is reframed as the **pipeline engineer**: a declarative **subagent** (`src/carve/core/agents/builtin/pipeline-engineer.md`, the spec-16 markdown-frontmatter format) running on the harness (spec 15), armed with terminal-grade tools (`edit` scoped to `pipelines/**`, `grep`, plus the `pipeline_inspect` / `list_components` skills), under the `build` permission mode, that the orchestrator `delegate`s pipeline-composition tasks to and that **verifies** a composition by executing it (`carve pipelines validate` + a dev run). All control-plane content below — `component = "<name>"`, name indirection, `[seed_schedule]`, graduation, the definition reconciler, the step DAG/executors — is unchanged.
+
+> Plugs the three v0.1 step types (`dlt`, `dbt`, `sql`) into the runtime framework from spec 07; defines the pipeline TOML schema; ships the **pipeline engineer** subagent that authors `pipelines/<name>.toml` entries. Per [PRD §6.10 pipeline composition](../PRD.md), [ARCHITECTURE §4.6 step executors](../ARCHITECTURE.md), [ARCHITECTURE §4.7 failure modes](../ARCHITECTURE.md), [ARCHITECTURE §10.2/10.3 dlt and dbt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 8](../PROJECT_PLAN.md).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md), [v0.1-07 runtime](./07-runtime.md)
+- **Depends on:** [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md), [v0.1-07 runtime](./07-runtime.md), [v0.1-15 agent-harness](./15-agent-harness.md) (the pipeline engineer is a subagent on this harness — `delegate`, terminal tools, permission modes, the verification loop), [v0.1-16 extensibility](./16-extensibility.md) (the declarative agent format `builtin/pipeline-engineer.md` loads through)
 - **Blocks:** [v0.1-09 rest-api](./09-rest-api.md) (REST surface for pipelines), [v0.1-11 static-html-ui](./11-static-html-ui.md) (UI renders pipeline definitions and step status)
-- **Soft depends on:** [v0.1-06 project-memory](./06-project-memory.md) (the runtime specialist agent reads memory files via the spec-06 loader)
+- **Soft depends on:** [v0.1-06 project-memory](./06-project-memory.md) (the pipeline engineer reads memory files via the spec-06 loader), [v0.1-18 sql-layer](./18-sql-layer.md) (the `sql` tool layer the `sql` step type and the engineer's schema checks ride on)
 
 ## Goal
 
@@ -19,7 +21,7 @@ Bring the runtime to life with real pipelines:
 2. **The step DAG executor** — topological walk with intra-pipeline parallelism, per-step failure mode enforcement, Jinja templating for cross-step outputs
 3. **The three concrete step type implementations** — `dlt`, `dbt`, `sql` — each implementing the `StepExecutor` protocol from spec 07. `dlt`/`dbt` steps resolve their component name through the spec-03 resolver (local path in simple mode, remote workspace @ pinned ref in multi mode); `sql` steps stay inline (`file` + `connection`).
 4. **Failure mode framework** — `fail`, `warn`, `continue`, `retry` (with attempts + backoff), `skip_downstream`
-5. **The runtime specialist agent** — authors and modifies `pipelines/<name>.toml` files when the orchestrator routes pipeline-composition tasks to it
+5. **The pipeline engineer subagent** — a declarative agent (`builtin/pipeline-engineer.md`) the orchestrator `delegate`s pipeline-composition tasks to; it authors/modifies `pipelines/<name>.toml` with `edit` (scoped to `pipelines/**`) and **verifies** the result by execution (`carve pipelines validate` + a dev run)
 6. **CLI commands** for pipeline management (`carve pipelines list`, `show`, `validate`, `diff`), component graduation/inspection (`carve component`, `carve components show`), and re-seeding the schedule from code (`carve schedule reseed`)
 
 After this spec lands, a user can describe a multi-step pipeline ("ingest Stripe, then run the stg_stripe dbt models, then refresh the search index via SQL"), `carve plan` produces a multi-step composition, `carve build` materializes the dlt component code + pipeline TOML, and the runtime schedules and executes it end-to-end. The same `pipelines/<name>.toml` is **identical across simple and multi mode** — only the resolution behind the component names changes.
@@ -47,13 +49,11 @@ src/carve/runtime/jinja_context.py                       # NEW — cross-step ou
 src/carve/runtime/failure_modes.py                       # NEW — fail | warn | continue | retry | skip_downstream
 src/carve/runtime/execute_pipeline.py                    # NEW — main entry point called by worker.py from spec 07
 
-src/carve/core/agents/runtime_specialist.py              # NEW — runtime agent class
-src/carve/core/agents/prompts/runtime_specialist.md      # NEW — system prompt
-carve/agents/runtime.toml                                # NEW — built-in agent definition
+src/carve/core/agents/builtin/pipeline-engineer.md       # NEW — the pipeline engineer as a DECLARATIVE subagent (spec-16 markdown frontmatter: name/description/model/tools/allowed_paths/classifications + system-prompt body). Replaces the old runtime_specialist.py class + separate prompt + runtime.toml; it loads through the spec-16 AgentRegistry and runs on the spec-15 harness.
 
 src/carve/core/config/pipeline_schema.py                 # NEW — Pydantic models for pipelines/<name>.toml (steps reference component = "<name>")
 src/carve/runtime/reconciler.py                          # NEW — definition reconciler: on `carve serve` boot + loop, reconciles each pipelines/<name>.toml's definition (steps/DAG/component refs) into state, and applies [seed_schedule] to the schedules table ONLY at first registration. Owned here; invoked by spec 07's serve loop.
-src/carve/core/skills/pipeline_inspect.py                # NEW — read pipeline TOMLs (for the runtime specialist)
+src/carve/core/skills/pipeline_inspect.py                # NEW — read pipeline TOMLs (the pipeline engineer's pipeline_inspect skill)
 
 src/carve/cli/pipelines.py                               # NEW — `carve pipelines` Typer command group
 src/carve/cli/components.py                              # NEW — `carve component <name> --separate-remote ...` (graduation) + `carve components show`
@@ -70,7 +70,7 @@ tests/unit/test_step_executor_dlt.py                     # NEW — mock dlt subp
 tests/unit/test_step_executor_dbt.py                     # NEW — same shape for dbt
 tests/unit/test_step_executor_sql.py                     # NEW — exec SQL against fixture Postgres
 tests/integration/test_pipeline_3_step_end_to_end.py     # NEW — dlt → dbt → sql against fixture infrastructure
-tests/integration/test_runtime_agent_authoring.py        # NEW — agent produces a coherent pipelines/<name>.toml from a goal
+tests/integration/test_pipeline_engineer_authoring.py    # NEW — the delegated pipeline engineer produces a coherent pipelines/<name>.toml from a goal AND verifies it (carve pipelines validate + dev run)
 tests/unit/test_component_resolution.py                  # NEW — component = "<name>" resolves to local path (simple) vs remote workspace @ ref (multi); same TOML, both modes
 tests/integration/test_component_graduation.py           # NEW — `carve component <name> --separate-remote` writes the block, clones, validates, backfills omitted dbt-step names
 tests/unit/test_seed_schedule_first_registration.py      # NEW — [seed_schedule] applied only at first registration; edits are a no-op without reseed
@@ -399,64 +399,63 @@ class DltStepExecutor:
 
 The `sql` step type is deliberately limited to single-file, single-target execution — no multi-file SQL "pipelines" within a step. That's what step composition is for.
 
-### Runtime specialist agent
+### Pipeline engineer subagent
 
-`carve/agents/runtime.toml`:
+The pipeline-composition specialist is a **declarative subagent** on the harness (spec 15), defined in the spec-16 markdown-frontmatter format and shipped as a built-in at `src/carve/core/agents/builtin/pipeline-engineer.md`. The orchestrator (the harness main loop) `delegate`s pipeline-composition tasks to it; it runs as a fresh, context-isolated loop and returns a summary (the new/changed `pipelines/<name>.toml` + a validation result), not its full transcript. A user may override it by dropping a `carve/agents/pipeline-engineer.md` of the same name (spec 16).
 
-```toml
-name = "runtime"
-model = "claude-{LATEST_SONNET}"
-system_prompt_path = "src/carve/core/agents/prompts/runtime_specialist.md"
-max_tokens = 16384
-max_iterations = 30
+`src/carve/core/agents/builtin/pipeline-engineer.md`:
 
-allowed_skills = [
-  "read_file",
-  "write_file",                 # scoped to pipelines/**
-  "list_files",
-  "pipeline_inspect",           # spec-08 skill: read existing pipelines/<name>.toml
-  "list_components",            # which component names exist? (el/<name>/ dirs + [components.*] blocks; names only, no contents)
-  "list_dbt_models",            # via the dbt manifest (HISTORICAL — uses M2-era manifest reader)
-  "destination_schema_query",   # to verify target schemas exist
-  "mcp:*",
-]
-
-[guardrails]
-allowed_write_paths = ["pipelines/**"]
-forbidden_write_paths = ["/", "~/", "/etc/", "/usr/", "/var/", "/opt/", "el/**", "carve/**"]
-max_skill_calls_per_invocation = 30
-
-[specialization]
-classifications = [
-  "compose_pipeline",                  # new pipelines/<name>.toml
-  "modify_pipeline_steps",             # change step order, add/remove steps, update failure modes
-  "seed_schedule",                     # set the [seed_schedule] block on a NEW pipeline (a seed, not a live edit)
-  "schedule_existing_component",       # orchestration-only mode (PRD §6.2 mode 2): compose a TOML against an existing user-authored dlt/dbt component
-]
+```markdown
+---
+name: pipeline-engineer
+description: Composes existing dlt/dbt/sql components into a pipelines/<name>.toml — by referencing components by name. Use for pipeline composition, step-DAG edits, and seeding a new pipeline's schedule. Does NOT author dlt code or dbt models.
+model: claude-{LATEST_SONNET}        # per-agent model tier; falls back to the install default
+tools: [edit, grep, pipeline_inspect, list_components, list_dbt_models, sql, web_fetch]
+allowed_paths: ["pipelines/**"]      # write scope enforced by the permission gate (spec 15)
+classifications:
+  - compose_pipeline                 # new pipelines/<name>.toml
+  - modify_pipeline_steps            # change step order, add/remove steps, update failure modes
+  - seed_schedule                    # set the [seed_schedule] block on a NEW pipeline (a seed, not a live edit)
+  - schedule_existing_component      # orchestration-only mode (PRD §6.2 mode 2): compose a TOML against an existing user-authored dlt/dbt component
+---
+<system prompt body — see "System prompt" below>
 ```
 
-> **Schedule changes are not a TOML edit.** Changing a *live* schedule's cron or pausing/resuming is data, handled by `carve schedule …` (spec 07) — the runtime specialist does **not** rewrite `[seed_schedule]` to change a running schedule (editing it is a no-op without reseed). The specialist only sets `[seed_schedule]` when first composing a pipeline; the `seed_schedule` classification covers that authoring case. A request like "pause the stripe pipeline" routes to the schedule CLI/API, not to this agent.
+- **Tools (terminal-grade base + skills, spec 15/16).** `edit` is the precise string-replace tool (read-before-edit invariant), the only write tool the engineer holds, scoped by `allowed_paths` to `pipelines/**`; `grep` reads existing TOMLs/components for context; `pipeline_inspect` (spec-08 skill) reads existing `pipelines/<name>.toml`; `list_components` enumerates which component names exist (`el/<name>/` dirs + `[components.*]` blocks; names only, no contents); `list_dbt_models` reads the dbt manifest (HISTORICAL — M2-era manifest reader); `sql` is the dialect-aware tool (spec 18) used to confirm a target schema/relation exists before wiring a `sql` step; `web_fetch` reads dlt/dbt docs live. The engineer is **not** granted `bash` for arbitrary use — its only execution is the bounded verification path below (run through the harness verification primitive, not free-form shell). MCP-imported skills the user has allowed (`mcp:*`) are available per spec 16.
+- **Permission mode.** The engineer runs in **`build`** mode (spec 15): `edit` is allowed within `allowed_paths` (`pipelines/**`); a write outside that scope **prompts** (or is denied headless), exactly the boundary the old `forbidden_write_paths = ["el/**", "carve/**", …]` guardrail expressed. In `read_only`/`plan` mode (e.g. an `ask`/`plan` verb that routes here for a dry composition) `edit` is gated off and the engineer produces a proposed TOML diff without writing. Per spec 16, the engineer's tool grants are validated against the active mode at load — an over-broad grant is rejected.
+- **Classifications.** Unchanged from the control-plane revision — the orchestrator routes a goal to this subagent by matching its classification against this list (spec 16 routing, replacing the old hardcoded dispatch).
 
-System prompt highlights:
+> **Schedule changes are not a TOML edit.** Changing a *live* schedule's cron or pausing/resuming is data, handled by `carve schedule …` (spec 07) — the pipeline engineer does **not** rewrite `[seed_schedule]` to change a running schedule (editing it is a no-op without reseed). The engineer only sets `[seed_schedule]` when first composing a pipeline; the `seed_schedule` classification covers that authoring case. A request like "pause the stripe pipeline" routes to the schedule CLI/API, not to this subagent.
 
-1. **Role** — author/modify `pipelines/<name>.toml` files. The dlt code and dbt models exist in their components (or will via other specialists); the runtime specialist's job is to compose them by **referencing components by name**.
-2. **Inputs** — pre-scoped context includes: goal, the **component names** to reference (with their resolved paths/outputs), conventions + standards from memory (spec 06), existing pipeline TOMLs for reference
-3. **Output** — a structured Task result that emits the new/modified TOML file, with `component = "<name>"` on dlt/dbt steps
-4. **Schedule semantics** — when to seed a cron via `[seed_schedule]` on a new pipeline vs leave unscheduled; that `[seed_schedule]` is a *seed* only (live schedule changes go through the schedule CLI/API, not the TOML)
-5. **Step ordering** — dlt before dbt; transforms before notifications/exports; SQL post-steps last
-6. **Failure mode picking** — `retry` for transient-prone (ingest); `fail` for hard transforms; `warn` for nice-to-have post-steps
-7. **Cross-step outputs** — when to use Jinja templating to pass values
-8. **Component naming** — reference dlt/dbt components by name; in simple mode the dbt step's `component` may be omitted (single detected dbt project). The specialist does not write `[components.*]` blocks or set pins (that's `carve component` / spec 03).
+#### Verification loop (verify by execution)
 
-### Runtime specialist's role in orchestration-only mode
+The pipeline engineer closes the loop on its own output rather than handing the orchestrator an unverified TOML. After writing (or editing) a `pipelines/<name>.toml`, it runs the harness verification primitive (spec 15, `run_check`):
 
-Per [PRD §6.2](../PRD.md) mode 2, users with existing dlt/dbt code want Carve to orchestrate without authoring. The runtime specialist handles this:
+1. **`carve pipelines validate <name>`** — schema + DAG check (unique step ids, valid `depends_on`, no cycles, valid cron, resolvable `component` names). This is the cheap gate; an unresolvable component name or a cycle comes back as a structured failure the engineer reads and fixes (e.g. it grep'd the wrong component name; it re-checks via `list_components` and edits).
+2. **An optional dev run** — when the task warrants and the mode permits, a single execution against the dev target (the same generate→run→read→fix path the harness gives dlt/dbt agents). For composition, "run" is the DAG executor over the dev target; the engineer reads the real step results (`step_runs`, parsed `outputs`) and corrects the composition (a wrong `depends_on`, a missing `select`, a Jinja var referencing an output the upstream step doesn't emit) until green.
 
-- Orchestrator detects (via the el-agent dispatch logic from spec 04) that the user's goal touches a user-authored component
-- Routes directly to the runtime specialist with the goal classified as `schedule_existing_component`
-- Runtime specialist's pre-scoped context includes: the existing component's name + a structured summary of what it does (extracted by the `existing_dlt_inspect` / `existing_dbt_inspect` skills)
-- The specialist writes a `pipelines/<name>.toml` that references the existing component **by name** (`component = "<name>"`). In simple mode that name resolves to the existing `el/<name>/` dir or detected dbt project; if the user already split the component out, its `[components.<name>]` block (spec 03) resolves the same name to the remote repo @ ref — the pipeline TOML is the same either way.
-- No EL agent invocation; no dlt code generation
+The engineer iterates until validation (and, where run, the dev execution) is green, bounded by the harness's attempt cap. It then returns the verified TOML + the validation/run result as its delegation summary. This is the accuracy story: the engineer never reports a composition the warehouse/validator hasn't confirmed.
+
+#### System prompt highlights
+
+1. **Role** — author/modify `pipelines/<name>.toml` files via `edit`. The dlt code and dbt models live in their components (authored by other subagents — the DLT engineer, spec 04; the DBT engineer, v0.2); the pipeline engineer's job is to compose them by **referencing components by name**.
+2. **Inputs** — the delegation `context` bundle (spec 15) carries: the goal, the **component names** to reference (with their resolved paths/outputs), conventions + standards from memory (spec 06), and pointers to existing pipeline TOMLs. The subagent gathers further detail itself within its own window (`grep`, `pipeline_inspect`, `list_components`) rather than relying on a fully pre-scoped context — context-isolation supersedes the old "pre-scoped context" pattern.
+3. **Output** — a delegation summary that emits the new/modified TOML file (with `component = "<name>"` on dlt/dbt steps) plus the verification result.
+4. **Verify before returning** — always run `carve pipelines validate`; do a dev run when the task warrants; fix and re-run until green (the loop above).
+5. **Schedule semantics** — when to seed a cron via `[seed_schedule]` on a new pipeline vs leave unscheduled; that `[seed_schedule]` is a *seed* only (live schedule changes go through the schedule CLI/API, not the TOML).
+6. **Step ordering** — dlt before dbt; transforms before notifications/exports; SQL post-steps last.
+7. **Failure mode picking** — `retry` for transient-prone (ingest); `fail` for hard transforms; `warn` for nice-to-have post-steps.
+8. **Cross-step outputs** — when to use Jinja templating to pass values.
+9. **Component naming** — reference dlt/dbt components by name; in simple mode the dbt step's `component` may be omitted (single detected dbt project). The engineer does not write `[components.*]` blocks or set pins (that's `carve component` / spec 03).
+
+### Pipeline engineer's role in orchestration-only mode
+
+Per [PRD §6.2](../PRD.md) mode 2, users with existing dlt/dbt code want Carve to orchestrate without authoring. The pipeline engineer handles this:
+
+- The orchestrator detects (via the dispatch logic from spec 04) that the user's goal touches a user-authored component, and `delegate`s to the pipeline engineer with the goal classified as `schedule_existing_component`.
+- The delegation `context` carries the existing component's name + a structured summary of what it does (extracted by the `existing_dlt_inspect` / `existing_dbt_inspect` skills, spec 04); the engineer can also `grep` / `list_components` to confirm.
+- The engineer writes a `pipelines/<name>.toml` that references the existing component **by name** (`component = "<name>"`) and verifies it (validate, optional dev run). In simple mode that name resolves to the existing `el/<name>/` dir or detected dbt project; if the user already split the component out, its `[components.<name>]` block (spec 03) resolves the same name to the remote repo @ ref — the pipeline TOML is the same either way.
+- No DLT engineer is delegated to; no dlt code generation.
 
 This is what makes mode 2 work end-to-end: the user keeps their dlt code, gets Carve's runtime scheduling, observability, and composition.
 
@@ -516,7 +515,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 - **Integration (failure modes in practice):** a pipeline where step 2 fails under `warn`; pipeline run completes as `partial`; step 3 runs; the warning surfaces in logs
 - **Integration (skip_downstream):** step 2 fails under `skip_downstream`; step 3 (depends on 2) is marked skipped; step 4 (sibling) runs
 - **Integration (retry):** step that fails twice then succeeds under `mode=retry max_attempts=3`; pipeline succeeds; step_runs table shows three attempts with the third succeeding
-- **Integration (runtime agent):** `carve plan "schedule the stripe ingest to run nightly at 2am and then build the staging models"` produces a coherent `pipelines/stripe.toml` referencing the existing dlt component by name (`component = "stripe_charges"`) + a dbt step, with a `[seed_schedule]` cron
+- **Integration (pipeline engineer):** `carve plan "schedule the stripe ingest to run nightly at 2am and then build the staging models"` `delegate`s to the pipeline engineer, which produces a coherent `pipelines/stripe.toml` referencing the existing dlt component by name (`component = "stripe_charges"`) + a dbt step, with a `[seed_schedule]` cron, and **self-verifies** via `carve pipelines validate` (a deliberately-broken composition — e.g. a bad `depends_on` — triggers a fix iteration before the summary returns)
 - **Integration (orchestration-only mode):** existing user-authored dlt at `el/legacy_salesforce/` (no provenance header); `carve plan "schedule legacy_salesforce daily"` produces a TOML with `component = "legacy_salesforce"` without invoking the EL agent
 - **Integration (component graduation):** a simple-mode project with a dbt step whose `component` is omitted; `carve component analytics --separate-remote <test-git-url> --ref <sha>` writes the `[components.analytics]` block, clones the workspace, validates, and backfills `component = "analytics"` into the dbt step; the same pipeline runs unchanged afterward (no re-run, schedules intact); `--same-repo` reverses it
 - **Integration (multi-mode resolution parity):** the identical `pipelines/stripe.toml` runs end-to-end in simple mode and in multi mode (with `[components.*]` pointing at separate-remote repos @ ref); both produce equivalent results — proving name indirection
@@ -530,7 +529,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 - Each of the five failure modes behaves per the table above
 - Cross-step output references resolve via the sandboxed Jinja context
 - Cycle detection rejects invalid DAGs at `carve pipelines validate` time, before the runtime ever sees them
-- The runtime specialist agent authors a working `pipelines/<name>.toml` from a natural-language goal, referencing components by name
+- The pipeline engineer subagent (delegated to by the orchestrator) authors a working `pipelines/<name>.toml` from a natural-language goal, referencing components by name, and verifies it by execution (`carve pipelines validate` + an optional dev run) before returning its summary
 - **The same `pipelines/<name>.toml` runs in simple mode and multi mode** — `component = "<name>"` resolves to a local path or a remote repo @ pinned ref with no edit to the pipeline file
 - **Graduation works without rewrites:** `carve component <name> --separate-remote …` writes the block, clones+validates, backfills omitted dbt-step names; schedules keep firing and run history is intact; `--same-repo` reverses it
 - **`[seed_schedule]` is a seed, not the source of truth:** it seeds the `schedules` row at first registration only; editing it is inert until `carve schedule reseed`; `carve components show` makes the simple-mode convention legible
@@ -542,12 +541,13 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 ## Design notes
 
 - **Why a fixed three step types (`dlt`, `dbt`, `sql`) instead of pluggable types from day one?** Per [PRD §4.2 out of scope](../PRD.md) and design decision [5.9 steps as unit of execution](../ARCHITECTURE.md). A custom-step-type SDK requires hardening the abstraction against arbitrary executors, and the abstraction matures fastest when stressed by concrete implementations. Three real consumers from day one keep the abstraction honest; the custom-step SDK lands post-v0.1.
-- **Why Jinja for cross-step values instead of native Python expressions?** Because step authors (users via standards.md, and the agent) work in TOML, not Python. Jinja is the universal templating language for TOML/YAML config files (Ansible, dbt itself). Sandboxed Jinja keeps the surface limited to the namespace we expose.
+- **Why Jinja for cross-step values instead of native Python expressions?** Because step authors (users via standards.md, and the pipeline engineer) work in TOML, not Python. Jinja is the universal templating language for TOML/YAML config files (Ansible, dbt itself). Sandboxed Jinja keeps the surface limited to the namespace we expose.
 - **Why does the `sql` step type only support single-file single-target execution?** Because anything richer pushes back toward "carve has its own SQL engine," which we explicitly aren't building. Users who need multi-statement SQL with conditional logic should put that in a dbt model. The `sql` step is for thin operational glue (refresh a materialized view, post a row count to an analytics table).
 - **Why `skip_downstream` instead of more elaborate conditional logic?** Per [ARCHITECTURE §15](../ARCHITECTURE.md), we don't ship general conditional branching. `skip_downstream` is the one form of conditionality we allow because it falls out naturally from the failure-mode framework — "if this step failed, the next steps don't apply" is a common, easily-explained pattern.
-- **Why the runtime specialist agent rather than letting the orchestrator write pipeline TOMLs directly?** Because the orchestration agent's job is classification + impact context + dispatch. Adding "also write pipeline TOMLs" to its remit would bloat its prompt and reduce its specialism. A focused runtime specialist with a small skill set (read pipelines, write to pipelines/, list components) is easier to reason about and easier to test.
-- **Why allow the runtime specialist to read but never modify dlt/dbt components?** Same separation of concerns. The EL agent (spec 04) owns dlt code; the dbt specialist (v0.2) will own dbt models. Runtime specialist composes them by reference. If a goal requires both new dlt code AND new pipeline composition, the orchestrator routes to both specialists and merges their Task results into one Plan.
-- **Why reference components by NAME rather than by path?** This is the one idea the control-plane model hangs on ([../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). Name-based indirection lets simple mode hide all the machinery (the name resolves by convention), lets graduation move a component's code to its own repo without touching any pipeline TOML, and lets the runtime pin a version per component. It is Dagster's code-location trick scoped to dlt/dbt/sql. A path on the step would couple the composition to a layout and make graduation a rewrite.
+- **Why a separate pipeline engineer subagent rather than letting the orchestrator write pipeline TOMLs directly?** Because the orchestrator (the harness main loop) does classification + decomposition + `delegate` + synthesis — it doesn't do deep work itself. Folding "also write pipeline TOMLs" into it would bloat its prompt and reduce its specialism, and it would lose the context-isolation win (a composition that takes a dozen `grep`/`pipeline_inspect`/validate iterations stays in the subagent's window, not the orchestrator's). A focused pipeline engineer with a small tool set (`edit` scoped to `pipelines/**`, `grep`, `pipeline_inspect`, `list_components`, `sql`) is easier to reason about, test, and override (it's just a markdown file, spec 16).
+- **Why scope the pipeline engineer's `edit` to `pipelines/**` (read but never write dlt/dbt components)?** Same separation of concerns, now enforced by the permission gate (spec 15) rather than a bespoke guardrail block: the engineer's `allowed_paths` is `pipelines/**`, so any `edit` outside it prompts/denies. The DLT engineer (spec 04) owns dlt code; the DBT engineer (v0.2) owns dbt models. The pipeline engineer composes them by reference. If a goal requires both new dlt code AND new pipeline composition, the orchestrator `delegate`s to both subagents and merges their summaries into one Plan.
+- **Why a declarative markdown agent (`builtin/pipeline-engineer.md`) instead of a `runtime_specialist.py` class + a `runtime.toml`?** Per the AI-harness model ([../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)) and spec 16: every agent is a markdown file with frontmatter, loaded by the `AgentRegistry`, hot-reloadable, and overridable by a same-named user file. Folding the prompt + the tool/path/classification config into one file (and dropping the bespoke Python class) resolves the built-vs-spec agent drift and makes the pipeline engineer the same shape as every other subagent. The old `[guardrails]` block's intent (writable `pipelines/**`, forbidden `el/**`/`carve/**`) is now just `allowed_paths` enforced by the permission gate (spec 15).
+- **Why does the pipeline engineer verify by execution?** Per the harness model, generation-without-verification is a demo. A composition can be syntactically fine but wrong (a cycle, a dangling `depends_on`, a Jinja var referencing an output the upstream step never emits, a `component` name that doesn't resolve). Running `carve pipelines validate` (and, where warranted, a dev run that reads real `step_runs`/`outputs`) and fixing until green is what makes the engineer a colleague rather than a code generator — and it grounds the engineer in the real component graph rather than a guessed one.
 - **Why is `[seed_schedule]` a seed instead of the schedule source of truth?** Because pausing a pipeline or nudging a cron is an operational act that should be instant and audited (CLI/API/UI + the `schedule_changes` log), not a code change requiring plan/build/deploy/PR. Per the three-tier ownership in [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), the pipeline *definition* is code (reconciled) but the *schedule* is data. This **reverses UC2's earlier decision** and **deletes its code-vs-override TTL-precedence machinery** — the reconciler reconciles the definition only and never touches the schedule. The code still carries a seed so a fresh registration has a sensible default and the schedule can reconstitute from (backed-up) state + code; `carve schedule reseed` is the deliberate bridge back from code to data.
 - **Why do `sql` steps stay inline (file + connection) instead of becoming named components?** A `sql` step is thin operational glue authored in the control-plane repo; there's no independent lifecycle to version or deploy separately, so the name-indirection apparatus would be overhead with no payoff in v0.1. (Whether ad-hoc sql ever graduates to a named/separable component is an open point in the reference model; left inline for now.)
 
@@ -557,7 +557,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 - **Intra-pipeline parallelism slot count.** *Implementation default.* Default 4 slots per worker. Tunable in `runtime.toml`. The cap matters when a pipeline has many independent dlt resources fanned out at one level.
 - **How `partial` pipeline-run status surfaces in retries/scheduling.** *Implementation default.* A `partial` run is *not* automatically retried by the scheduler — it's treated as completed. Users who want auto-retry on partial use `mode=fail` on the warning-emitting step instead. Documented in `docs/failure-modes.md`.
 - **Whether `step.outputs` is size-capped.** *Implementation default.* 64KB per step's outputs JSONB column. If a step produces more (huge row counts as outputs, etc.), it's truncated with a flag — agents reading the outputs see partial data, which is acceptable for downstream Jinja but visible. Users authoring sql steps with large output dicts should structure them down.
-- **Behavior when the runtime specialist agent is asked to compose a pipeline involving a component that doesn't exist.** *Implementation default.* The specialist returns `status="needs_user_input"` in its Task result with a message: "The component `<name>` doesn't exist. Either author it first (e.g., `carve plan 'ingest X'`) or reference an existing component." The orchestrator surfaces this in the plan summary; the user decides.
+- **Behavior when the pipeline engineer is asked to compose a pipeline involving a component that doesn't exist.** *Implementation default.* The engineer confirms via `list_components`, then returns a `needs_user_input` status in its delegation summary with a message: "The component `<name>` doesn't exist. Either author it first (e.g., `carve plan 'ingest X'`) or reference an existing component." The orchestrator surfaces this in the plan summary; the user decides. (`carve pipelines validate` would also fail an unresolvable name — but the engineer catches it before writing.)
 - **Whether `target` belongs in `[seed_schedule]`.** *Needs human confirmation.* The reference model's `[seed_schedule]` example shows only `cron` + `timezone`, but a scheduled job needs a target (spec 07's `jobs.target` is NOT NULL). The smallest reasonable choice taken here: keep `target` as a seedable field (`default = "prod"`) alongside `cron`/`timezone`, since it is part of *what gets seeded into the schedules row*, not a live-mutated control like pause. If the runtime instead derives target from `carve.toml`'s `default_target` at registration, drop `target` from the block. Flagged for the spec-07 owner to confirm the `schedules` row's target source.
 - **Simple-mode dbt-step `component`: omit-and-backfill vs always-name.** *Following the reference model's lean.* The reference model leans "omit in simple mode, backfill on graduation" (cleanest simple mode) but lists it as an open point. This spec implements that lean: a `dbt` step's `component` is optional and graduation backfills it. If the project later prefers zero graduation-churn, switch to always-naming the dbt component in simple mode — the schema already permits a name.
 - **`ref` vs `branch` on a graduated component.** *Deferred to spec 03.* `carve component … --separate-remote` accepts `--ref` (pin) or `--branch` (track HEAD), mirroring the reference model's per-component fields; the exact precedence/default (track default branch when neither is set) is defined by spec 03's `[components.<name>]` schema, not here.

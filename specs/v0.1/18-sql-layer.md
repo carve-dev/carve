@@ -36,7 +36,7 @@ src/carve/core/sql/adapters/snowflake.py # MODIFY/NEW — generalize the M1 Snow
 src/carve/core/sql/adapters/duckdb.py    # NEW — local-dev + test dialect (first-class)
 src/carve/core/sql/adapters/__init__.py  # NEW — adapter registry (postgres/bigquery/databricks/sqlserver = sqlglot + stub introspection, post-v0.1 hardening)
 src/carve/core/agents/tools/sql.py       # NEW — the `sql` tool (spec 15): explain | generate | modify | validate | introspect | run, dialect from the connection
-carve/agents/builtin/sql-specialist.md   # NEW — the thin SQL specialist declarative agent
+src/carve/core/agents/builtin/sql-specialist.md   # NEW — the thin SQL specialist declarative agent
 src/carve/core/skills/builtin/catalog.py # MODIFY — the 5 catalog skills become dialect-dispatched (Snowflake + DuckDB), via introspect.py
 src/carve/core/agents/m1_tools.py        # MODIFY — run_snowflake_query -> the dialect-aware `sql` run path (back-compat alias)
 docs/sql-layer.md                        # NEW — dialects, role-scoping, the sql tool + specialist

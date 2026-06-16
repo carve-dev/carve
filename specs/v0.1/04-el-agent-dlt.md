@@ -1,125 +1,141 @@
-# v0.1-04 — EL specialist agent: generates dlt code
+# v0.1-04 — DLT engineer subagent: authors and runs dlt code
 
-> **Revised for the control-plane model** (see [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): the EL agent authors *into a named `dlt` component* — its `el/<name>/` directory in simple mode, or its own repo in separate mode — not a privileged fused `el/`. Dependency hints are emitted by component name. The four authoring strategies, provenance header, skills, and CDC scope note are unchanged in behavior; the changes here are framing/naming alignment to the component model.
+> **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): the EL specialist becomes the **DLT engineer subagent** — a *declarative* agent (built-in at `src/carve/core/agents/builtin/dlt-engineer.md`, the spec-16 frontmatter format) that the orchestrator `delegate`s to (spec 15), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web_fetch`) + dlt skills + the `sql` tool (spec 18), running in **`build`** permission mode, that **closes the loop** by running `dlt pipeline run` via `bash` and self-correcting on the parsed result (the verification primitive, spec 15). Its diff then passes through **dlt-qa** and **dlt-security** review subagents (the `/build-spec` engineer→reviewers→fix pattern, brought to users' pipelines). The hardcoded `extract_load` agent class is retired in favor of this declarative agent on the harness.
 
-> The wedge of v0.1. The EL specialist takes a goal slice from the orchestrator and produces working dlt code in the target `dlt` component (the `el/<component_name>/` directory in simple mode), picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper). Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
+> **Still revised for the control-plane model** (see [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): the DLT engineer authors *into a named `dlt` component* — its `el/<name>/` directory in simple mode, or its own repo in separate mode — not a privileged fused `el/`. Dependency hints are emitted by component name. The four authoring strategies, provenance header, skills, the component-authoring model, and CDC scope note are all preserved; this revision layers the harness model on top of them.
+
+> The wedge of v0.1. The DLT engineer takes a goal slice from the orchestrator (via `delegate`) and produces working, **verified** dlt code in the target `dlt` component (the `el/<component_name>/` directory in simple mode), picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper) and then running it to green. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Runs on the harness ([v0.1-15](./15-agent-harness.md)) as a declarative agent ([v0.1-16](./16-extensibility.md)). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-03 flat-layout](./03-flat-layout.md)
-- **Blocks:** [v0.1-05 init-rewrite](./05-init-rewrite.md), [v0.1-07 runtime](./07-runtime.md) (the `dlt` step type executes what this agent produces), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md)
-- **Built on:** the orchestration agent and reasoning loop from M1 (HISTORICAL — preserved, not rewritten). This spec adds the EL specialist on top.
+- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-15 agent-harness](./15-agent-harness.md) (subagent delegation, terminal tools, permission modes, the verification loop), [v0.1-16 extensibility](./16-extensibility.md) (the declarative agent format this agent ships in), [v0.1-18 sql-layer](./18-sql-layer.md) (the `sql` tool the agent uses for schema checks).
+- **Blocks:** [v0.1-05 init-rewrite](./05-init-rewrite.md), [v0.1-07 runtime](./07-runtime.md) (the `dlt` step type executes what this agent produces), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md), [v0.1-17 recovery-engineer](./17-recovery-engineer.md) (recovery `delegate`s dlt fixes to this agent).
+- **Built on:** the orchestration agent and reasoning loop from M1 (HISTORICAL — preserved, not rewritten, and evolved into the harness orchestrator/main loop per spec 15). This spec defines the DLT engineer as a declarative subagent on that harness.
 
 ## Goal
 
-Ship the EL specialist agent that authors dlt code. Concretely:
+Ship the **DLT engineer** as a declarative subagent on the harness, armed to author *and verify* dlt code. Concretely:
 
-- Receives pre-scoped context from the orchestrator (goal slice, the target `dlt` component name, destination, existing sources, memory files, optional curated-library match, optional brownfield pipeline references)
+- Is `delegate`d a task by the orchestrator (spec 15): a goal slice + a context bundle (the target `dlt` component name, destination, existing sources, memory files, optional curated-library match, optional brownfield component references). It runs in its own isolated context and returns a **summary**, not its transcript.
 - Picks one of four authoring strategies based on the goal and context
-- Writes dlt files into the target component — in simple mode its `el/<component_name>/` directory, resolved by name per [v0.1-03](./03-flat-layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries
+- Authors dlt files into the target component using the `edit` tool (read-before-edit, string-replace) — in simple mode its `el/<component_name>/` directory, resolved by name per [v0.1-03](./03-flat-layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries. Writes are confined to `allowed_paths` by the permission gate (spec 15).
 - Records provenance headers per [v0.1-03](./03-flat-layout.md)
-- Returns a structured plan task to the orchestrator: files written, their hashes, expected outputs, dependencies on dbt sources (keyed by component name)
+- **Closes the loop:** runs `dlt pipeline run` (and `dlt pipeline check`) via `bash`, reads the harness-parsed `CheckResult` (spec 15's verification primitive, which parses dlt `state.json`), and **self-corrects** until green — using the `sql` tool (spec 18) to confirm the real destination schema rather than guessing it.
+- Hands its diff to the **dlt-qa** and **dlt-security** review subagents (below); the orchestrator (or the DLT engineer, one level of delegation) routes the diff through them and applies fixes before the change is surfaced
+- Returns a structured summary to the orchestrator: files written, their hashes, the verification result, expected outputs, dependencies on dbt sources (keyed by component name)
 - Operates idempotently on modifications: re-running against an existing component diffs cleanly, preserves user edits below the provenance header
 
-This spec ships the agent definition, system prompt, the skills the agent calls, and the initial curated source library structure. The first wave of curated sources (Stripe, Salesforce, etc.) is a separate post-v0.1 effort; this spec ships the framework that those slot into.
+This spec ships the **declarative agent definition** (the built-in markdown agent + its system prompt body), the **review subagents**, the skills the agent calls, and the initial curated source library structure. The harness mechanics (delegation, `edit`/`bash`/`grep`/`web_fetch`, permission modes, the verification loop) come from spec 15; the declarative agent/skill format from spec 16; the `sql` tool from spec 18. The first wave of curated sources (Stripe, Salesforce, etc.) is a separate post-v0.1 effort; this spec ships the framework (now a **skill library**, spec 16) that those slot into.
 
 ## Out of scope
 
-- The orchestration agent's classification + specialist-picking logic — that's part of M1's reasoning loop (HISTORICAL). This spec produces an EL specialist that the orchestrator routes work to; it doesn't change the orchestrator.
-- The dbt specialist agent — that's v0.2 (Pillar 3).
-- The pipeline composition step (`pipelines/<name>.toml`, whose steps reference components by name via `component = "<name>"`) — written by the runtime specialist, covered in [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md). The EL agent emits a structured "this pipeline needs to be composed with these dependencies" hint, keyed by the component name it authored into, that the orchestrator then routes to the runtime specialist.
+- **The harness mechanics** — subagent delegation (the `delegate` tool), the terminal tools (`edit`/`bash`/`grep`/`web_fetch`/`web_search`), permission modes/allowlists/sandbox, and the verification-loop primitive (`run_check`) — are [v0.1-15](./15-agent-harness.md). This spec *consumes* them; it does not define them.
+- **The declarative agent/skill format + registry** (frontmatter schema, hot-reload, name override, skill packs, the connector→skill library loader) — [v0.1-16](./16-extensibility.md). This spec ships *a* built-in agent file in that format and *a* set of skill packs; it does not define the format.
+- **The `sql` tool layer** (dialect-aware introspection/validation/run, role-scoping) — [v0.1-18](./18-sql-layer.md). The DLT engineer *uses* the `sql` tool for schema checks; it doesn't define it.
+- The orchestrator's classification + delegation logic — that's the harness main loop (spec 15) matching a goal's classification against each agent's `classifications` (spec 16). This spec produces a DLT engineer the orchestrator `delegate`s to; it doesn't change the orchestrator.
+- The dbt engineer subagent — that's v0.2 (Pillar 3).
+- The pipeline composition step (`pipelines/<name>.toml`, whose steps reference components by name via `component = "<name>"`) — written by the **pipeline engineer** (the runtime specialist, [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md)). The DLT engineer emits a structured "this pipeline needs to be composed with these dependencies" hint, keyed by the component name it authored into; the orchestrator then `delegate`s the composition to the pipeline engineer.
 - The actual contents of the curated source library beyond a small reference example (e.g., a "Hacker News API" sample). Curating the top-30 Airbyte ports is a separate workstream after v0.1.
-- The CLI/REST/MCP surface for invoking the agent directly (e.g., `carve agents test extract-load`). That's part of [v0.1-09 rest-api](./09-rest-api.md) and [v0.1-10 mcp-server](./10-mcp-server.md).
-- Orchestration-only mode (PRD §6.2 mode 2). When the user has an existing `dlt` component (in this repo or a separate-remote one), the orchestrator does NOT route to the EL agent for that pipeline — it routes to the runtime specialist to compose the existing component by name. This spec handles modes 1 (authoring) and 3 (mix); mode 2 is a no-op for this agent.
+- The CLI/REST/MCP surface for invoking the agent directly. The `carve agents list/show/create/test` surface lives in [v0.1-16](./16-extensibility.md); the REST/MCP surface in [v0.1-09 rest-api](./09-rest-api.md) and [v0.1-10 mcp-server](./10-mcp-server.md).
+- Orchestration-only mode (PRD §6.2 mode 2). When the user has an existing `dlt` component (in this repo or a separate-remote one), the orchestrator does NOT `delegate` to the DLT engineer for that pipeline — it `delegate`s to the pipeline engineer to compose the existing component by name. This spec handles modes 1 (authoring) and 3 (mix); mode 2 is a no-op for this agent.
 
 ## Files this spec produces
 
 ```
-carve/agents/extract-load.toml                          # NEW — built-in agent definition shipped with Carve
-src/carve/core/agents/extract_load.py                   # NEW — agent class (loads prompt, calls SDK loop, validates outputs)
-src/carve/core/agents/prompts/extract_load.md           # NEW — the system prompt (single consolidated prompt; supersedes M2-03's bespoke-Python prompts)
-src/carve/core/agents/prompts/extract_load_strategies/  # NEW — strategy-specific prompt fragments included by reference
-    native_dlt_source.md
-    rest_api_config.md
-    curated_library.md
-    singer_wrapper.md
-src/carve/core/skills/dlt_library.py                    # NEW — list, lookup, copy; uses src/carve/sources/
-src/carve/core/skills/rest_api_explorer.py              # NEW — bounded HTTP HEAD/GET/OPTIONS probing for API discovery
-src/carve/core/skills/dbt_source_lookup.py              # NEW — search the user's dbt sources.yml for matches
-src/carve/core/skills/existing_dlt_inspect.py           # NEW — read existing user-authored dlt code for brownfield context
-src/carve/core/skills/file_io.py                        # MODIFY (if exists from M1) — extend write guardrail to the target dlt component's path (el/<name>/ in simple mode; resolved per spec 03)
+# The declarative subagents (spec-16 markdown format; built-ins live under src/carve/core/agents/builtin/)
+src/carve/core/agents/builtin/dlt-engineer.md           # NEW — the DLT engineer as a declarative agent: frontmatter (name/description/model/tools/allowed_paths/classifications) + system-prompt body (the four strategies, provenance, verification loop). Replaces the retired carve/agents/extract-load.toml + src/carve/core/agents/extract_load.py.
+src/carve/core/agents/builtin/dlt-qa.md                 # NEW — dlt QA review subagent (read-only/plan mode): adversarial review of the dlt diff for schema-contract, incrementality, idempotency, convention adherence
+src/carve/core/agents/builtin/dlt-security.md           # NEW — dlt security review subagent (read-only/plan mode): credential handling, secrets-in-templates, data-loss/write-disposition risks, exfiltration via REST exploration
+
+# Strategy guidance — bundled with the DLT engineer's skill packs (progressive disclosure, spec 16), not a bespoke prompt-include mechanism
+src/carve/core/skills/builtin/dlt_strategies/           # NEW — strategy-specific guidance loaded on description-match
+    native_dlt_source/SKILL.md
+    rest_api_config/SKILL.md
+    curated_library/SKILL.md
+    singer_wrapper/SKILL.md
+
+# Skills the DLT engineer calls (registered in the skill registry, spec 16)
+src/carve/core/skills/builtin/dlt_library.py            # NEW — list, lookup, copy; uses src/carve/sources/ (the connector→skill library)
+src/carve/core/skills/builtin/rest_api_explorer.py      # NEW — bounded HTTP HEAD/GET/OPTIONS probing for API discovery
+src/carve/core/skills/builtin/dbt_source_lookup.py      # NEW — search the user's dbt sources.yml for matches
+src/carve/core/skills/builtin/existing_dlt_inspect.py   # NEW — read existing user-authored dlt code for brownfield context
 src/carve/integrations/dlt/code_emitter.py              # NEW — utilities the agent uses to emit valid dlt code with provenance header
 src/carve/integrations/dlt/requirements_writer.py       # NEW — manage requirements.txt with pinned deps
 src/carve/integrations/dlt/dlt_config_merger.py         # NEW — additive merges into .dlt/config.toml.template per-destination
-src/carve/sources/README.md                             # NEW — explains the curated library layout and how to contribute
-src/carve/sources/_reference_hackernews/                # NEW — one reference curated source for tests and docs
+src/carve/integrations/dlt/verify.py                    # NEW — the dlt-specific parser for the verification loop (spec 15's run_check): runs `dlt pipeline check` / `dlt pipeline run`, parses state.json into a CheckResult the agent self-corrects on
+
+src/carve/sources/README.md                             # NEW — explains the curated library layout and how to contribute (now expressed as skill packs, spec 16)
+src/carve/sources/_reference_hackernews/                # NEW — one reference curated source, expressed as a skill pack per spec 16 (proves connector == skill)
+    SKILL.md
     __init__.py
     requirements.txt
     README.md
-tests/unit/test_el_agent_native.py                      # NEW
-tests/unit/test_el_agent_rest_api_config.py             # NEW
-tests/unit/test_el_agent_curated_library.py             # NEW
-tests/unit/test_el_agent_singer_wrapper.py              # NEW
-tests/unit/test_el_agent_modification.py                # NEW — re-running against existing pipeline preserves user edits
-tests/integration/test_el_agent_end_to_end.py           # NEW — full plan/build cycle against a mock HTTP API
+tests/unit/test_dlt_engineer_native.py                  # NEW
+tests/unit/test_dlt_engineer_rest_api_config.py         # NEW
+tests/unit/test_dlt_engineer_curated_library.py         # NEW
+tests/unit/test_dlt_engineer_singer_wrapper.py          # NEW
+tests/unit/test_dlt_engineer_modification.py            # NEW — re-running against existing component preserves user edits
+tests/unit/test_dlt_engineer_definition.py              # NEW — the built-in dlt-engineer.md parses; tool grants are valid for build mode (spec 16)
+tests/integration/test_dlt_engineer_verification_loop.py# NEW — author → `dlt pipeline run` via bash → parse state.json → self-correct on a deliberately-broken artifact
+tests/integration/test_dlt_engineer_review_fanout.py    # NEW — the diff routes through dlt-qa + dlt-security; a flagged finding triggers a fix iteration
+tests/integration/test_dlt_engineer_end_to_end.py       # NEW — full plan/build cycle against a mock HTTP API
 tests/fixtures/mock_apis/                               # NEW — vcr-recorded or httpserver-based fixtures
-docs/extract-load-agent.md                              # NEW — user-facing reference: what the agent does, the four strategies, how to influence them via standards.md
+docs/dlt-engineer.md                                    # NEW — user-facing reference: what the agent does, the four strategies, the verification loop, the qa/security reviewers, how to influence them via standards.md
 ```
 
 ## Behavior
 
-### Agent definition (`carve/agents/extract-load.toml`)
+### Agent definition (`src/carve/core/agents/builtin/dlt-engineer.md`)
 
-```toml
-name = "extract-load"
-model = "claude-{LATEST_SONNET}"
-system_prompt_path = "src/carve/core/agents/prompts/extract_load.md"
-max_tokens = 16384
-max_iterations = 30
+The DLT engineer is a **declarative agent** in the spec-16 format: frontmatter + a system-prompt body. It ships as a built-in (under `src/carve/core/agents/builtin/`); a user can override it by dropping `carve/agents/dlt-engineer.md` (spec 16's name-override). The hardcoded `extract_load.py` agent class is retired — the harness loads this markdown file and runs it as a subagent.
 
-allowed_skills = [
-  "read_file",
-  "write_file",          # scoped to the target dlt component's path (el/<name>/ in simple mode), .dlt/*.template via guardrail (spec 03)
-  "list_files",
-  "dlt_library_list",
-  "dlt_library_lookup",
-  "dlt_library_copy",
-  "rest_api_explore",
-  "destination_schema_query",
-  "dbt_source_lookup",
-  "existing_dlt_inspect",
-  "mcp:*",               # any MCP-imported skill the user has allowed
-]
-
-[guardrails]
-forbidden_write_paths = [
-  "/",                   # absolute paths anywhere outside project
-  "~/",                  # home directory
-  "/etc/", "/usr/", "/var/", "/opt/",
-]
-allowed_write_paths = [
-  "el/**",
-  ".dlt/*.template",     # never the live .dlt/config.toml or .dlt/secrets.toml
-]
-max_skill_calls_per_invocation = 50
-max_result_size_bytes = 51200
-
-[specialization]
-classifications = [
-  "new_pipeline",
-  "modify_pipeline",
-  "refactor_pipeline_to_incremental",
-  "add_resource_to_pipeline",
-  "update_pipeline_destination",
-]
+```markdown
+---
+name: dlt-engineer
+description: Authors and runs dlt sources/pipelines into a named dlt component. Use for ingest / extract-load goals (new sources, incremental refactors, destination changes).
+model: claude-{LATEST_SONNET}          # per-agent model tiering; falls back to the install default (spec 16)
+tools:
+  - edit                               # string-replace authoring (read-before-edit), spec 15
+  - bash                               # runs `dlt pipeline run` / `dlt pipeline check` / `pip` — the verification loop, spec 15
+  - grep                               # search the component + repo for patterns
+  - glob                               # find existing el/**/*.py for brownfield context
+  - web_fetch                          # read a source API's live docs / OpenAPI spec
+  - sql                                # the dialect-aware sql tool (spec 18) — confirm the REAL destination schema, never guess
+  - dlt_library                        # list / lookup / copy the curated connector skill library
+  - rest_api_explore                   # bounded HTTP probing for API discovery
+  - dbt_source_lookup                  # match against the user's dbt sources.yml
+  - existing_dlt_inspect               # read user-authored dlt for brownfield patterns
+  - "mcp:*"                            # any MCP-imported skill the user has allowed (spec 16)
+allowed_paths:                         # write scope, enforced by the permission gate (spec 15)
+  - "el/**"
+  - ".dlt/*.template"                  # never the live .dlt/config.toml or .dlt/secrets.toml
+classifications:
+  - new_pipeline
+  - modify_pipeline
+  - refactor_pipeline_to_incremental
+  - add_resource_to_pipeline
+  - update_pipeline_destination
+---
+<system prompt body — see "The system prompt" below>
 ```
 
-`{LATEST_SONNET}` is interpolated at build time from `carve.toml`'s `[models]` block (or env var). v0.1 ships with the current Claude Sonnet as the default; users can override per-agent.
+- **Permission mode = `build`** (spec 15): the harness runs this subagent in `build` mode, so `edit`/`bash` are allowed **within `allowed_paths`**; `dlt pipeline run`/`dlt pipeline check`/read queries auto-allow; writes outside `allowed_paths`, `DROP`/DDL, and `git push` **prompt** (interactive) or **deny** (headless). The old per-agent `[guardrails]` (`forbidden_write_paths`, `allowed_write_paths`, `max_skill_calls_per_invocation`, `max_result_size_bytes`) are now the harness's job: `allowed_paths` above is the write scope the gate enforces; the forbidden absolute paths (`/`, `~/`, `/etc/`, …) fall out of "writes only within `allowed_paths`, everything else denied"; call/size caps are the harness's bounded-loop + skill-category caps (spec 15/16).
+- **Tool grants are validated against the mode** at load (spec 16): every tool above is permitted in `build`; an over-broad grant would be rejected with a clear error.
+- `{LATEST_SONNET}` is interpolated from `carve.toml`'s `[models]` block (or env var). v0.1 ships with the current Claude Sonnet as the default; users override per-agent via the frontmatter `model` field.
 
-### Pre-scoped context (input from orchestrator)
+### The review subagents (dlt-qa + dlt-security)
 
-The EL agent expects:
+The DLT engineer's diff does not ship straight to the user. It passes through two **review subagents** — the `/build-spec` engineer→parallel-reviewers→fix pattern Carve runs on *itself*, now brought to users' pipelines. Both are declarative agents (`builtin/dlt-qa.md`, `builtin/dlt-security.md`) run in a **read-only/plan** permission mode (spec 15) on a **fresh, adversarial context** (they see the diff + the goal, not the engineer's transcript — context isolation, spec 15). Each returns a structured set of findings (severity + file:line + suggested change); the orchestrator (or the DLT engineer via one level of `delegate`) feeds findings back and the engineer iterates until the reviewers pass or a finding is surfaced to the user.
+
+- **dlt-qa** (`tools: [grep, glob, sql, read_file]`) — reviews for correctness/quality the engineer's own loop can miss: schema-contract fit (does the resource match the declared/destination schema, via the `sql` tool), incremental-cursor correctness, idempotency / write-disposition sanity, requirements pinning, and convention/standards adherence (spec 06). It does **not** edit; it reports.
+- **dlt-security** (`tools: [grep, glob, read_file]`) — reviews for safety: no live credentials baked into code or `.dlt/*.template` (only `${ENV}` placeholders), no secrets logged, write-disposition choices that risk data loss (`replace` on a table that should `merge`/`append`), and that `rest_api_explore` usage stayed within bounds (no write verbs, no exfiltration to non-source hosts). It does **not** edit; it reports.
+
+This is framed, not exhaustively specified: the review fan-out mechanics (spawn, collect, feed-back) are the harness's (spec 15); the staged-start question — security-on-deploy + qa-on-build first, full fan-out later — is the strategy's review-fan-out open question. v0.1 wires **qa-on-build** (every authored diff) and **security-on-build** for credential/data-loss checks; deploy-time gating composes with spec 14.
+
+### Context bundle (input from the orchestrator's `delegate`)
+
+The DLT engineer is `delegate`d a task with a **context bundle** (spec 15 — the only context the subagent sees; not the parent's transcript). The bundle carries:
 
 ```python
 {
@@ -168,9 +184,9 @@ For `classification = "modify_pipeline"`, the orchestrator additionally provides
 
 ### The four authoring strategies
 
-For each invocation, the agent picks **exactly one** strategy. Selection happens via the system prompt's decision tree, not via deterministic code — the LLM reasons about which to pick given the context. The prompt enforces a hierarchy:
+For each invocation, the agent picks **exactly one** strategy. Selection happens via the system-prompt body's decision tree, not via deterministic code — the LLM reasons about which to pick given the context, pulling in the matching strategy **skill pack** (`src/carve/core/skills/builtin/dlt_strategies/<strategy>/SKILL.md`, loaded on description-match per spec 16) for detailed guidance. The prompt enforces a hierarchy:
 
-1. **Curated library copy** — if `dlt_library_match` is set with `high` confidence (e.g., the user's goal explicitly mentions Stripe and we have a curated Stripe source), copy from `src/carve/sources/<name>/` into `el/<pipeline_name>/`, customize for the destination/schema, set provenance to library_name + commit.
+1. **Curated library copy** — if `dlt_library_match` is set with `high` confidence (e.g., the user's goal explicitly mentions Stripe and we have a curated Stripe source), apply the `<name>` connector skill pack: `dlt_library_copy` lays the curated source from `src/carve/sources/<name>/` into `el/<component_name>/`, the agent customizes for the destination/schema via `edit`, and sets provenance to library_name + commit.
 
 2. **dlt REST API generic config** — if the source is a clean REST API (JSON responses, standard pagination, OAuth or bearer auth), emit a TOML config block describing endpoints + pagination + auth. Generates a thin `__init__.py` that loads the config and calls `dlt.sources.rest_api.rest_api_source(...)`. Most lightweight option.
 
@@ -199,60 +215,82 @@ For REST API config strategy, additionally:
 
 - `el/<pipeline_name>/rest_api_config.toml` (or inline in `__init__.py`; agent picks based on complexity)
 
-The agent never writes:
+The agent authors via the `edit` tool (string-replace, read-before-edit) and **runs** the result via `bash`; the permission gate (spec 15) confines every write to `allowed_paths`. The agent never writes:
 
-- `.dlt/config.toml` or `.dlt/secrets.toml` directly (those are user-provided per environment)
-- Anything outside `el/<pipeline_name>/` and the `.dlt/*.template` files
-- A `pipelines/<name>.toml` (that's the runtime specialist's job)
+- `.dlt/config.toml` or `.dlt/secrets.toml` directly (those are user-provided per environment; they're outside `allowed_paths`, so the gate denies it)
+- Anything outside `el/<component_name>/` and the `.dlt/*.template` files (the gate denies; in interactive mode it prompts)
+- A `pipelines/<name>.toml` (that's the pipeline engineer's job, spec 08)
 
-### Output to the orchestrator
+### Output to the orchestrator (the delegation summary)
 
-The agent returns a structured Task result the orchestrator includes in the Plan:
+The subagent returns a **summary**, not its transcript (spec 15's `DelegationResult`: `result_summary`, `files_changed`, `outputs`, `cost_usd`, `status`). The DLT engineer fills `outputs` with the dlt-specific payload the orchestrator folds into the Plan — including the **verification result** (the agent ran the pipeline; this isn't a promise, it's an observed outcome) and the **review outcome**:
 
 ```python
+# DelegationResult.outputs (the dlt-engineer-specific payload)
 {
-  "task_id": "el-stripe-charges-001",
-  "specialist": "extract-load",
-  "status": "completed",                  # or "needs_user_input" if a guardrail blocked something
+  "specialist": "dlt-engineer",
+  "status": "completed",                  # or "needs_user_input" if the gate blocked something or a review finding needs the user
   "strategy_used": "curated_library",     # one of the four
-  "files_to_write": [
+  "files_changed": [                       # what the agent actually edited (rolls up to DelegationResult.files_changed)
     {"path": "el/stripe_charges/__init__.py", "hash": "sha256:...", "content_preview": "..."},
     {"path": "el/stripe_charges/requirements.txt", "hash": "sha256:..."},
-  ],
-  "config_files_to_merge": [
     {"path": ".dlt/config.toml.template", "additions": "..."},
     {"path": ".dlt/secrets.toml.template", "additions": "..."},
   ],
+  "verification": {                        # the verification loop's CheckResult (spec 15), parsed from dlt state.json
+    "command": "dlt pipeline check && dlt pipeline run --pipeline stripe_charges",
+    "status": "green",                     # green after self-correction; or "needs_user_input" if a failure needs a human (e.g. missing creds)
+    "iterations": 2,                       # how many generate→run→read→fix cycles it took
+    "rows_loaded": {"charges": 1284},
+  },
+  "review": {                              # the dlt-qa + dlt-security fan-out result
+    "qa": "passed",                        # or a list of unresolved findings
+    "security": "passed",
+  },
   "dependencies": {
-    "dbt_sources_needed": [               # the runtime specialist consumes this for source coupling
+    "dbt_sources_needed": [               # the pipeline engineer consumes this for source coupling
       {"source_name": "stripe", "table": "charges", "schema": "raw_stripe"},
     ],
     "destination_schemas_needed": ["raw_stripe"],
   },
   "expected_outputs": {                   # surfaced in the plan summary
-    "rows_loaded": "unknown (incremental; first run will backfill)",
     "tables_created": ["raw_stripe.charges"],
   },
-  "skill_calls": [...],                    # the full trace, recorded in skill_calls table per ARCHITECTURE §9.5
+  "tool_calls": [...],                     # the trace, recorded per ARCHITECTURE §9.5; cost/tokens roll up to agent_invocations
 }
 ```
+
+### The verification loop (close the loop with execution)
+
+This is the harness's accuracy primitive (spec 15) applied to dlt, and the change that turns the agent from a generator into a colleague. After authoring (any strategy), the DLT engineer **does not stop at generation** — it runs the code and reads the real result:
+
+1. **Run** via `bash`: `dlt pipeline check` (static validation), then `dlt pipeline run --pipeline <component>` against a dev/test target (the verification loop uses the dev target + read/write roles per spec 18; never prod).
+2. **Read** the parsed `CheckResult` (spec 15's `run_check`, with the dlt parser at `src/carve/integrations/dlt/verify.py` that reads `state.json` for rows-loaded/schema-changes/errors). The agent never invents what the run can report — and it uses the **`sql` tool** (spec 18) to confirm the *actual* destination schema the load produced, rather than guessing it.
+3. **Fix** and re-run, bounded by the harness's attempt cap, until green. A failure it cannot fix itself (e.g. missing credentials, a source-side auth error) is summarized as `status = "needs_user_input"` with the grounded evidence, not silently shipped.
+
+The agent grounds on real tool output throughout: a dlt exception, a `state.json` schema diff, or an `INFORMATION_SCHEMA` read via `sql` — never a hallucinated schema. (Recovery, spec 17, reuses exactly this machinery when it `delegate`s a fix to this agent.)
 
 ### Modification semantics
 
 When `classification = "modify_pipeline"`, the agent:
 
-1. Reads the existing `el/<name>/__init__.py` (provided in pre-scoped context)
+1. Reads the existing `el/<name>/__init__.py` (provided in the context bundle, and re-readable via `read_file`/`grep` for the read-before-edit invariant)
 2. Identifies what needs to change (a new resource, an incremental cursor, a different destination, a write disposition change)
-3. Emits the minimal diff — not a regenerated file. The provenance header is preserved.
+3. Applies the minimal `edit` — a string-replace diff, not a regenerated file. The provenance header is preserved.
 4. If user modifications exist below the header, the agent diffs against the previous build's expected content (recorded in `Build.manifest_json`) and either:
    - Merges cleanly (the user's edits don't conflict with the modification): applies the change, preserves user edits
-   - Surfaces a conflict: the plan task returns `status = "needs_user_input"` with the conflict surfaced to the user, who picks a resolution before build proceeds
+   - Surfaces a conflict: the summary returns `status = "needs_user_input"` with the conflict surfaced to the user, who picks a resolution before build proceeds
+5. **Re-verifies** via the loop above — a modification is run, not just diffed.
 
-### Skill: `dlt_library_list` / `dlt_library_lookup` / `dlt_library_copy`
+> The skills below are registered in the spec-16 skill registry and granted to the DLT engineer via its `tools:` frontmatter. Schema introspection is **not** among them: the agent reads the real destination schema through the dialect-aware **`sql` tool** (spec 18, `op="introspect"`), which supersedes the old `destination_schema_query` skill and runs on the read role.
 
-- **`dlt_library_list()`** → returns the list of curated sources in `src/carve/sources/` with metadata (name, description, supported destinations, last updated)
-- **`dlt_library_lookup(query: str)`** → fuzzy search across names + descriptions; returns top-5 with confidence scores. Used by the orchestrator during pre-scoping to set `dlt_library_match`.
-- **`dlt_library_copy(name: str, dest_path: Path, customization: dict)`** → copies the source files from `src/carve/sources/<name>/` into `<dest_path>`, applies customization (destination, schema, credentials env-var names), and writes the provenance header. Returns the list of files written.
+### Skill: `dlt_library` (`list` / `lookup` / `copy`) — the connector skill library
+
+The curated connector library *is* a skill library (spec 16): each `src/carve/sources/<name>/` ships as a `SKILL.md` pack. The `dlt_library` skill is the interface to it:
+
+- **`dlt_library.list()`** → returns the list of curated source packs in `src/carve/sources/` with metadata (name, description, supported destinations, last updated)
+- **`dlt_library.lookup(query: str)`** → fuzzy search across names + descriptions; returns top-5 with confidence scores. Used by the orchestrator during context-bundle assembly to set `dlt_library_match`.
+- **`dlt_library.copy(name: str, dest_path: Path, customization: dict)`** → lays the curated source pack from `src/carve/sources/<name>/` into `<dest_path>`, applies customization (destination, schema, credentials env-var names), and writes the provenance header. Returns the list of files written. (The agent then customizes further via `edit` and verifies via the loop.)
 
 ### Skill: `rest_api_explore`
 
@@ -268,9 +306,9 @@ Constraints:
 - Each request has a 10-second timeout
 - Response bodies truncated at 50KB per response
 - No POST/PUT/DELETE/PATCH ever
-- The skill records each request in `skill_calls.payload` for audit; URLs and (redacted) headers are surfaced in the plan trace
+- The skill records each request in the tool-call trace for audit; URLs and (redacted) headers are surfaced in the plan trace. The **dlt-security** review subagent checks that exploration stayed within these bounds.
 
-This skill is the agent's eyes for unfamiliar REST APIs. It's deliberately bounded to prevent the agent from accidentally hammering a user's production endpoint while exploring.
+This skill is the agent's eyes for unfamiliar REST APIs (complementing `web_fetch` for human-readable docs). It's deliberately bounded to prevent the agent from accidentally hammering a user's production endpoint while exploring.
 
 ### Skill: `dbt_source_lookup`
 
@@ -279,7 +317,7 @@ Reads the user's dbt project's `sources.yml` files (per the [`integrations/dbt/l
 - `dbt_sources_list()` → all source declarations in the project
 - `dbt_source_match(schema: str, table: str)` → does a source declaration exist for this schema+table? Returns the source's full config if so.
 
-The orchestrator uses this in pre-scoping to populate `existing_sources` in the agent's context. The EL agent itself rarely calls it directly; the orchestrator hands it the relevant subset.
+The orchestrator uses this when assembling the context bundle to populate `existing_sources`. The DLT engineer itself rarely calls it directly; the orchestrator hands it the relevant subset.
 
 ### Skill: `existing_dlt_inspect`
 
@@ -288,26 +326,29 @@ Reads existing dlt code in the user's `el/` directory (or the resolved dlt proje
 - `dlt_existing_pipelines()` → list of existing `el/<name>/` directories with their provenance (carve-generated vs user-authored)
 - `dlt_existing_pipeline_read(name)` → file contents of `el/<name>/__init__.py` and `requirements.txt`
 
-Used when the EL agent needs to understand patterns in user-authored pipelines before generating a new one (e.g., the user's existing `salesforce_accounts` pipeline uses a specific auth pattern; a new `salesforce_contacts` pipeline should match).
+Used when the DLT engineer needs to understand patterns in user-authored pipelines before generating a new one (e.g., the user's existing `salesforce_accounts` pipeline uses a specific auth pattern; a new `salesforce_contacts` pipeline should match). The agent can equivalently reach for `grep`/`glob` over `el/**` for ad-hoc pattern discovery.
 
-### The system prompt
+### The system prompt (the agent-file body)
 
-Single consolidated prompt at `src/carve/core/agents/prompts/extract_load.md`. Structure:
+The system prompt is the **body of the declarative agent file** (`src/carve/core/agents/builtin/dlt-engineer.md`, below its frontmatter) — not a separate `prompts/*.md` path. Structure:
 
-1. **Role** — "You are Carve's extract-load specialist. Your job is to author dlt code that pulls data from a source system and lands it in a destination warehouse."
-2. **Key references** — dlt's documentation, the curated library, the user's standards.md
-3. **Inputs** — what the pre-scoped context contains and how to use each field
-4. **Strategy selection** — the four strategies, when to pick each, the hierarchy
-5. **Code requirements** — provenance header, requirements.txt pinning, no live-credentials in templates, conventions to follow from standards.md and conventions.md
-6. **Modification semantics** — how to handle classification="modify_pipeline", how to preserve user edits below the provenance header
-7. **Output format** — the structured Task result shape
-8. **Failure modes** — when to set `status = "needs_user_input"`, how to surface conflicts cleanly
+1. **Role** — "You are Carve's DLT engineer. Your job is to author *and verify* dlt code that pulls data from a source system and lands it in a destination warehouse. You architect as you build, and you do not consider your work done until the pipeline runs green."
+2. **Key references** — dlt's documentation (reachable live via `web_fetch`), the connector skill library, the user's standards.md
+3. **Inputs** — what the context bundle contains and how to use each field
+4. **Tools & how to work** — author with `edit` (read-before-edit, minimal diffs), search with `grep`/`glob`, confirm the real destination schema with the `sql` tool, read live API docs with `web_fetch`/`rest_api_explore`, and **run** with `bash`. Stay within `allowed_paths`; never touch live `.dlt/config.toml`/`secrets.toml`.
+5. **Strategy selection** — the four strategies, when to pick each, the hierarchy; pull the matching strategy **skill pack** for detail
+6. **The verification loop** — after authoring, run `dlt pipeline check` then `dlt pipeline run` via `bash`, read the parsed `CheckResult`, and iterate until green; ground every claim in real tool output; escalate (not fabricate) on failures you can't fix (missing creds, source auth)
+7. **Code requirements** — provenance header, requirements.txt pinning, no live-credentials in templates, conventions to follow from standards.md and conventions.md
+8. **Modification semantics** — how to handle classification="modify_pipeline", how to preserve user edits below the provenance header, re-verify after the change
+9. **Review handoff** — your diff goes to the dlt-qa and dlt-security reviewers; expect findings and fix them before finishing
+10. **Output format** — the delegation summary shape (status, strategy, files_changed, verification, review, dependency hints)
+11. **Failure modes** — when to set `status = "needs_user_input"`, how to surface conflicts cleanly
 
-Strategy-specific prompt fragments live in `src/carve/core/agents/prompts/extract_load_strategies/` and get included by reference. This keeps the main prompt under a reasonable size while still giving the LLM thorough strategy-specific guidance.
+Strategy-specific guidance lives in **skill packs** (`src/carve/core/skills/builtin/dlt_strategies/<strategy>/SKILL.md`) loaded on description-match (progressive disclosure, spec 16) rather than statically inlined — keeping the agent body lean while giving the LLM thorough strategy-specific detail only when a strategy is in play.
 
 ### Provenance header (recap from spec 03)
 
-Every Carve-generated dlt file carries the header from [v0.1-03](./03-flat-layout.md). The EL agent uses `src/carve/integrations/dlt/code_emitter.py` to ensure every file it writes is properly headered. The build step verifies headers are present in all expected files before the Build row transitions to `succeeded`.
+Every Carve-generated dlt file carries the header from [v0.1-03](./03-flat-layout.md). The DLT engineer uses `src/carve/integrations/dlt/code_emitter.py` to ensure every file it writes is properly headered. The build step verifies headers are present in all expected files before the Build row transitions to `succeeded`; the dlt-qa reviewer flags a missing header as a finding.
 
 ## Tests
 
@@ -317,33 +358,43 @@ Every Carve-generated dlt file carries the header from [v0.1-03](./03-flat-layou
 - **Unit (Singer wrapper):** given a goal involving a niche SaaS source matching a known Singer tap, agent emits the wrapper code + adds the tap to `requirements.txt`
 - **Unit (modification):** given an existing `el/stripe_charges/__init__.py` and a goal of "make this incremental on `created_at`", agent emits a minimal diff (adds `dlt.sources.incremental` cursor + changes write_disposition), preserves the existing provenance header
 - **Unit (modification with user edits):** existing pipeline has user edits below the provenance header; agent's modification cleanly merges (where possible) or surfaces a conflict
-- **Unit (guardrail enforcement):** agent attempts to write outside `el/<name>/` → guardrail rejects; agent's output reflects the rejection
+- **Unit (agent definition):** the built-in `dlt-engineer.md` parses (frontmatter + body) via the spec-16 loader; its `tools` grant is valid for `build` mode; a `carve/agents/dlt-engineer.md` override is picked up (spec 16 mechanics; smoke-tested here).
+- **Unit (permission gate):** in `build` mode the agent's `edit`/`bash` writes succeed within `allowed_paths` (`el/**`, `.dlt/*.template`); an attempt to write outside (e.g. `~/.bashrc`, `carve/`, live `.dlt/config.toml`) is gated (prompt interactive / deny headless) per spec 15 — replacing the old per-agent guardrail test.
+- **Integration (verification loop):** the agent authors a trivial dlt component, runs `dlt pipeline run` via `bash`, the harness parses `state.json` into a `CheckResult`; a deliberately-broken artifact (e.g. a bad cursor field) triggers a self-correction iteration to green; the agent confirms the loaded schema via the `sql` tool.
+- **Integration (review fan-out):** the engineer's diff is routed through dlt-qa and dlt-security; an injected problem (a secret literal in `.dlt/secrets.toml.template`, or a `replace` disposition that should be `merge`) is flagged by the right reviewer and triggers a fix iteration before the summary returns `completed`.
 - **Integration (end-to-end):** full plan → build → run cycle against a mock HTTP API (httpserver fixture); rows land in a test Snowflake or DuckDB destination; Carve's own assertions verify the structural shape of the loaded data
 - **Integration (REST API explorer):** the rest_api_explore skill hits a controlled httpserver, makes the expected request shape, respects the 20-request cap and 50KB body truncation
 
 ## Acceptance
 
-- For each of the four strategies, the agent produces a working dlt pipeline that passes `dlt pipeline check` and successfully runs against a test destination
+- The DLT engineer loads from the built-in `dlt-engineer.md` (spec-16 format), is `delegate`-routable by classification, runs in `build` mode, and returns a **summary** (not its transcript) to the orchestrator.
+- For each of the four strategies, the agent produces a working dlt pipeline and — via the **verification loop** — actually runs it (`dlt pipeline check` + `dlt pipeline run`) against a test destination, self-correcting to green; the loaded schema is confirmed via the `sql` tool, never guessed.
+- The diff passes through the **dlt-qa** and **dlt-security** reviewers; a credential-in-template or risky-write-disposition problem is caught and fixed before the change is surfaced.
 - The strategy hierarchy is honored: curated library wins when available; REST API config beats native dlt for clean REST sources; native is the fallback for complex cases; Singer wrapper is rare
-- Modifications produce minimal diffs; the provenance header survives; user edits below the header are preserved or surfaced for conflict resolution
-- The agent never writes outside its allowed paths
+- Modifications produce minimal diffs; the provenance header survives; user edits below the header are preserved or surfaced for conflict resolution; the modification is re-verified
+- The agent never writes outside its `allowed_paths` — the permission gate enforces it
 - Every generated dlt file has the provenance header from spec 03
-- The agent's invocation is recorded in `agent_invocations` with token counts, cost, duration, status
+- The agent's invocation is recorded in `agent_invocations` with token counts, cost, duration, status (cost rolls up from the subagent to the parent)
 - `carve plan "ingest the X API"` for X in {Stripe, GitHub issues, Hacker News, Salesforce} produces a coherent plan that the user can build/run; all four strategies are exercised across the four examples
-- The full M1 test suite still passes (the EL specialist doesn't break the M1 reasoning loop)
+- The full M1 test suite still passes (layering the DLT engineer onto the harness doesn't break the preserved loop)
 
 ## Design notes
 
-- **Why a single consolidated prompt rather than per-strategy prompts as the primary entry point?** Per resolved audit Q6 ("agent prompt content"): one prompt that knows the full dlt API gives the LLM the broadest context to reason about strategy selection. Per-strategy prompts as included fragments give detail without fragmenting the agent's identity into four sub-agents. The hierarchy is explicit in the prompt; the LLM is asked to justify its strategy choice in the Task result trace.
+- **Why a declarative agent (markdown) instead of the hardcoded `extract_load.py` class?** This is the harness model's core unlock (spec 16) and it resolves the built-vs-spec agent drift: the DLT engineer becomes a file anyone can read, version, override, and share — same format as user agents — hot-reloaded, not recompiled. The class disappears; the harness loads the markdown and runs it as a subagent.
+- **Why verify by execution (the loop) rather than ship generated code?** Generation-without-verification is a demo; generate→run→read→fix is a colleague (spec 15). dlt *is* a CLI — running `dlt pipeline run` and reading the real `state.json`/exception is what makes the agent accurate and self-correcting, and it grounds the agent so it can't ship a hallucinated schema. This is the single biggest accuracy gain in the revision.
+- **Why dlt-qa + dlt-security review subagents?** Carve already runs the engineer→parallel-reviewers→fix pattern on *itself* (`/build-spec`); bringing it to users' pipelines catches the classes of error the author's own loop is weakest at — schema-contract/idempotency (qa) and credential/data-loss (security) — on a fresh, adversarial, context-isolated read. Reviewers report; the engineer fixes; quality compounds without bloating one prompt.
+- **Why the agent body + strategy skill packs rather than one monolithic prompt?** One agent identity (the DLT engineer) that knows the full dlt API reasons best about strategy selection; the per-strategy *detail* lives in skill packs loaded on description-match (progressive disclosure, spec 16), so the agent's context stays lean and only pulls deep guidance for the strategy actually in play. The hierarchy is explicit in the body; the LLM justifies its choice in the summary trace.
 - **Why the REST API config strategy specifically?** dlt's `rest_api_source` is a real production feature designed exactly for the LLM-scaffolding use case — many SaaS APIs fit a TOML config and need zero custom Python. Preferring it over native dlt minimizes the code Carve generates and reduces the surface area for the agent to make mistakes. The agent only falls back to native dlt when REST API config genuinely can't express the API's quirks.
-- **Why is curated library above REST API config in the hierarchy?** Because a curated library entry has been hand-tuned for the specific source — it handles known quirks (rate limits, error patterns, schema evolution) that a from-scratch REST API config wouldn't know about. When we have a curated source, prefer it.
-- **Why does the EL agent emit dependency hints rather than directly creating `pipelines/<name>.toml`?** Separation of concerns. The runtime specialist owns pipeline composition (steps, dependencies, failure modes, schedules); the EL specialist owns dlt code. The dependency hints (dbt sources needed, destination schemas needed) flow up to the orchestrator, which routes the pipeline composition task to the runtime specialist with that context.
-- **Why limit `rest_api_explore` to GETs and a 20-request cap?** Defense in depth. The agent should not be able to accidentally hammer a production endpoint, accidentally mutate state on a non-idempotent endpoint, or run away with exploration. 20 requests is enough to discover schema for most REST APIs; truly esoteric APIs require the user to provide more context manually (e.g., paste an OpenAPI spec into the goal description).
-- **Why split file_io into a separate skill rather than inlining writes?** Because the file-write guardrail (spec 03) is shared with other agents (runtime specialist, dbt specialist in v0.2). A single guardrail-aware skill keeps the guardrail logic in one place.
+- **Why is curated library above REST API config in the hierarchy?** Because a curated library entry has been hand-tuned for the specific source — it handles known quirks (rate limits, error patterns, schema evolution) that a from-scratch REST API config wouldn't know about. When we have a curated source pack, prefer it.
+- **Why does the DLT engineer emit dependency hints rather than directly creating `pipelines/<name>.toml`?** Separation of concerns. The pipeline engineer (spec 08) owns pipeline composition (steps, dependencies, failure modes, schedules); the DLT engineer owns dlt code. The dependency hints (dbt sources needed, destination schemas needed) flow up to the orchestrator in the summary, which then `delegate`s the pipeline composition to the pipeline engineer with that context.
+- **Why limit `rest_api_explore` to GETs and a 20-request cap?** Defense in depth. The agent should not be able to accidentally hammer a production endpoint, accidentally mutate state on a non-idempotent endpoint, or run away with exploration. 20 requests is enough to discover schema for most REST APIs; truly esoteric APIs require the user to provide more context manually (e.g., paste an OpenAPI spec into the goal description). The dlt-security reviewer double-checks the bound held.
+- **Why the permission gate (spec 15) rather than a per-agent `[guardrails]` block?** The write-scope check belongs in one place across every agent (DLT, pipeline, dbt-in-v0.2): `allowed_paths` + the `build`-mode allowlist, checked before each tool call, is the harness's job. It subsumes the old per-agent `forbidden_write_paths`/`allowed_write_paths`/call-caps and is also the trust story once agents run `bash` and touch the warehouse — powerful, but never free to do arbitrary things.
 
 ## Open questions
 
-- **The curated library's first wave (Stripe, Salesforce, etc.).** *Strategy-required.* This spec ships only one reference curated source (`_reference_hackernews/`) plus the framework. Which top-10 or top-20 SaaS sources to prioritize for the curated library is a separate decision needing user input — and per positioning #2's resolution, the heuristic is "most popular Airbyte sources dlt doesn't already have native coverage of." Defer to a follow-up workstream after v0.1 ships.
-- **Confidence-score heuristic for `dlt_library_lookup`.** *Implementation default.* Token-based name similarity + tag matching; threshold of 0.85 for "high" confidence. Tune in practice; the orchestrator's decision is based on the score so threshold changes shift strategy selection.
-- **Should the EL agent ever delete files?** *Implementation default.* No. If a pipeline modification implies a file no longer makes sense (e.g., a strategy switch from native dlt to REST API config), the agent emits a "delete this file" hint in the Task result; the build step performs the deletion under user review. Agents never delete directly.
-- **How to handle credential discovery for new sources.** *Implementation default.* Agent emits `.dlt/secrets.toml.template` with placeholder env-var references (e.g., `STRIPE_API_KEY = "${STRIPE_API_KEY}"`). The deploy/build flow surfaces these as "you need to set these env vars before running" in the plan summary. Agent never invents real credentials.
+- **The curated library's first wave (Stripe, Salesforce, etc.).** *Strategy-required.* This spec ships only one reference curated source (`_reference_hackernews/`, now a skill pack) plus the framework. Which top-10 or top-20 SaaS sources to prioritize for the curated library is a separate decision needing user input — and per positioning #2's resolution, the heuristic is "most popular Airbyte sources dlt doesn't already have native coverage of." Defer to a follow-up workstream after v0.1 ships.
+- **Confidence-score heuristic for `dlt_library.lookup`.** *Implementation default.* Token-based name similarity + tag matching; threshold of 0.85 for "high" confidence. Tune in practice; the orchestrator's decision is based on the score so threshold changes shift strategy selection.
+- **Should the DLT engineer ever delete files?** *Implementation default.* No. The `edit` tool is string-replace, not delete (spec 15). If a pipeline modification implies a file no longer makes sense (e.g., a strategy switch from native dlt to REST API config), the agent emits a "delete this file" hint in its summary; the build step performs the deletion under user review. Agents never delete directly.
+- **How to handle credential discovery for new sources.** *Implementation default.* Agent emits `.dlt/secrets.toml.template` with placeholder env-var references (e.g., `STRIPE_API_KEY = "${STRIPE_API_KEY}"`). The build flow surfaces these as "you need to set these env vars before running" in the plan summary; a missing credential makes the verification loop return `status = "needs_user_input"` rather than fail silently. Agent never invents real credentials; the dlt-security reviewer asserts no literal secret leaked into a template.
+- **Built-in declarative-agent path.** *Implementation default — flagged for consistency.* This spec places the built-in agents at `src/carve/core/agents/builtin/*.md` (per spec 16's prose and the ai-harness ADR's `dlt-engineer.md` example, and matching specs 17/18). Spec 16's *file-list column* and specs 17/18's file lists write the path as `carve/agents/builtin/*.md`; the two should be reconciled to one location in a cleanup pass. Behavior (built-in, user-overridable by name) is unaffected either way.
+- **Review fan-out scope for v0.1.** *Strategy-required (shared).* This spec wires **qa-on-build + security-on-build**; the strategy's open question on full fan-out vs a staged start (and deploy-time security gating via spec 14) is owned at the strategy/harness level. Confirm the v0.1 cut for the dlt reviewers specifically.

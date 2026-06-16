@@ -55,7 +55,7 @@ docs/extending-carve.md                       # NEW — author an agent, a skill
 ---
 name: dlt-engineer
 description: Authors and runs dlt sources/pipelines into a named dlt component. Use for ingest / extract-load goals.
-model: claude-sonnet          # optional; falls back to the install default. Enables per-agent model tiering.
+model: claude-{LATEST_SONNET} # optional; falls back to the install default. Enables per-agent model tiering.
 tools: [edit, bash, grep, glob, web_fetch, dlt_library, schema_introspect, sql]   # base tools (spec 15) + skills (this spec)
 allowed_paths: ["el/**", ".dlt/*.template"]   # write scope enforced by the permission gate (spec 15)
 classifications: [new_pipeline, modify_pipeline, refactor_to_incremental]

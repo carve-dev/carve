@@ -35,7 +35,7 @@ When a scheduled run fails (retries exhausted), Carve **diagnoses the failure wi
 ## Files this spec produces
 
 ```
-carve/agents/builtin/recovery-engineer.md          # NEW — the recovery engineer as a declarative agent (read-only diagnose tools + delegate)
+src/carve/core/agents/builtin/recovery-engineer.md # NEW — the recovery engineer as a declarative agent (read-only diagnose tools + delegate)
 src/carve/core/agents/recovery/agent.py            # MODIFY — retarget to run.failed; diagnose-then-delegate; drop deploy contexts
 src/carve/core/agents/recovery/invocation.py       # MODIFY — drop DeployPreflight/Verify/DdlApply; keep/extend RunFailure invocation
 src/carve/core/agents/recovery/classify.py         # NEW — dlt exception-class -> category map + the version-tolerant adapter (unwrap PipelineStepFailed.exception; isinstance on terminal/transient base classes)

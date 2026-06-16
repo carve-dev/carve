@@ -1,21 +1,23 @@
-# v0.1-12 — `carve ask`: read-only investigative queries
+# v0.1-12 — `carve ask`: the explorer (read-only mode of the harness)
 
-> The fifth lifecycle verb (sibling to plan/build/run/deploy), strictly side-effect-free. Same orchestration agent and skills as `plan`, different output shape: a markdown answer with cited entities instead of a Plan. Per [PRD §6.5 ask](../PRD.md), [PRD §3 core loop sibling-verb note](../PRD.md), [ARCHITECTURE §7.1 ask](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 12](../PROJECT_PLAN.md).
+> **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): `ask` is the **explorer** — a declarative **subagent** (`builtin/explorer.md`) the orchestrator `delegate`s read-only questions to, run in the **`read_only` permission mode** (spec 15) with read-only **terminal-grade tools** (`read_file`/`grep`/`glob`/`web_fetch`) + the dialect-aware **`sql` tool on the read role** (spec 18) + lineage/manifest/memory skills. The former `NoWriteSkillsGuardrail` is **subsumed by the `read_only` mode**: the permission gate (not a separate ask-only mechanism) structurally enforces no-writes. The citation model (`cited_entities`), the Ask data model + persistence, investigative memory selection, and the CLI/REST/MCP surface are unchanged.
+
+> The fifth lifecycle verb (sibling to plan/build/run/deploy), strictly side-effect-free. `carve ask` invokes the explorer subagent in `read_only` mode and returns a markdown answer with cited entities instead of a Plan. Per [PRD §6.5 ask](../PRD.md), [PRD §3 core loop sibling-verb note](../PRD.md), [ARCHITECTURE §7.1 ask](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 12](../PROJECT_PLAN.md).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-06 project-memory](./06-project-memory.md) (asks cite `decisions.md` entries), [v0.1-09 rest-api](./09-rest-api.md) (this spec adds the asks router to the existing FastAPI app)
-- **Soft depends on:** [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md) for the orchestration-agent baseline; M1's reasoning loop (HISTORICAL); spec 07/08 for run/pipeline data the agent queries when answering
+- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (the explorer is a subagent run in the `read_only` permission mode, with the terminal tools + the `delegate` path), [v0.1-16 extensibility](./16-extensibility.md) (the explorer ships as a declarative agent — `builtin/explorer.md`), [v0.1-18 sql-layer](./18-sql-layer.md) (the explorer queries the warehouse via the `sql` tool on the **read role**), [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-06 project-memory](./06-project-memory.md) (asks cite `decisions.md` entries), [v0.1-09 rest-api](./09-rest-api.md) (this spec adds the asks router to the existing FastAPI app)
+- **Soft depends on:** M1's reasoning loop (HISTORICAL, extended into the harness by spec 15); spec 07/08 for run/pipeline data the explorer reads when answering
 - **Blocks:** nothing structurally
 
 ## Goal
 
-Add the `ask` verb as a read-only path through the orchestration agent. Concretely:
+Add the `ask` verb as **the explorer** — the read-only mode of the harness. Concretely:
 
-1. **Reuse the orchestration agent and skill registry** — no new specialist agent. The orchestrator is configured with an alternative system prompt + an extra guardrail that forbids any write skill.
+1. **The explorer is a declarative subagent** (`builtin/explorer.md`, spec 16) run in the **`read_only` permission mode** (spec 15). It is the orchestrator's `delegate` target for read-only how/where/why questions, and `carve ask` invokes it directly in `read_only` mode. No write tools, ever — the permission gate enforces this structurally.
 2. **Ask data model**: `asks` table for indexing + `.carve/asks/<id>.json` for durability
-3. **Answer format**: markdown text + cited entities (structured references into lineage / decisions / pipeline files) + the full skill-call trace
+3. **Answer format**: markdown text + cited entities (structured references into lineage / decisions / pipeline files) + the full tool-call trace
 4. **CLI**: `carve ask "<question>"`, `carve asks list`, `carve asks show <id>`
 5. **REST router** added to the spec-09 FastAPI app: `POST /api/v1/asks`, `GET /api/v1/asks/{id}`, `GET /api/v1/asks`
 6. **MCP tool** auto-generated per spec 10 (tool name `ask`)
@@ -25,22 +27,22 @@ After this spec lands, a user can ask "where do we calculate net revenue?" or "w
 
 ## Out of scope
 
-- A new specialist agent (deliberately reuses the orchestration agent with a different prompt + guardrail)
-- Streaming the answer token-by-token (synchronous return in v0.1; the answer arrives as one chunk when the orchestrator finishes)
+- **The harness core** — the subagent loop, the `delegate` tool, the terminal tools, the `read_only` permission gate, and role-scoped warehouse access all live in [v0.1-15](./15-agent-harness.md); the declarative agent format in [v0.1-16](./16-extensibility.md); the `sql` tool in [v0.1-18](./18-sql-layer.md). This spec **consumes** them and ships the explorer's agent definition, its system prompt, the Ask data model, and the citation builder.
+- Streaming the answer token-by-token (synchronous return in v0.1; the answer arrives as one chunk when the explorer finishes)
 - Asking *about* asks (e.g., "what have we been asking lately?") — handled by `carve asks list` rather than a meta-ask
-- Embedding-based semantic search over decisions/code (post-v0.1; v0.1 ask uses the same skill stack as plan)
+- Embedding-based semantic search over decisions/code (post-v0.1; v0.1 explorer uses the read tools + skills directly)
 - Conversational follow-ups (each ask is a single round; multi-turn chat lives in the chat tool, e.g., Claude Desktop, which can call `ask` repeatedly)
 
 ## Files this spec produces
 
 ```
-src/carve/core/agents/orchestration_ask_mode.py         # NEW — orchestrator invocation with the ask prompt + write-skill guardrail
-src/carve/core/agents/prompts/orchestrator_ask.md       # NEW — system prompt for the ask path
+src/carve/core/agents/builtin/explorer.md               # NEW — the explorer declarative agent (frontmatter: read-only tools + read_only mode; system-prompt body); loaded by spec 16's AgentRegistry
+src/carve/core/agents/run_explorer.py                   # NEW — invoke the explorer subagent in read_only mode (via spec 15's SubagentRunner / delegate) and post-process its result into an Answer
 
 src/carve/core/asks/__init__.py
 src/carve/core/asks/store.py                            # NEW — persistence (.carve/asks/<id>.json + asks table index)
 src/carve/core/asks/models.py                           # NEW — Ask, Answer, CitedEntity dataclasses
-src/carve/core/asks/citation_builder.py                 # NEW — converts agent-mentioned references into structured CitedEntity objects
+src/carve/core/asks/citation_builder.py                 # NEW — converts the explorer's cited references into structured CitedEntity objects
 
 src/carve/cli/ask.py                                    # NEW — `carve ask`, `carve asks list`, `carve asks show` commands
 
@@ -49,14 +51,14 @@ src/carve/api/routers/asks.py                           # NEW — wires asks end
 src/carve/core/state/models.py                          # MODIFY — add Ask table
 migrations/versions/0011_asks.py                        # NEW
 
-tests/unit/test_ask_orchestrator_no_write_skills.py     # NEW — verifies guardrail rejection of write skills during ask
+tests/unit/test_explorer_read_only_mode.py              # NEW — the explorer's tool grant resolves to the read tools only; the read_only permission gate denies edit/bash-write/warehouse-write (no separate ask-only guardrail)
 tests/unit/test_ask_citation_builder.py                 # NEW
 tests/integration/test_ask_end_to_end.py                # NEW — real ask against a fixture project; verify answer + citations
 tests/integration/test_ask_no_side_effects.py           # NEW — files / state store / destination unchanged after ask
 tests/integration/test_ask_concurrent_with_plan.py      # NEW — ask runs alongside plan/build/run without contention
 tests/integration/test_ask_cites_decisions.py           # NEW — "why did we do X?" surfaces decisions.md entries
 
-docs/ask.md                                             # NEW — what ask does, example questions, how it differs from plan
+docs/ask.md                                             # NEW — what the explorer does, example questions, how it differs from plan
 ```
 
 ## Behavior
@@ -76,7 +78,7 @@ class CitedEntity:
         "pipeline_toml",           # a pipelines/<name>.toml
         "warehouse_table",
         "memory_file",             # conventions.md, standards.md, decisions.md, or a sidecar
-        "skill_call",              # a specific skill_calls row used to produce this part of the answer
+        "tool_call",               # a specific tool/skill-call row (sql, grep, lineage, …) used to produce this part of the answer
     ]
     identifier: str                # e.g., "stripe", "stg_orders", "el/stripe_charges/"
     excerpt: str                   # the relevant slice of content (≤ 500 chars)
@@ -100,7 +102,7 @@ class Ask:
     tokens_output: int
     cost_usd: float
     duration_ms: int
-    skill_call_trace_path: Path               # .carve/asks/<id>.json
+    tool_call_trace_path: Path                # .carve/asks/<id>.json — the explorer's full tool-call trace
     created_at: datetime
     finished_at: Optional[datetime]
     tenant_id: int
@@ -122,7 +124,7 @@ CREATE TABLE asks (
   tokens_output INTEGER NOT NULL DEFAULT 0,
   cost_usd NUMERIC(10, 4) NOT NULL DEFAULT 0,
   duration_ms INTEGER,
-  skill_call_trace_path TEXT NOT NULL,     -- relative path under .carve/asks/
+  tool_call_trace_path TEXT NOT NULL,      -- relative path under .carve/asks/ (the explorer's tool-call trace)
   tenant_id BIGINT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at TIMESTAMPTZ
@@ -132,11 +134,11 @@ CREATE INDEX ix_asks_created_at ON asks(tenant_id, created_at DESC);
 CREATE INDEX ix_asks_pipeline ON asks(pipeline) WHERE pipeline IS NOT NULL;
 ```
 
-The full structured answer + skill-call trace is persisted to `.carve/asks/<id>.json` for durability and offline-readability. The DB row is the index.
+The full structured answer + tool-call trace is persisted to `.carve/asks/<id>.json` for durability and offline-readability. The DB row is the index.
 
-### Orchestrator in ask mode
+### The explorer subagent
 
-`src/carve/core/agents/orchestration_ask_mode.py`:
+`src/carve/core/agents/run_explorer.py` invokes the **explorer** subagent in the `read_only` permission mode and post-processes its result into an `Answer`:
 
 ```python
 async def run_ask(
@@ -144,7 +146,7 @@ async def run_ask(
     question: str,
     pipeline: Optional[str],
     target: Optional[str],
-    orchestrator: Orchestrator,           # the same M1-shipped orchestrator
+    delegate: DelegateTool,               # spec 15's delegation entrypoint (builds a fresh SubagentRunner)
     memory_loader: MemoryLoader,
     state_store: StateStore,
 ) -> Ask:
@@ -152,7 +154,8 @@ async def run_ask(
     ask = Ask(id=ask_id, question=question, pipeline=pipeline, target=target, status="pending", ...)
     await state_store.asks.create(ask)
     try:
-        # Compose pre-scoped context using the same machinery as plan, with is_investigative=True
+        # The context bundle the explorer subagent starts from (spec 15). The explorer then
+        # gathers what else it needs within its own context window via its read tools/skills.
         context = compose_ask_context(
             question=question,
             pipeline=pipeline,
@@ -160,46 +163,61 @@ async def run_ask(
             memory_loader=memory_loader,
             is_investigative=True,         # ensures decisions.md is included (spec 06's selector)
         )
-        invocation = await orchestrator.invoke(
-            system_prompt_path="src/carve/core/agents/prompts/orchestrator_ask.md",
-            user_message=question,
+        # delegate to the explorer; the harness runs it in read_only mode (set from the agent's
+        # frontmatter + the ask verb) and returns a DelegationResult summary, not the transcript.
+        result = await delegate(
+            agent="explorer",
+            task=question,
             context=context,
-            guardrails=[NoWriteSkillsGuardrail()],
-            max_iterations=20,
         )
-        answer = build_answer_from_invocation(invocation)
-        return await state_store.asks.complete_succeeded(ask_id, answer, invocation.usage)
-    except OrchestratorError as e:
+        answer = build_answer_from_result(result)   # parse markdown footnotes -> cited_entities
+        return await state_store.asks.complete_succeeded(ask_id, answer, result.usage)
+    except SubagentError as e:
         return await state_store.asks.complete_failed(ask_id, str(e))
 ```
 
 Key behaviors:
 
-- **The same orchestration agent** as `plan`. Configuration differences only: alternate system prompt, an extra guardrail (`NoWriteSkillsGuardrail`), a different output post-processor (builds `Answer` instead of `Plan`).
-- **Same skill set** (catalog queries, manifest queries, lineage traversal, memory reads, grep, MCP-imported read skills). The guardrail layer filters writes.
-- **No specialist dispatch.** Plan invocations delegate to specialists (EL, runtime, dbt-in-v0.2); ask does not — the orchestrator produces the answer itself from its skill-gathered context.
+- **The explorer is its own subagent**, not the orchestrator with a guardrail. `carve ask` (and the orchestrator's `delegate` for read-only questions) runs the `explorer` agent in the **`read_only` permission mode** (spec 15). The mode — not an ask-only mechanism — structurally forbids writes.
+- **Read tools + skills only** (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool on the read role, lineage/manifest/memory skills). There are **no write tools in the grant**, and the permission gate denies any write attempt regardless.
+- **Self-gathers context.** Rather than the parent pre-scoping everything, the explorer is handed a small context bundle and reads what it needs within its own isolated window (spec 15 supersedes the manual pre-scoped-context pattern). It does not delegate further — it produces the answer itself.
+- **Output post-processing** turns the explorer's `DelegationResult` (markdown + footnotes) into the `Answer` (markdown + structured `cited_entities`) via `citation_builder.py`.
 
-### The `NoWriteSkillsGuardrail`
+### No-writes via the `read_only` permission mode (subsumes the old guardrail)
 
-Inspects every `tool_use` before the skill is invoked. Rejects skills whose names match:
+In the M1-era design this was a bespoke `NoWriteSkillsGuardrail`. Under the harness, **the `read_only` permission mode is the enforcement** (spec 15) — there is no separate ask-only mechanism. Two layers make writes structurally impossible:
 
-- `write_file`, `write_file_*` (any variant)
-- `dlt_library_copy` (writes files)
-- `*_create`, `*_update`, `*_delete`, `*_remove` (resource-mutating verbs on the REST adapter — agent_create, pipeline_create, etc.)
-- `mcp:*` calls whose tool schema declares `effects.writes = true` (MCP servers SHOULD declare their tool effects in the schema; if not, the guardrail allows by default — write-effect detection is best-effort for MCP tools and warned in the trace)
+1. **Tool grant.** The explorer's frontmatter grants only read tools (`read_file`, `grep`, `glob`, `web_fetch`, `sql`, and read-only skills). `edit`, `bash` (in any write capacity), the `dlt_library` copy, and resource-mutating REST/MCP tools are simply **not in the grant**.
+2. **Pre-execution gate.** Even a granted tool is checked by the `read_only` policy before it runs (spec 15's `permissions.py`): `read_only` permits `read_file`/`grep`/`glob`/`web_*`/**read-only SQL only**; no `edit`, no writing `bash`, no warehouse writes. The `sql` tool runs on the **read role** (spec 18), so a `SELECT` is allowed but any `INSERT`/`DDL`/load is denied at the role *and* the mode. MCP tools carry `effects` metadata (spec 16); a `writes=true` MCP tool is denied in `read_only` (an MCP tool that doesn't declare effects is treated conservatively per spec 16).
 
-Rejected tool uses produce a tool_error returned to the LLM with message "ask is read-only; skill <name> is a write skill and was blocked." The LLM can then pick a different approach. Repeated guardrail rejections (more than 3 in one invocation) escalate to "ask cannot be answered without write skills" and the ask completes as `failed` with that message.
+A blocked tool call returns a tool_error to the model ("`read_only` mode: `<tool>` performs writes and was blocked") so it can pick a different approach. If the explorer cannot make progress read-only (repeated denials — more than 3 in one invocation), the ask completes as `failed` with "this question cannot be answered without write access; try `carve plan`." The exact thresholds/messages are the harness's (spec 15); this spec only relies on the guarantee that **no file, git, or warehouse write can occur during an ask.**
 
-### System prompt: `orchestrator_ask.md`
+### The explorer agent file: `builtin/explorer.md`
 
-Distinct from the plan prompt, with the following structure:
+A built-in **declarative agent** (spec 16 format), shipped at `src/carve/core/agents/builtin/explorer.md` and overridable by a user `carve/agents/explorer.md`. Frontmatter pins the read-only tool grant and the classifications the orchestrator routes on; the body is the system prompt.
 
-1. **Role** — "You answer the user's question about their project using only read skills."
-2. **Inputs** — what's in pre-scoped context (memory, project state, target)
-3. **Tools** — the read skills available; explicit reminder that write skills will be blocked
+```markdown
+---
+name: explorer
+description: Read-only Q&A about the project — how/where/why, lineage, logic, definitions, tests, "where does this data come from." Use for investigative questions that change nothing.
+model: claude-{LATEST_SONNET}   # per-agent tiering (spec 16); falls back to the install default
+tools: [read_file, grep, glob, web_fetch, sql, lineage, dbt_manifest, memory_read]   # read tools only; no edit/bash-write
+allowed_paths: []               # writes nothing
+classifications: [explain, locate, lineage, why_decision, freshness, test_coverage]
+---
+<system prompt body…>
+```
+
+The active **permission mode is `read_only`** (set by the `ask` verb / the orchestrator's `delegate`, spec 15) — the grant above is further gated by that mode, and the `sql` tool resolves to the **read role** (spec 18).
+
+The system-prompt body has the following structure:
+
+1. **Role** — "You answer the user's question about their project using only read tools. You change nothing."
+2. **Inputs** — what's in the context bundle (memory, project state, target) and that you gather the rest yourself with your read tools.
+3. **Tools** — the read tools/skills available (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool, lineage/manifest/memory skills); an explicit reminder that you are in `read_only` mode so any write is blocked.
 4. **Answer format** — markdown body + a list of citations (one per claim with non-obvious provenance). Citations are inline as Markdown footnotes `[^1]` with the entity references in a structured tail block the citation_builder parses.
 5. **Style** — concise, factual, no apologies for not being able to do things. If the project doesn't have the information, say so directly: "I couldn't find a decision in `carve/decisions.md` about retention for Stripe."
-6. **Common patterns** — "where do we calculate X?" → grep models + cite dbt_model entities; "why did we do X?" → search decisions + cite decision entries; "what's the freshness of Y?" → catalog query the destination + cite warehouse_table
+6. **Common patterns** — "where do we calculate X?" → `grep` models + cite dbt_model entities; "why did we do X?" → search decisions + cite decision entries; "what's the freshness of Y?" → `sql` introspect the destination (read role) + cite warehouse_table.
 
 The prompt is tuned in iterations during `/build-spec` based on test fixtures.
 
@@ -210,7 +228,7 @@ carve ask "<question>" [OPTIONS]
   --pipeline TEXT          Scope to one pipeline
   --target TEXT            Scope to one target
   --output [text|json]     Default: text (markdown rendered for terminal); json for piping
-  --watch                  Show progress (skill calls as they happen); on by default in TTY
+  --watch                  Show progress (the explorer's tool calls as they happen); on by default in TTY
 
 carve asks list [OPTIONS]
   --since DURATION         e.g., 24h, 7d (default: 7d)
@@ -219,7 +237,7 @@ carve asks list [OPTIONS]
 
 carve asks show <ask_id> [OPTIONS]
   --output [text|json]
-  --include-trace          Print the full skill-call trace
+  --include-trace          Print the full tool-call trace
 ```
 
 `carve ask` is the headline command. `carve asks list` and `carve asks show` are operational verbs for reviewing prior asks.
@@ -248,9 +266,9 @@ These overrides go in the `tool_generator.py` override map from spec 10.
 ### Concurrency model
 
 - Asks do NOT go through the jobs table or the runtime's worker pool
-- Asks are served synchronously by the API request handler (or the CLI's local execution for one-shot invocations without `carve serve`)
+- Asks are served synchronously by the API request handler (or the CLI's local execution for one-shot invocations without `carve serve`); each runs the explorer subagent in `read_only` mode
 - An ask invocation holds a DB session for the duration but creates no rows in `jobs`, `runs`, or `step_runs`
-- Asks DO write rows in `asks`, `agent_invocations`, and `skill_calls` (so the agent telemetry surface still records them)
+- Asks DO write rows in `asks`, `agent_invocations`, and the harness's tool-call telemetry (so the agent observability surface still records them; the explorer's cost/tokens roll up to its invocation per spec 15)
 - Multiple concurrent asks are fine; the only contention is DB connections, which is well-sized for the v0.1 default of one worker + a few API request slots
 
 ### What asks read
@@ -260,7 +278,9 @@ Per spec 06's MemorySelector with `is_investigative=True`:
 - Always: `carve/conventions.md`, `carve/standards.md`, `carve/decisions.md`
 - When `--pipeline X` provided or the question mentions a specific pipeline: `pipelines/X.md`, `pipelines/X.toml`
 - When the question mentions an EL artifact: `el/<name>/NOTES.md`
-- Via skill calls: anything the orchestrator decides to look up — catalog queries, manifest queries, grep across model files, lineage traversal
+- Via its read tools/skills: anything the explorer decides to look up within its own context window — `sql` introspection/reads (read role), dbt-manifest queries, `grep`/`glob` across model files, lineage traversal, `web_fetch` of docs
+
+(Memory selection seeds the explorer's context bundle; the explorer then self-gathers the rest, per spec 15's context-isolation model.)
 
 ### Cited entities — example
 
@@ -292,7 +312,7 @@ The static UI (spec 11) renders citations as expandable cards with the excerpts.
 
 ### `--watch` mode
 
-In a TTY, the CLI streams the orchestrator's progress while the ask runs:
+In a TTY, the CLI streams the explorer's progress while the ask runs:
 
 ```
 $ carve ask "where do we calculate net revenue?"
@@ -306,42 +326,42 @@ Net revenue is calculated in `fct_revenue.sql` as the sum of charge amounts
 ...
 ```
 
-This is implemented by subscribing to the agent's skill-call events and printing a friendly progress line per skill_call. The events feed the same observability surface as plan/build, so the cloud UI also gets live progress.
+This is implemented by subscribing to the explorer's tool-call events and printing a friendly progress line per tool call. The events feed the same observability surface as plan/build, so the cloud UI also gets live progress.
 
 ## Tests
 
-- **Unit (no-write-skills guardrail):** representative write-skill names trigger rejection; read-skill names pass through; MCP tools with `effects.writes=true` are rejected; ambiguous MCP tools are allowed with a warning in the trace
+- **Unit (explorer in `read_only` mode):** the explorer's tool grant resolves to read tools only; under `read_only` the permission gate denies `edit`, write-`bash`, and warehouse writes (the `sql` tool runs on the read role); an MCP tool with `effects.writes=true` is denied. (Mode enforcement is spec 15's; this asserts the explorer is wired to it — no separate ask-only guardrail.)
 - **Unit (citation builder):** Markdown footnotes are parsed into structured `CitedEntity` objects; missing references produce a warning, not a crash
 - **Integration (end-to-end):** ask "where do we calculate net revenue?" against a fixture project with dbt + dlt + decisions → answer cites the right model and decision
-- **Integration (no side effects):** before/after asking 10 questions, the state store has +10 ask rows, +N agent_invocations, +N skill_calls, but zero changes to files, zero rows in jobs/runs/builds, and zero changes to the destination warehouse
+- **Integration (no side effects):** before/after asking 10 questions, the state store has +10 ask rows, +N agent_invocations, +N tool-call rows, but zero changes to files, zero rows in jobs/runs/builds, and zero changes to the destination warehouse
 - **Integration (concurrent):** while a long-running plan is in progress, fire 5 concurrent asks; all complete successfully without blocking on the plan
 - **Integration (cites decisions):** ask "why did we pick 18-month retention for Stripe?" with `decisions.md` containing the rationale → answer cites the entry verbatim (excerpt match)
-- **Integration (guardrail enforcement):** craft a fixture LLM response that tries to call a write skill mid-ask; verify the guardrail rejects, the ask doesn't fail (LLM picks a different approach), and the trace records the rejection
+- **Integration (write attempt blocked):** craft a fixture LLM response that tries to `edit` a file (or run a write via `bash`/`sql`) mid-ask; verify the `read_only` gate blocks it, the ask doesn't fail (the model picks a different approach), and the trace records the denial
 - **Integration (CLI/REST/MCP parity):** the parity tests from specs 09 and 10 include `ask`, `ask_show`, `asks_list` and confirm they're reachable from all three surfaces
 
 ## Acceptance
 
-- `carve ask "<question>"` returns a useful answer within 5–15 seconds for typical questions
+- `carve ask "<question>"` runs the explorer in `read_only` mode and returns a useful answer within 5–15 seconds for typical questions
 - Answers cite the right entities (decisions, dbt models, dlt pipelines, pipeline TOMLs, memory files) when applicable
-- The `NoWriteSkillsGuardrail` structurally prevents any file or destination mutation during an ask
+- The `read_only` permission mode (not a bespoke guardrail) structurally prevents any file, git, or warehouse mutation during an ask
 - Asks run concurrently with each other and with plan/build/run/deploy without contention
 - The state store records ask metadata; the full structured answer + trace is in `.carve/asks/<id>.json`
 - The CLI, REST, and MCP surfaces all expose ask functionality per parity rules
 - The static UI surfaces recent asks on the index page
-- The orchestrator's ask prompt is tested against representative questions during `/build-spec` iteration
+- The explorer agent (`builtin/explorer.md`) is tested against representative questions during `/build-spec` iteration
 
 ## Design notes
 
-- **Why reuse the orchestration agent rather than ship a dedicated "ask" agent?** Because the ask path is mostly identical to plan: classify intent, gather context, reason about the answer. The differences are output shape and the write-skill restriction — both cleanly handled by configuration + a guardrail. Shipping a separate agent would duplicate prompt content, skill registration, and reasoning machinery.
-- **Why is the answer synchronous (no streaming in v0.1)?** Because the typical ask takes 5–15 seconds, which is fine for synchronous return. Streaming the answer would require a different protocol (SSE/WebSocket on the asks endpoint) and a different client-side UX. The `--watch` mode streams *progress* (which skill is running) which is the more useful UX for a 10-second wait.
+- **Why a dedicated explorer subagent (vs. the M1 plan-orchestrator-with-a-guardrail)?** Under the harness, "ask" is just the **`read_only` mode** of a subagent that gathers context and answers — exactly the Claude-Code explorer pattern. A declarative `builtin/explorer.md` with a read-only tool grant is simpler and *safer* than bolting a write-blocking guardrail onto the orchestrator: the mode enforces no-writes for the explorer and every other read-only delegate uniformly, the agent is user-overridable like any other, and context-isolation (spec 15) keeps an investigation's tool churn out of the orchestrator's window. It does **not** delegate further — it answers itself.
+- **Why is the answer synchronous (no streaming in v0.1)?** Because the typical ask takes 5–15 seconds, which is fine for synchronous return. Streaming the answer would require a different protocol (SSE/WebSocket on the asks endpoint) and a different client-side UX. The `--watch` mode streams *progress* (which tool is running) which is the more useful UX for a 10-second wait.
 - **Why is `decisions.md` included by default in ask but not in plan?** Because asks frequently look backward ("why did we…?") whereas plans look forward. Loading decisions into plan context wastes tokens for the typical case where the plan doesn't reference past decisions. The selector's `is_investigative` flag is the explicit toggle.
 - **Why no separate jobs/queue for asks?** Because asks are short, synchronous, and stateless from the runtime's perspective. Adding them to the jobs table would create contention with scheduled runs for no benefit; the API request handler does the work directly.
 - **Why a separate citations data structure rather than embedding citations in the markdown?** Because consumers (static UI, cloud UI, external agents via MCP) want structured citations they can render as cards / deep-links. Markdown alone forces every consumer to parse footnotes themselves. The duplication (markdown footnotes + structured cited_entities) is intentional: markdown for human readability, structured data for programmatic consumption.
-- **Why does the `NoWriteSkillsGuardrail` use both name patterns and effect annotations rather than a strict allowlist of read skills?** Because new read skills get added all the time (every MCP server the user installs adds tools). An allowlist would block legitimate read skills until updated. A blocklist (write-skill patterns + effects annotation) errs in the right direction — false positives block writes (correct), false negatives are rare and detectable via the trace (auditable).
+- **Why enforce no-writes via the `read_only` permission mode rather than a bespoke ask-only guardrail?** Because the harness already needs a permission gate for *every* agent that runs `bash` + touches the warehouse + pushes git (spec 15). Reusing `read_only` for the explorer means one trust mechanism, not two: the mode's tool/path/role policy is the single place writes are denied, it composes with MCP `effects` metadata (spec 16) so newly-installed tools are classified automatically, and it errs correctly — a write tool is denied even if it slipped into the grant. A separate guardrail would duplicate and could drift from the mode it shadows.
 
 ## Open questions
 
-- **Whether asks should cite warehouse rows (e.g., "Stripe had 12,438 charges loaded yesterday").** *Implementation default.* The agent can call `destination_schema_query` during an ask; that's a read skill, allowed. Whether to add a dedicated "sample some rows" skill that returns row excerpts as citation_entity excerpts. Defer to post-v0.1 — users who need row-level data via ask can compose a SQL step in their pipelines and ask about the output.
-- **Maximum ask invocation duration.** *Implementation default.* 60-second hard cap; longer asks are likely going in circles and consuming tokens. Cap is enforced by the orchestrator's `max_iterations` from the agent definition (20 iterations × typical 3s per iteration = ~60s).
+- **Whether asks should cite warehouse rows (e.g., "Stripe had 12,438 charges loaded yesterday").** *Implementation default.* The explorer can `sql` introspect/`SELECT` on the read role during an ask (allowed in `read_only`). Whether to add a dedicated "sample some rows" affordance that returns row excerpts as `cited_entity` excerpts. Defer to post-v0.1 — users who need row-level data via ask can compose a `sql` step in their pipelines and ask about the output.
+- **Maximum ask invocation duration.** *Implementation default.* 60-second hard cap; longer asks are likely going in circles and consuming tokens. The cap is enforced by the explorer subagent's `max_turns` (spec 15), tuned so ~20 turns × typical 3s ≈ 60s.
 - **Whether `carve ask` should suggest a follow-up `carve plan` when the answer reveals a change is needed.** *Implementation default.* The prompt steers toward "here's what I found; if you want to change it, run `carve plan "<suggested phrasing>"`." The CLI surface doesn't take action automatically — the user picks.
 - **Asks-as-citations: when an ask is itself useful context for a later plan/ask.** *Implementation default.* Not in v0.1; each ask is independent. A future enhancement could index ask answers and let agents discover them ("we've answered this before"). Defer.
