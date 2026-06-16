@@ -67,11 +67,11 @@ The hosted overlay adds a **polished cloud UI** as a fourth interface, plus a pu
 
 ### 2.2 Core
 
-The heart of Carve. Six subcomponents:
+The heart of Carve. Carve is a **control plane** that references independently-versioned dlt/dbt **components** by name (§10.1) rather than containing them; `carve.toml` is the control-plane config (see [the control-plane decision](_strategy/2026-06-control-plane.md)). Six subcomponents:
 
 - **Agent layer** — Anthropic SDK reasoning loop, orchestration agent, specialist agents (extract-load, runtime; dbt specialist in v0.2). Token budget enforcement, skill-call caching, structured plan output.
 - **Plan/Build store** — Plans persisted as `.carve/plans/<id>.json` plus index rows in Postgres. Builds persisted as `Build` rows referencing on-disk artifacts (dlt pipelines, dbt models, `pipelines/*.toml`). Both are immutable once created; refinement creates child plans.
-- **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables: `runs`, `steps`, `logs`, `plans`, `builds`, `pipelines`, `schedules`, `agents_invocations`, `skill_calls`, `events`, `webhooks`. Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7).
+- **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables include `pipelines`, `schedules`, `schedule_changes`, `tokens`, `plans`, `builds`, `deploys`, `jobs`, `runs`, `step_runs`, `logs`, `workers`, `events`, `workspaces` (full schema in §9). Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7). The store holds the **control plane's** running state — it references components by name (§10.1); it never contains their code.
 - **Event bus** — In-process publish-subscribe in OSS; replaceable by Redis Streams in the hosted product without changing subscribers. Events: `run.queued`, `run.started`, `step.*`, `run.completed`, `agent.invoked`, `skill.called`.
 - **Skills registry** — Catalog of built-in skills (`src/carve/skills/`) plus MCP-imported skills (namespaced `mcp:server:tool`). Each skill declares typed inputs/outputs and a description. Skills receive a `SkillContext` for connections, logging, and event emission.
 - **Conventions + lineage** — Convention inference reads existing dbt projects and writes `carve/conventions.md`. Lineage maintains a graph of dlt-resource → destination-table → dbt-source dependencies; queryable via skills but not yet rendered in the v0.1 static UI.
@@ -640,15 +640,19 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 ### 7.5 Deploy
 
-**Inputs**: pipeline name, `--dry-run`, `--mode pr|direct` (`direct` is hosted-only).
+> Reconciled to [v0.1-14 deploy](v0.1/14-deploy-pr.md) (control-plane model). Deploy promotes **components** + the control-plane repo via a configurable **handoff**; the cross-repo **linked-PR** flow ships in v0.1.
 
-**Outputs**: `Deploy` row with status (`opened`, `merged`, `failed`, `cancelled`), PR URL(s), file diff summary. Separate-repo mode (PRD §6.2): two linked Deploy rows, one per repo, via `linked_deploy_id`.
+**Inputs**: `carve deploy <pipeline>`, `--target`, `--handoff files|commit|push|pr` (default `pr`), `--amend`, `--draft`, `--reconcile-pins`. (Replaces the pre-positioning `--mode pr|direct`; hosted's direct-to-prod is part of its managed merge/rollout layer.)
 
-**Side effects**: git operations (branch, commits, push, PR open via GitHub MCP). **Does not modify production warehouse state** — that happens on the next scheduled run after the PR merges. **No DDL is applied** — dlt handles destination schema on first prod run.
+**Outputs**: one `Deploy` row per touched repo. A single-repo deploy is one row (`component=NULL`, `linked_deploy_id=NULL`). A cross-repo deploy (a `separate-remote` component repo + the control-plane repo) opens **one PR per repo**, joined by `linked_deploy_id` (a control-plane lead row + one per component), each carrying its `handoff_reached`, `pr_url`, and advisory ingest-first `merge_order`. Status ∈ `{succeeded, degraded, failed}` — OSS does **not** track PR merge state (the CD-engine boundary).
 
-**Failure modes**: git operation failure (deploy `failed`, no production state changed); config hash drift (refused, exit 4); merge conflict on feature branch (`failed`, user resolves); for `--mode direct` in hosted, audit-log-write failure rolls back the deploy.
+**Side effects**: git operations (branch, commit, push, PR via the configured `pr_command`, default `gh`) against each touched remote. For pinned `separate-remote` components, the control-plane PR bumps the `[components.<name>] ref`. **Does not merge, wait on a merge, or modify production warehouse state** — the human merges the linked PRs in the stated order; the next scheduled run applies the change. **No DDL is applied** — dlt owns destination schema (so the old `carve el deploy` DDL-apply retires; target readiness shrinks to a thin `carve target verify`).
 
-**Idempotency**: re-running against the same build with an existing branch reuses it (amending if new changes); existing PR updates description. A deploy can be reopened after closing without merging.
+**Failure modes**: a failed git/PR step on one leg degrades that leg (`status=degraded`) — its code is safely pushed and the other legs' PRs still open; config-hash drift (refused, exit 4); a `pr_command` binary absent → degrade to `push` with a manual-PR instruction.
+
+**Idempotency**: `--amend` reuses the pipeline's most-recent open branch per repo (re-validated, no merge-state query). `--reconcile-pins` re-bumps component pins to current branch-HEAD after merge (the squash-merge SHA caveat).
+
+**Not Carve's job (the CD-engine line)**: merging, waiting on merges, enforcing the cross-repo order, or rolling back a half-merged set. Carve opens + links + orders; the human/CI merges.
 
 ### 7.6 Drift detection (the config hash)
 
@@ -741,7 +745,8 @@ Tables grouped by domain. Postgres features used: partial unique indexes (§4.2)
 ### 9.1 Project state
 
 - `pipelines(name PK, current_build_id, default_target, created_at, updated_at)`
-- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, last_fired_at, next_fires_at)` — the `id` PK matches the scheduler loop's `schedule.id` usage ([v0.1-07 runtime](v0.1/07-runtime.md)); the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 and can be dropped if multi-schedule (`[[schedule]]`) ever lands (deferred, see use-cases UC2).
+- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, timezone, last_fired_at, next_fires_at)` — **the schedule is DATA** ([v0.1-07](v0.1/07-runtime.md)): the definition reconciler seeds the row once from a pipeline's optional `[seed_schedule]` block at first registration; thereafter the scheduler reads it as the source of truth and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it live. The `id` PK matches the scheduler loop's `schedule.id` usage; the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 (droppable if multi-schedule `[[schedule]]` ever lands — deferred, use-cases UC2).
+- `schedule_changes(id BIGSERIAL PK, pipeline, change_kind, before JSONB, after JSONB, actor_token_id NULL, source, reason NULL, changed_at, tenant_id)` — audit log for every schedule mutation ([v0.1-07](v0.1/07-runtime.md)); under the control-plane model this **replaces git history for schedule edits** (the schedule is data, not code). `source ∈ {cli, api, mcp, ui, seed, reseed}`.
 - `tokens(id PK, name, hashed_token, scopes, created_by, created_at, last_used_at)`
 
 ### 9.2 Plans, builds, asks
@@ -766,9 +771,9 @@ Active + archive pattern from §4.2:
 
 ### 9.4 Deploys
 
-- `deploys(id PK UUID, build_id FK, pipeline FK, status, mode, pr_url, linked_deploy_id FK NULL, opened_at, merged_at, file_diffs JSONB)`
+- `deploys(id PK UUID, build_id FK, pipeline FK, target, component NULL, handoff_reached, status, branch NULL, commit_sha NULL, pr_url NULL, ref_bumped NULL, merge_order INT NULL, file_diffs JSONB, config_hash, linked_deploy_id FK NULL, triggered_by_token_id NULL, investigation_id NULL, tenant_id BIGINT NOT NULL DEFAULT 1, created_at)`
 
-`linked_deploy_id` joins paired deploys in separate-repo mode (Carve repo + dbt repo).
+Per [v0.1-14](v0.1/14-deploy-pr.md): **one row per touched repo.** `component` = the separate-remote component this leg promotes (NULL = the control-plane repo). `linked_deploy_id` joins the per-repo legs of one cross-repo deploy (→ the control-plane lead row); NULL for a single-repo deploy. `status ∈ {succeeded, degraded, failed}` (no PR merge-tracking). `handoff_reached` records where the leg stopped; `ref_bumped` is the pin a control-plane PR moves a pinned component to; `merge_order` is the advisory ingest-first sequence. `triggered_by_token_id`/`investigation_id` are forward-declared (FKs added when `tokens`/`Investigation` land). Supersedes the pre-positioning `mode`/`opened_at`/`merged_at` shape.
 
 ### 9.5 Agent telemetry
 
@@ -803,23 +808,23 @@ Mirrors PRD §6.2 from the technical side. Both backends are treated symmetrical
 
 ### 10.1 Repo topology resolution
 
-`carve.toml` records the topology choice for each backend:
+`carve.toml` is the control-plane config; it references each component as a named, typed `[components.<name>]` block (per [v0.1-03](v0.1/03-flat-layout.md)). Omitting all blocks is the convention-based simple mode.
 
 ```toml
-[dbt]
-mode = "same-repo"          # or "separate-local" + path; or "separate-remote" + url + branch
-
-[dlt]
-mode = "same-repo"          # same shape
+[components.analytics]
+type = "dbt"                # dlt | dbt
+mode = "separate-remote"    # same-repo | separate-local | separate-remote
+url  = "git@github.com:myorg/analytics.git"
+ref  = "9f3a1c7"            # optional pin (commit/tag); else tracks `branch` HEAD
 ```
 
-Runtime resolution per invocation:
+Runtime resolution is **by component name** (`resolve_component`, spec 03):
 
-- **Same-repo**: project root + conventional location (`dbt_project.yml` in cwd or subdirectory; `el/` or detected dlt directory)
+- **Same-repo** (or convention): project root + conventional location (`dbt_project.yml`; `el/<name>/` for dlt)
 - **Separate-local**: the recorded filesystem path
-- **Separate-remote**: `.carve/workspaces/<backend-name>/` (cached clone, synced before invocation)
+- **Separate-remote**: `.carve/workspaces/<derived-name>/` (cached clone, synced + checked out at the pinned `ref` or branch HEAD before invocation)
 
-The resolved path is what step executors invoke against.
+The resolved path is what step executors invoke against. A pipeline step references a component **by name** (`component = "<name>"`); this resolution is the only place the name→path mapping lives.
 
 ### 10.2 dlt invocation
 
@@ -853,15 +858,14 @@ For orchestration-only mode, no model generation occurs. The dbt step executes a
 
 ```
 .carve/workspaces/
-├── <dbt-name>/         # cloned dbt repo
-└── <dlt-name>/         # cloned dlt repo
+└── <derived-name>/     # cloned separate-remote component (dlt or dbt), per its [components.<name>] block
 ```
 
-Sync semantics:
+Sync semantics (per [v0.1-03](v0.1/03-flat-layout.md)):
 
-- On `carve serve` startup: `git fetch` + `git checkout <branch>` for each cached repo
-- Before each pipeline run: `git pull` (configurable; can be disabled for offline operation)
-- Before `carve deploy`: `git pull` to ensure the deploy is against the latest
+- On `carve serve` startup: `git fetch` + checkout the pinned `ref` (or branch HEAD) for each cached component
+- Before each pipeline run: hard-sync to the pinned `ref`/branch (configurable; can be disabled for offline operation)
+- Before `carve deploy`: sync to ensure the deploy is against the latest
 
 Sync conflicts (local modifications to a remote-cached workspace) are rejected with an error pointing the user at the workspace directory.
 
@@ -894,7 +898,7 @@ When the EL agent generates a dlt pipeline whose output should feed an existing 
 2. If match exists: EL specialist's pre-scoped context includes the source's table conventions; generated dlt code targets the same schema/table
 3. If no match: EL specialist generates a stub `sources.yml` entry alongside the dlt pipeline
 
-In separate-repo mode, the `sources.yml` addition becomes a linked deploy PR against the dbt repo (per §7.5). PR descriptions cross-link so reviewers see both halves of the change.
+In separate-remote mode, the `sources.yml` addition lands in the dbt component's repo as one of the **linked PRs** `carve deploy` opens (per §7.5 / [v0.1-14](v0.1/14-deploy-pr.md)) — cross-linked with the control-plane PR and ordered ingest-first, so reviewers see both halves and the safe merge order.
 
 ### 10.7 Version management
 
@@ -1003,7 +1007,7 @@ Match PRD §7.1 with implementation context:
 | `carve plan` typical     | < 15s + LLM time        | 3–8 skill calls, orchestrator reasoning            |
 | `carve build` typical    | < 60s + LLM time        | 1–4 specialist invocations, file writes            |
 | `carve run` startup      | < 10s                   | Worker claim, target connection, subprocess spawn  |
-| `carve deploy` typical   | < 60s                   | Git ops + PR open via GitHub MCP                   |
+| `carve deploy` typical   | < 60s                   | Git ops + PR open via the configured `pr_command`  |
 | REST read median         | < 200ms                 | Single-row or paginated queries                    |
 | WebSocket log latency    | < 500ms                 | Log write → subscriber                             |
 | Scheduler latency        | < 30s after cron tick   | Next scheduler loop                                |
