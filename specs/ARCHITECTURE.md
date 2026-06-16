@@ -342,16 +342,22 @@ Failure mode is per-step in the pipeline TOML; the runtime enforces it uniformly
 
 ## 5. The agent layer in detail
 
+> **Reconciled to the AI-harness model** ([_strategy/2026-06-ai-harness.md](_strategy/2026-06-ai-harness.md); specs [15 harness](v0.1/15-agent-harness.md) / [16 extensibility](v0.1/16-extensibility.md) / [18 sql](v0.1/18-sql-layer.md)). The orchestrator is the **main loop** that **delegates to subagents** (the `delegate` tool); specialists are subagents — a fresh loop with their own context, tools, and prompt, returning a *summary*. Agents are **declarative** (markdown + frontmatter), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web`) + skills, run behind **permission modes**, and **verify by execution**. Subagent **context-isolation** supersedes the old "pre-scoped context" pattern. §5.x is updated accordingly.
+
 ### 5.1 Agents and specialization
 
-Carve has one orchestration agent and a small set of specialists:
+Carve has one orchestration agent (the main loop) and a set of specialist **subagents** it `delegate`s to:
 
-- **Orchestration agent** — the only agent that knows about other agents. Classifies a goal, gathers impact context, picks specialist(s), pre-scopes their context, produces a plan.
-- **Extract-load (EL) specialist** — authors dlt sources/resources/pipelines and `.dlt/secrets.toml` / `.dlt/config.toml`. Knows the dlt API, the curated source library, the user's brownfield dlt conventions.
-- **Runtime specialist** — authors `pipelines/<name>.toml`. Knows the step type set, failure modes, scheduling semantics.
-- **dbt specialist (v0.2)** — authors dbt models, tests, `sources.yml` entries. Knows the user's brownfield dbt conventions.
+- **Orchestration agent** — the main loop; the only agent that knows about other agents. Classifies + decomposes a goal, `delegate`s to subagents, and synthesizes a reviewable plan/diff. Doesn't do the deep work itself.
+- **DLT engineer** — authors + *runs* dlt sources/pipelines into a named `dlt` component; its diff passes through **dlt-qa** and **dlt-security** review subagents.
+- **Pipeline engineer** — composes `pipelines/<name>.toml` (components by name, the step DAG, `[seed_schedule]`).
+- **Recovery engineer** — diagnoses a failure (grounded), then **delegates** the fix to the right engineer.
+- **Explorer** — the read-only investigative agent (the `ask` verb).
+- **dbt engineer (v0.2)** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
 
-Each specialist has a TOML definition in `carve/agents/<name>.toml` declaring: `model`, `system_prompt`, `allowed_skills`, `[guardrails]`. Specialists receive pre-scoped context from the orchestrator — they don't gather their own.
+Per the **engineer + review-subagent** pattern (the `/build-spec` fan-out brought to users' pipelines), each domain has an *engineer* (architect + build) plus *qa/security review* subagents. **SQL is a cross-cutting tool layer** ([spec 18](v0.1/18-sql-layer.md)), used by every agent, not an agent itself.
+
+Agents are **declarative** ([spec 16](v0.1/16-extensibility.md)): a markdown file with frontmatter (`name`/`description`/`model`/`tools`/`allowed_paths`/`classifications`) — built-ins at `src/carve/core/agents/builtin/*.md`, user agents at `carve/agents/*.md` (which override built-ins by name; hot-reloaded). The old per-agent `[guardrails]` block is subsumed by the harness **permission gate** (`allowed_paths` + the active mode's allowlist).
 
 ### 5.2 The orchestration agent's job
 
@@ -359,11 +365,11 @@ Given a user goal, the orchestrator:
 
 1. **Classifies the goal** — new pipeline, modification, config change, schedule change, etc. Classification determines which skills to call.
 2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage traversal.
-3. **Picks specialist(s)** — "modify stg_orders to be incremental" picks dbt only; "onboard Salesforce" picks EL + dbt + runtime.
-4. **Pre-scopes context for each specialist** — minimal bundle: the goal slice, relevant file contents, relevant conventions, impacted dependencies.
+3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ dbt engineer in v0.2).
+4. **Hands each a starting bundle** — the goal slice, relevant file contents, conventions, impacted dependencies; the subagent gathers anything else within its own isolated context.
 5. **Generates a structured Plan** — JSON-schema-validated, with task graph, file diffs, cost estimate.
 
-The orchestration agent never writes code itself. Its outputs are: a Plan, a list of (specialist, scoped context) tuples, and the skill-call trace.
+The orchestration agent never writes code itself — it `delegate`s. Its outputs are: a Plan, the subagent delegation results (summaries), and the tool-call trace.
 
 ### 5.3 The Anthropic SDK reasoning loop
 
@@ -401,7 +407,7 @@ Properties:
 
 ### 5.4 Pre-scoped context
 
-The single most important property of the agent layer: specialists don't gather their own context. A typical pre-scoped bundle for the EL specialist:
+Under the harness, a subagent is **`delegate`d a task + a starting context bundle**, and **gathers what else it needs within its own isolated context window** — the isolation is the point (the orchestrator's context stays clean), superseding the old "specialists never gather context" rule. A typical starting bundle for the DLT engineer:
 
 ```python
 {
@@ -420,7 +426,7 @@ The single most important property of the agent layer: specialists don't gather 
 }
 ```
 
-Specialists never need to run discovery skills themselves. This keeps their token budgets small and predictable.
+A subagent gathers within its own isolated window; context-isolation (not pre-scoping) is what keeps the orchestrator's context — and overall token budget — small and predictable.
 
 **Memory file selection.** The orchestrator picks which memory files to include based on the goal:
 
@@ -452,7 +458,7 @@ class Plan(BaseModel):
 
 class Task(BaseModel):
     id: str
-    specialist: Literal["extract-load", "dbt", "runtime"]
+    specialist: str               # the target subagent: dlt-engineer | pipeline-engineer | dbt-engineer | ...
     description: str
     inputs: dict
     expected_outputs: list[ExpectedOutput]
@@ -463,15 +469,16 @@ This shape forces the orchestrator to produce something deterministic that build
 
 ### 5.6 Hot reload
 
-Agent config files can be edited while `carve serve` is running. The next plan or build invocation re-reads `carve/agents/*.toml`. No separate "reload" command. Agent prompt iteration via `carve agents test` is fast: edit, test, edit, test, no restart in the loop.
+Declarative agent files can be edited while `carve serve` is running. The next invocation re-reads `carve/agents/*.md` + the built-ins ([spec 16](v0.1/16-extensibility.md)). No separate "reload" command. Agent prompt iteration via `carve agents test` is fast: edit, test, edit, test, no restart in the loop.
 
 ### 5.7 User-provided agents and skills
 
 **Custom agents.** Users can create custom agents alongside the built-ins, in v0.1.
 
-- `carve agents create <name>` scaffolds a new `carve/agents/<name>.toml` with minimal config
-- `carve agents create <name> --template <existing>` clones an existing agent's config (often `extract-load` or `runtime` as the starting point)
-- Each agent file declares `name`, `model`, `system_prompt` (inline or path), `allowed_skills`, `[guardrails]`, and `[specialization]` — the last block tells the orchestrator which goal classifications this agent handles
+- `carve agents create <name>` scaffolds a new `carve/agents/<name>.md` (markdown + frontmatter) with minimal config
+- `carve agents create <name> --template <existing>` clones an existing agent (often `dlt-engineer` or `pipeline-engineer` as the starting point)
+- Each agent file's frontmatter declares `name`, `description`, `model`, `tools`, `allowed_paths`, and `classifications` — the last tells the orchestrator which goal classifications this agent handles ([spec 16](v0.1/16-extensibility.md))
+- Beyond agents, users bring **skill packs** (`carve/skills/<name>/SKILL.md`) and **hooks** (`carve/hooks.toml`, pre/post-tool + on-event) — same declarative, hot-reloaded model
 - The orchestrator's specialist-picking step considers custom agents alongside built-ins; when a custom agent's `specialization` matches the classified goal, the orchestrator routes work to it
 - Custom agents can also be invoked directly via `carve agents test <name> "<prompt>"` for one-shot use bypassing the orchestrator
 
@@ -491,7 +498,9 @@ Post-v0.1, an in-process Python skill SDK may ship if real demand emerges. The M
 
 ### 5.8 The curated dlt source library: copy on use
 
-When the orchestrator's pre-scoped context includes `dlt_library_match: "<source_name>"`, the EL specialist **copies** the curated source code from `src/carve/sources/<source_name>/` into the user's project directory (e.g., `el/<pipeline_name>/`) and customizes it for the user's specific config (endpoint selection, target schema, credentials, write disposition).
+> Under the harness this is the **skill library** ([spec 16](v0.1/16-extensibility.md)): each `src/carve/sources/<name>/` ships as a `SKILL.md` capability pack, so "copy a curated source" = apply the pack. The copy-on-use properties below are unchanged.
+
+When the DLT engineer's task includes a curated-source match (`dlt_library_match: "<source_name>"`), it **copies** the curated source code from `src/carve/sources/<source_name>/` into the user's project directory (e.g., `el/<pipeline_name>/`) and customizes it for the user's specific config (endpoint selection, target schema, credentials, write disposition).
 
 This mirrors dlt's own `dlt init <source>` model: scaffold from a template, then the code is yours.
 
@@ -508,6 +517,8 @@ In Carve's "brownfield dlt" mode (PRD §6.2 mode 2: orchestration only), the cur
 ## 6. Schema retrieval architecture
 
 The agent layer never reads the full warehouse catalog or the full dbt manifest into its context. Instead, agents call typed skills that hit specific layers of a retrieval stack. Each layer has different cost, latency, and freshness characteristics.
+
+> **Harness note** ([spec 15](v0.1/15-agent-harness.md) / [18 sql](v0.1/18-sql-layer.md)): these retrieval skills sit alongside the terminal-grade base tools — `grep`/`glob` for file search, and the dialect-aware **`sql` tool** for catalog/`INFORMATION_SCHEMA` introspection on the **read role**. A subagent gathers within its own isolated context and handles its own results/pagination, so the "specialists never see truncated results" rule (§6.4) is superseded.
 
 ### 6.1 The five layers
 
@@ -656,7 +667,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 ### 7.6 Drift detection (the config hash)
 
-Plans, Builds, and Deploys carry a `config_hash` computed at creation time, over: `carve.toml`, `carve/connections.toml`, `carve/runtime.toml`, `carve/agents/*.toml`, `carve/conventions.md`, and the agent + skill source files in `src/carve/` (plans know which agent version generated them).
+Plans, Builds, and Deploys carry a `config_hash` computed at creation time, over: `carve.toml`, `carve/connections.toml`, `carve/runtime.toml`, `carve/agents/*.md`, `carve/hooks.toml`, `carve/conventions.md`, and the agent + skill source files in `src/carve/` (plans know which agent version generated them).
 
 | Action                | Hash check vs       | On drift           |
 |-----------------------|---------------------|--------------------|
@@ -895,8 +906,8 @@ Inferred patterns written to `carve/conventions.md` as a markdown document. Agen
 When the EL agent generates a dlt pipeline whose output should feed an existing dbt source:
 
 1. Orchestrator queries the dbt manifest for matching sources by name/schema
-2. If match exists: EL specialist's pre-scoped context includes the source's table conventions; generated dlt code targets the same schema/table
-3. If no match: EL specialist generates a stub `sources.yml` entry alongside the dlt pipeline
+2. If match exists: the DLT engineer's context bundle includes the source's table conventions; the generated dlt code targets the same schema/table
+3. If no match: the DLT engineer generates a stub `sources.yml` entry alongside the dlt pipeline
 
 In separate-remote mode, the `sources.yml` addition lands in the dbt component's repo as one of the **linked PRs** `carve deploy` opens (per §7.5 / [v0.1-14](v0.1/14-deploy-pr.md)) — cross-linked with the control-plane PR and ordered ingest-first, so reviewers see both halves and the safe merge order.
 
