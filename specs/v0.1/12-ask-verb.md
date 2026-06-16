@@ -141,7 +141,7 @@ The full structured answer + tool-call trace is persisted to `.carve/asks/<id>.j
 `src/carve/core/agents/run_explorer.py` invokes the **explorer** subagent in the `read_only` permission mode and post-processes its result into an `Answer`:
 
 ```python
-async def run_ask(
+def run_ask(   # sync; the async carve serve / REST layer invokes it in a threadpool (spec 15)
     *,
     question: str,
     pipeline: Optional[str],
@@ -165,7 +165,7 @@ async def run_ask(
         )
         # delegate to the explorer; the harness runs it in read_only mode (set from the agent's
         # frontmatter + the ask verb) and returns a DelegationResult summary, not the transcript.
-        result = await delegate(
+        result = delegate(   # sync (spec 15); run_explorer is invoked from the async serve via a threadpool
             agent="explorer",
             task=question,
             context=context,
@@ -201,7 +201,7 @@ A built-in **declarative agent** (spec 16 format), shipped at `src/carve/core/ag
 name: explorer
 description: Read-only Q&A about the project — how/where/why, lineage, logic, definitions, tests, "where does this data come from." Use for investigative questions that change nothing.
 model: claude-{LATEST_SONNET}   # per-agent tiering (spec 16); falls back to the install default
-tools: [read_file, grep, glob, web_fetch, sql, lineage, dbt_manifest, memory_read]   # read tools only; no edit/bash-write
+tools: [read_file, grep, glob, web_fetch, sql, dbt_manifest, memory_read]   # read tools only; no edit/bash-write (lineage skills deferred — spec 16)
 allowed_paths: []               # writes nothing
 classifications: [explain, locate, lineage, why_decision, freshness, test_coverage]
 ---

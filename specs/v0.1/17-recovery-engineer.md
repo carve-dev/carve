@@ -129,4 +129,4 @@ REST/MCP parity per specs 09/10. Recurring-run display capped (10 + "… and N m
 
 - **Investigation migration number.** *Implementation default.* Next sequential; `down_revision` = current head at build time.
 - **`target` source on the Investigation.** *Implementation default.* From the failed run's target.
-- **Delegation in the runtime context.** *Implementation default.* Recovery runs inside `carve serve`; it `delegate`s synchronously and persists the proposed Plan (no live worker contention). Confirm against the async-loop decision (spec 15 open question).
+- **Delegation in the runtime context → RESOLVED.** Recovery runs inside `carve serve`; it `delegate`s **synchronously** and persists the proposed Plan (no live worker contention) — consistent with spec 15's v0.1 sequential + sync execution model.

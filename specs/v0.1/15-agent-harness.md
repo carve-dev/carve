@@ -1,133 +1,150 @@
 # v0.1-15 — Agent harness: subagent delegation, terminal-grade tools, permissions, verification
 
-> **Foundation spec** — the Claude-Code-style agentic engine the domain agents (04 DLT, 08 pipeline, 12 explorer, recovery, SQL) run on. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Read after [v0.1-01](./01-state-store-postgres.md); it underpins 04/08/12 (which it numbers after only for bookkeeping — placement reorg is a noted follow-up).
+> **Foundation spec** — the Claude-Code-style agentic engine the domain agents (04 DLT, 08 pipeline, 12 explorer, recovery, SQL) run on. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Read after [v0.1-01](./01-state-store-postgres.md); it underpins 04/08/12 (numbered after them only for bookkeeping — placement reorg is a noted follow-up).
+>
+> **Hardened per the 15/16 adversarial review (2026-06-16).** Decisions: **(1) v0.1 execution is sequential + sync** — `loop.py` stays synchronous (invoked from the async `carve serve` via a threadpool); `delegate` is sync; subagents and review run sequentially; concurrent fan-out is post-v0.1. **(2) The advanced Claude-Code primitives ship in v0.1** — interrupt/cancel, a TODO list, context compaction, and `pre_deploy`/`post_build` hooks.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** M1 agent loop (`src/carve/core/agents/loop.py` — preserved + extended, HISTORICAL), [v0.1-03 flat-layout](./03-flat-layout.md) (the component locator subagents resolve against).
-- **Blocks:** [v0.1-16 extensibility](./16-extensibility.md), and the agent revisions/new agents (04, 08, 12, recovery, SQL) — all run on this harness.
+- **Depends on:** M1 agent loop (`src/carve/core/agents/loop.py` — preserved + extended, HISTORICAL; stays sync), [v0.1-03 flat-layout](./03-flat-layout.md) (the component locator subagents resolve against), the M1 subprocess runner (`src/carve/core/runners/local_venv.py` — its env-scrub + cwd-pin + timeout + capture pattern is the `bash`-sandbox floor).
+- **Blocks:** [v0.1-16 extensibility](./16-extensibility.md), and the agent revisions/new agents (04, 08, 12, recovery, SQL).
 
 ## Goal
 
-Evolve Carve's agent loop into a **Claude-Code-style harness**: a main loop that **delegates to subagents**, armed with **terminal-grade tools**, behind a **permission system**, that **verifies its work by executing it**. Concretely:
+Evolve Carve's agent loop into a **Claude-Code-style harness**: a main loop that **delegates to subagents**, armed with **terminal-grade tools**, behind a **permission system**, that **verifies its work by executing it**. v0.1 ships:
 
-1. **Subagent delegation** — a `delegate` tool spawns a typed subagent (fresh loop, own context/tools/prompt) and returns a *summary*, not the transcript. This is how the orchestrator routes domain work and how Carve manages context.
-2. **Terminal-grade tools** — `edit` (string-replace), `bash` (permissioned + sandboxed; runs the real `dlt`/`dbt`/`git`/`gh`/warehouse CLIs), `glob`/`grep`, `web_fetch`/`web_search`.
-3. **Permission system** — modes (`read_only`/`plan`/`build`/`deploy`) + allowlists + bash sandbox, checked *before* each tool call; plus role-scoped warehouse access.
-4. **Verification loop** — a harness primitive for generate → run → read → fix (run `dlt pipeline run`/`dbt build`, parse the real result, feed back).
-5. **Steerability + context management** — inject guidance mid-task (chat mode); subagent context-isolation + compaction for long sessions.
+1. **Subagent delegation** — a sync `delegate` tool spawns a typed subagent (fresh loop, own context/tools/prompt) and returns a *structured summary*. Subagents run **sequentially**.
+2. **Terminal-grade tools** — `edit`/`create_file`, `bash` (gated + sandboxed; runs the real `dlt`/`dbt`/`git`/`gh`/warehouse CLIs), `glob`/`grep`, `web_fetch`/`web_search`.
+3. **Permission system** — modes (`read_only`/`plan`/`build`/`deploy`) + allowlists + bash sandbox, checked at a single **pre-execution gate**; clamped on delegation; plus role-scoped warehouse access.
+4. **Verification loop** — bounded generate → run → read → fix.
+5. **Interrupt/cancel, a TODO list, and context compaction.**
 
-This spec ships the harness mechanics. It does **not** ship the declarative agent/skill *format* (that's [v0.1-16](./16-extensibility.md)) or the specific domain agents.
+This spec ships the harness mechanics. The declarative agent/skill *format* is [v0.1-16](./16-extensibility.md); the domain agents are their own specs.
 
 ## Out of scope
 
-- The **declarative agent/skill definition format** (`carve/agents/*.md`, `SKILL.md`), hooks, and MCP import — [v0.1-16](./16-extensibility.md).
-- The **specific domain agents** (DLT/pipeline/explorer/recovery/SQL) — their own specs.
-- **Hosted sandboxing** (gVisor/Firecracker/per-tenant isolation) — hosted concern; v0.1 ships an OS-level/allowlist sandbox.
-- The **REST/MCP surface** for driving agents (specs 09/10).
+- The **declarative agent/skill format**, hooks config, MCP import — [v0.1-16](./16-extensibility.md). (This spec defines the gate/hook *fire-points* and the runtime grant rule; 16 defines the file format.)
+- The **specific domain agents** — their own specs.
+- **Hosted sandboxing** (gVisor/Firecracker/per-tenant) — hosted; v0.1 ships the OS-level/allowlist floor below.
+- **Concurrent subagent execution** — post-v0.1 (v0.1 is sequential).
+- **Format-specific check parsing** (`state.json`/`run_results.json`) — the format owners (04 dlt, 08 dbt) provide the parse callable; this spec's `run_check` is format-agnostic.
 
 ## Files this spec produces
 
 ```
-src/carve/core/agents/loop.py                 # MODIFY — add a delegation hook + steerability injection point; keep the existing tool-use/retry/terminator/observer machinery
-src/carve/core/agents/subagent.py             # NEW — SubagentRunner: builds a scoped AgentLoop (system prompt + tool set + permission mode + context bundle), runs it, captures a structured result
-src/carve/core/agents/delegate.py             # NEW — the `delegate` tool: delegate(agent, task, context) -> DelegationResult; spawns a SubagentRunner; returns a summary, not the transcript
-src/carve/core/agents/tools/edit.py           # NEW — precise string-replace edit (read-before-edit invariant; unique-match or replace_all)
-src/carve/core/agents/tools/bash.py           # NEW — permissioned, sandboxed shell: allowlist eval, timeout, cwd-pinned, captured stdout/stderr/exit
-src/carve/core/agents/tools/search.py         # NEW — glob (path globs) + grep (ripgrep-style content search), bounded result counts
-src/carve/core/agents/tools/web.py            # NEW — web_fetch (URL -> text, bounded) + web_search (query -> results); for reading dlt/dbt/API docs
-src/carve/core/agents/m1_tools.py             # MODIFY — keep read_file/run_snowflake_query; fold write_file into edit (deprecate raw whole-file write for agents)
-src/carve/core/agents/permissions.py          # NEW — PermissionMode enum + Allowlist + per-tool gate (checked before execution); bash sandbox policy; warehouse role selection
-src/carve/core/agents/verification.py         # NEW — run_check(cmd) -> CheckResult; the generate->run->read->fix primitive (parses dlt state.json / dbt run_results.json)
-src/carve/core/agents/tools/__init__.py       # MODIFY — register the new base tools alongside the Tool primitive
-tests/unit/test_delegate_isolation.py         # NEW
-tests/unit/test_tool_edit.py                  # NEW
-tests/unit/test_tool_bash_permissions.py      # NEW
+src/carve/core/agents/loop.py                 # MODIFY — add: (a) the pre-execution PERMISSION GATE in _execute_tool_calls (before tool.executor), (b) the pre_tool/post_tool hook fire-points, (c) the delegation hook, (d) a per-run read-set (for edit), (e) cancellation check between turns, (f) compaction hook. Stays SYNC.
+src/carve/core/agents/subagent.py             # NEW — SubagentRunner: build a scoped sync AgentLoop (prompt + tool set ∩ mode + clamped permission mode + context bundle); run sequentially; capture DelegationResult (files_changed from the run's edit-log; outputs from the agent's submit_result terminator)
+src/carve/core/agents/delegate.py             # NEW — the sync `delegate` tool + DelegateTool type + DelegationResult + SubagentError
+src/carve/core/agents/permissions.py          # NEW — PermissionMode lattice + Allowlist.evaluate(tool|command|path) -> allow|prompt|deny; bash command parser (shlex + metachar-deny); fail-closed; warehouse role selection; clamp(parent, agent)
+src/carve/core/agents/tools/edit.py           # NEW — edit (re-read-at-apply string replace; symlink-resolved, allowed_paths-confined) + create_file (new files)
+src/carve/core/agents/tools/bash.py           # NEW — gated, sandboxed shell (scrubbed env; cwd-pinned; timeout; captured+capped stdout/stderr)
+src/carve/core/agents/tools/search.py         # NEW — glob + grep (secret-path deny-listed)
+src/carve/core/agents/tools/web.py            # NEW — web_fetch + web_search (bounded)
+src/carve/core/agents/tools/todo.py           # NEW — TodoWrite-style task list for long runs
+src/carve/core/agents/m1_tools.py             # MODIFY — keep read_file (+ secret-path deny) / run_snowflake_query; write_file removed from the agent grant (superseded by edit + create_file)
+src/carve/core/agents/verification.py         # NEW — run_check(cmd, *, parse) -> CheckResult: runs cmd THROUGH the gated bash tool, applies the injected parse callable; bounded iterations + cost ceiling
+src/carve/core/agents/compaction.py           # NEW — top-level-chat compaction (token-threshold trigger)
+src/carve/core/agents/cancel.py               # NEW — cancellation signal the loop checks between turns (drives run.cancelled, spec 09)
+tests/unit/test_delegate_clamp.py             # NEW — mode clamp + isolation
+tests/unit/test_bash_gate.py                  # NEW — metachar deny, argv allowlist, secret env scrub
 tests/unit/test_permission_modes.py           # NEW
-tests/integration/test_verification_loop.py   # NEW — generate a trivial dlt/dbt artifact, run it, parse result, self-correct
-docs/agent-harness.md                         # NEW — the harness model for contributors
+tests/unit/test_edit_tool.py                  # NEW — TOCTOU re-read, allowed_paths, create_file
+tests/integration/test_verification_loop.py   # NEW — bounded generate->run->read->fix with a fixture parse fn (no dlt/dbt needed)
+docs/agent-harness.md                         # NEW
 ```
 
 ## Behavior
 
-### Subagent delegation
-
-The main loop exposes a `delegate` tool:
+### Subagent delegation (sync, sequential)
 
 ```python
-delegate(agent: str, task: str, context: dict) -> DelegationResult
-# DelegationResult: { result_summary, files_changed: [..], outputs: {..}, cost_usd, status }
+def delegate(agent: str, task: str, context: dict, *, parent_mode: PermissionMode) -> DelegationResult: ...
+
+@dataclass
+class DelegationResult:
+    status: Literal["succeeded", "needs_user_input", "failed"]
+    result_summary: str                 # the subagent's final text
+    files_changed: list[str]            # harness-tracked from the run's edit/create_file log (never self-reported)
+    outputs: dict                       # validated payload from the agent's `submit_result` terminator (schema per-agent)
+    usage: TokenUsage                   # input/output/cache tokens (mirrors the shipped TokenUsage)
+    cost_usd: float
+
+class SubagentError(AgentError): ...    # subclass of the shipped AgentError
 ```
 
-- `SubagentRunner` builds a **fresh `AgentLoop`** with: the agent's system prompt, its scoped tool set, its permission mode, and a **context bundle** (the only context it sees — not the parent's transcript). It runs to completion (its own `max_turns`) and returns a **summary**, not the full transcript.
-- **Context isolation** is the point: a subagent can burn 50 tool calls engineering a connector while the orchestrator's context stays small. This supersedes the manual "pre-scoped context" pattern — the orchestrator delegates a *task*, the subagent gathers what it needs within its own window.
-- Subagents may themselves delegate (e.g. recovery → DLT engineer), one level deep by default (configurable cap to bound fan-out).
-- Cost + tokens roll up to the parent invocation's telemetry (`agent_invocations`).
+- `SubagentRunner` builds a **fresh sync `AgentLoop`** with: the agent's system prompt, its **tool set ∩ the mode's permitted tools** (see *Permissions*), the **clamped** permission mode, and a typed **context bundle** (named keys the agent reads — never the parent transcript). It runs to completion (own `max_turns`) and returns a `DelegationResult`.
+- **`outputs` is produced via a structured terminator tool** (`submit_result`, reusing the shipped `SubmitPlanCapture`/`SubmitDiagnosisCapture` pattern); **`files_changed` is harness-tracked** (the SubagentRunner reads the run's edit/create_file log — agents can't fabricate it).
+- **Context isolation**: the orchestrator's context doesn't grow by the subagent's transcript; a subagent's raw tool output (which may include sensitive strings) never flows back to the parent.
+- **Execution is sequential and sync** (v0.1): `delegate` blocks; the loop stays synchronous and is invoked from the async `carve serve`/REST layer via a threadpool. Concurrent fan-out is post-v0.1.
+- **Delegation graph**: the **orchestrator** owns review fan-out — it runs an engineer, then (sequentially, in v0.1) runs the qa/security **reviewers as sibling subagents** and feeds findings back. A **domain engineer does not call `delegate`** (reviewers are spawned by the orchestrator). `max_delegation_depth = 2` (orchestrator → engineer; orchestrator → reviewer; recovery → engineer all stay ≤ 2).
 
 ### Terminal-grade tools
 
 | Tool | Contract |
 |---|---|
-| `edit` | **Read-before-edit invariant** (the file must have been read this session). Exact string replacement; fails on non-unique match unless `replace_all`. Returns the applied diff. Replaces raw `write_file` for agents (better diffs, fewer clobbers). |
-| `bash` | Runs a shell command **only if the permission gate allows it** (below). Sandboxed (OS-level for v0.1), `cwd` pinned to the project/component root, bounded timeout, captured stdout/stderr/exit. This is how agents run `dlt pipeline run`, `dbt build`, `git`, `gh`, `sqlfluff`, etc. |
-| `glob` | Path-glob the repo (`el/**/*.py`, `models/**/*.sql`); bounded count. |
-| `grep` | Content search (ripgrep-style), bounded matches, returns file:line + excerpt. |
-| `web_fetch` | URL → readable text, size-bounded. For reading dlt/dbt/source-API docs live. |
-| `web_search` | Query → ranked results. Bounded. |
-
-Domain skills (schema introspection, the connector library, lineage, dbt manifest) layer on top via the skill registry (spec 16); they are not duplicated here.
+| `edit` | **Re-reads the file at apply time** and verifies `old_string` still matches the on-disk bytes before writing (closes the read-at-turn-2/edit-at-turn-20 TOCTOU). Resolves symlinks; enforces project-root containment + the agent's `allowed_paths` (reusing the shipped write-tool guards). Exact string replace; non-unique match fails unless `replace_all` (which reports the count). |
+| `create_file` | Creates a **new** file (edit cannot string-replace into a nonexistent file). Same path-scoping/allowed_paths as `edit`. (Replaces raw `write_file` for agents.) |
+| `bash` | Runs a shell command **only if the gate allows it** (below). **Scrubbed env** (strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + provider tokens — the shipped `local_venv._STRIPPED_ENV_VARS` set; **warehouse creds are never in the bash env** — agents reach the warehouse via the role-scoped `sql` tool, [spec 18](./18-sql-layer.md)). cwd-pinned, bounded timeout, **captured + capped** stdout/stderr (capped before it enters the transcript/telemetry). |
+| `glob`/`grep` | File search, bounded counts; **secret paths deny-listed** (`.env`, `.env.*`, `**/secrets.toml`, `*.pem`, `~/.dlt/secrets.toml`) — returns a tool_error in **all** modes. |
+| `read_file` | (shipped, MODIFY) same secret-path deny-list. |
+| `web_fetch`/`web_search` | Bounded; for reading dlt/dbt/source-API docs. |
+| `todo` | A TodoWrite-style task list the agent maintains to stay on-rails across long runs. |
 
 ### Permission system
 
-Every tool call passes a **pre-execution gate** (`permissions.py`), mirroring Claude Code's permission check:
+A single **pre-execution gate** (`permissions.py`) runs in the loop's `_execute_tool_calls` **before** `tool.executor` (added to the `loop.py` MODIFY). Order: **gate first** (deny fast) → then `pre_tool` hooks (spec 16) on allowed calls → execute → `post_tool` hooks.
 
-- **Modes:** `read_only` | `plan` | `build` | `deploy`. The active mode is set by the verb (`ask`→`read_only`, `plan`→`plan`, `build`→`build`, `deploy`→`deploy`) or by an interactive chat session.
-- **Per-mode policy:** which tools are allowed, which paths are writable, and which bash commands run vs prompt vs deny.
-  - `read_only`: `read_file`/`grep`/`glob`/`web_*`/read-only SQL only. No `edit`, no writing bash, no warehouse writes.
-  - `plan`: read + design; no `edit`, no destructive bash.
-  - `build`: `edit`/`bash` within the agent's `allowed_paths`; auto-allow `dbt build`/`dlt pipeline run`/read queries; **prompt** on `DROP`/DDL, `git push`, writes outside `allowed_paths`.
-  - `deploy`: + `git`/`gh` (the linked-PR flow, spec 14).
-- **Allowlist eval:** a command/path is matched against the mode's allow / prompt / deny lists. Unknown → prompt (interactive) or deny (headless/CI) — fail-closed.
-- **Role-scoped warehouse access:** explore/qa/read queries run on a **read role**; writes (DDL, loads) only via the **deploy/runtime role** (extends Carve's existing deploy-vs-runtime role model). The SQL tool layer (its own spec) selects the role from the mode.
+- **Modes** (a lattice `read_only < plan < build < deploy`). Set by the verb (`ask`→`read_only`, `plan`→`plan`, `build`→`build`, `deploy`→`deploy`) or a chat session.
+- **Config:** per-mode policy ships as **hardcoded Python defaults** (the authoritative floor); an optional `[permissions]` block in `runtime.toml` can *tighten* (never widen) bash allow/prompt/deny + tool sets; per-agent `allowed_paths` (spec 16 frontmatter) further narrows writes. Precedence: effective = mode-default ∩ config ∩ agent.
+- **Grants are attenuation, not escalation.** An agent's `tools:` grant is intersected with the mode's permitted set: **runtime tool set = grant ∩ mode-permitted**. The runtime gate is the authoritative boundary — write tools (`edit`/`create_file`/`bash`-writes/warehouse-writes) are denied in `read_only`/`plan` **regardless of grant**. A user agent file that overrides a built-in **cannot raise the effective mode or escape `allowed_paths`** (those are clamped by the verb + gate, not the file). Spec 16's load-time grant check is an **advisory lint**, not the boundary.
+- **Delegation clamp:** `delegate` carries `parent_mode`; the child runs at `min(parent_mode, agent_capability)` and **never wider**. (So a `read_only` `ask` delegating to a build-capable engineer runs the child `read_only` — no write during an ask, satisfying [spec 12](./12-ask-verb.md).)
+- **The bash gate** (the load-bearing surface): a command is `shlex`-parsed; any command containing sub-execution metacharacters — `$()`, backtick, `;`, `&&`, `||`, `|`, `>`/`>>`, `&`, newline — is **denied** (not prompted) unless the whole command matches a structured allow-entry; otherwise the parsed `argv[0]` (+ subcommand for `git`/`dbt`/`dlt`/`gh`) is matched against the mode's allow/prompt/deny lists. **v0.1 sandbox floor:** argv-allowlist + metacharacter-deny + the shipped `local_venv` restricted-env subprocess (scrubbed env, cwd-pinned, timeout, process-group kill) + filesystem read-write only under the project root + the tool caches (`~/.dlt`, `~/.dbt`); read-only elsewhere. *(This resolves the ADR's bash-sandbox open question to a concrete floor.)*
+- **Role-scoped warehouse:** read queries on the **read role**; writes/DDL only on the **deploy/runtime role** (extends the shipped deploy-vs-runtime role model). The `sql` tool selects the role from the mode.
+- **Non-interactive = fail-closed:** any invocation without an attached interactive approver (`carve serve`, REST, MCP, CI) resolves **every `prompt`-tier outcome to DENY**, returning a `needs_user_input` status (surfaced on the Plan), never auto-allow. The prompt tier requires a registered approver callback; absent one, prompt == deny.
 
-### Verification loop
+### Verification loop (bounded)
 
-`verification.run_check(cmd, *, parse) -> CheckResult` is the generate→run→read→fix primitive: an agent authors code, then runs a check via `bash` (`dlt pipeline run --pipeline x`, `dbt build --select y`), and the harness **parses the real result** (dlt `state.json`, dbt `run_results.json`) into a structured `CheckResult` the agent reads and acts on. The agent iterates until green (bounded attempts). This is the accuracy/magic primitive — the agent closes the loop on execution, not generation.
+`run_check(cmd, *, parse: Callable[[CompletedProcess], CheckResult]) -> CheckResult` is **format-agnostic**: it runs `cmd` **through the gated `bash` tool** (same allowlist/scrubbed-env/sandbox — no second execution path) and applies the injected `parse` callable. The format-specific parsers (dlt `state.json`, dbt `run_results.json`) live in the **format owners** (04/08), not here. The agent iterates generate → run → read → fix, bounded by **`max_verification_iterations` (default 4)** and a **per-invocation token/cost ceiling**; on exhaustion it returns `status="needs_user_input"` with the last `CheckResult` rather than looping. Subagent costs aggregate against the parent's ceiling.
 
-### Steerability + context management
+### Interrupt/cancel, TODO, compaction
 
-- **Steerability:** in chat-driven mode, user guidance injected mid-loop is appended to the next turn's context (the loop checks a steering queue between turns). Batch (`plan`/`build`) mode is non-interactive.
-- **Context management:** subagent isolation (above) is the primary mechanism; long interactive sessions compact (summarize prior turns) when approaching the context window. The loop exposes a compaction hook; the policy is conservative (summarize oldest, keep the system prompt + recent turns + the active task).
+- **Interrupt/cancel:** the loop checks a cancellation signal (`cancel.py`) **between turns**; a user/API cancel sets it, the loop stops cleanly and emits `run.cancelled` (spec 09). In-flight subprocesses get the process-group SIGTERM→SIGKILL the shipped runner already does.
+- **TODO list:** the `todo` tool lets an agent track a multi-step task; surfaced in the static UI / stream.
+- **Compaction:** applies to the **top-level interactive chat loop only** (subagents are bounded by `max_turns` and don't compact). Trigger: context exceeds a token threshold (default ~75% of the window); policy: summarize oldest turns, keep the system prompt + the active task + recent turns.
+
+### Steerability
+
+In chat mode, guidance injected mid-task is appended to the next turn (the loop checks a steering queue between turns). Batch (`plan`/`build`) is non-interactive.
 
 ## Tests
 
-- **Unit (delegation):** `delegate(...)` runs a subagent with a *fresh* context (asserts the parent transcript is not visible to the subagent), returns a summary + `files_changed`, and rolls cost up to the parent.
-- **Unit (edit):** rejects an edit to a not-yet-read file; does exact string replace; fails on non-unique match without `replace_all`; returns the diff.
-- **Unit (bash permissions):** an allowlisted command runs; a `DROP TABLE` / `git push` is gated (prompt interactive, deny headless); commands run cwd-pinned with a timeout; output captured.
-- **Unit (permission modes):** `read_only` blocks `edit` and warehouse writes; `build` allows `edit` within `allowed_paths` but prompts outside; mode is set correctly per verb.
-- **Integration (verification loop):** an agent authors a trivial dlt pipeline, runs it via `bash`, the harness parses `state.json` into a `CheckResult`, and a deliberately-broken artifact triggers a self-correction iteration.
+- **Unit (delegate clamp + isolation):** a `read_only` parent delegating to a build-capable agent runs the child `read_only`; a child `edit`/`bash`-write is denied; the parent transcript is not visible to the child; cost/usage roll up.
+- **Unit (bash gate):** an allowlisted `git commit` carrying `$(...)`/`;`/backticks is **denied**; an un-allowlisted `argv[0]` is denied; `printenv ANTHROPIC_API_KEY` returns empty (scrubbed env); a non-allowlisted cmd passed to `run_check` is denied.
+- **Unit (secret reads):** `read_file('.env')` / `grep` over `**/secrets.toml` are denied in **all** modes (incl. `read_only`).
+- **Unit (permission modes + attenuation):** `read_only` blocks `edit`/warehouse-writes; an agent granting `bash` runs with `bash ∩ mode` (no-op in `read_only`); a `prompt`-tier action under a non-interactive invocation → DENY + `needs_user_input`.
+- **Unit (edit):** rejects edit to a not-read file; re-reads at apply (TOCTOU); `create_file` makes a new file under `allowed_paths`; outside-`allowed_paths`/symlink-escape denied; `replace_all` reports the count.
+- **Integration (verification, no dlt/dbt):** an agent runs a trivial command that writes known JSON, `run_check` parses it via a fixture `parse` fn, a broken artifact triggers a bounded self-correction, and exhausting `max_verification_iterations` returns `needs_user_input`.
 
 ## Acceptance
 
-- A subagent delegated a task runs in isolation and returns a summary; the orchestrator's context does not grow by the subagent's transcript.
-- Agents edit via string-replace (read-before-edit enforced) and run real CLIs via sandboxed, allowlisted `bash`.
-- The permission gate blocks/those-prompts the right actions per mode; no write occurs in `read_only`; warehouse writes use the write role only.
-- An agent can author → run (`dlt`/`dbt`) → read the parsed result → fix, end-to-end, against fixture infrastructure.
-- The existing `loop.py` machinery (tool-use, retries, terminator tool, observer, token accounting) is preserved.
+- A subagent delegated a task runs in isolation, **at a mode ≤ the parent's**, and returns a `DelegationResult` with harness-tracked `files_changed` + `usage`; the orchestrator's context doesn't grow by the transcript.
+- The `bash` gate denies metacharacter/sub-shell injection and un-allowlisted commands; `bash` cannot read secrets from env or files; the warehouse is reachable only via the role-scoped `sql` tool.
+- No write occurs in `read_only`; grants never escalate; a user agent override can't raise the mode or escape `allowed_paths`.
+- The verification loop is bounded (iterations + cost) and runs exclusively through the gated `bash` tool.
+- Interrupt/cancel stops an in-flight agent and emits `run.cancelled`; compaction keeps a long chat within budget.
+- The existing `loop.py` machinery (tool-use, retries, terminator tool, observer, token accounting) is preserved and stays sync.
 
 ## Design notes
 
-- **Why subagents (vs the current hardcoded dispatch)?** Context isolation + true specialization fall out of one mechanism — and it's exactly how Claude Code achieves multi-agent work. The orchestrator delegates a *task* and gets a *summary*; it never drowns in a specialist's transcript. This is the single highest-leverage move in the harness.
-- **Why terminal-grade tools (vs narrow domain ops)?** dlt and dbt *are* CLIs; a data engineer works at a terminal. `bash` + `edit` let agents use the *real* tools the way a human does (run, inspect outputs, `git diff`, `gh pr create`) — far more capable than a fixed set of Python wrappers, and the source of the "it actually works" feeling.
-- **Why permission-before-execution?** Once agents run bash + touch the warehouse + push git, a pre-execution gate is the only safe design. It's also the trust story: powerful but never free to do arbitrary things. Maps cleanly onto Carve's plan→build→deploy lifecycle.
-- **Why verify by execution?** Generation-without-verification is a demo. Running `dlt`/`dbt` and reading the real result is what makes the agent accurate and self-correcting — and grounds it so it can't ship a hallucinated schema.
-- **Sync vs async.** `loop.py` is currently synchronous; `carve serve` is async. The harness runs subagents potentially concurrently (a review fan-out), so the loop should be made awaitable (or run in a worker thread/executor). Pinned as an open question.
-- **Keep `loop.py`.** This spec *extends* the proven loop (retries, terminator-tool pattern, observer, token accounting), it does not rewrite it.
+- **Why sequential + sync in v0.1?** It keeps `loop.py`'s proven synchronous design (invoked from the async serve via a threadpool), matches spec 07's "no fan-out" and recovery's sync delegate, and removes the only feature (concurrent review) that forced async. Concurrent fan-out is a clean post-v0.1 add.
+- **Why the gate is the boundary (not the grant)?** Grants live in editable agent files (a user file overrides built-ins), so they can't be a security boundary. The single runtime pre-execution gate, with grants attenuated to the mode, is the airtight surface — and it's why spec 12 can retire its bespoke `NoWriteSkillsGuardrail`.
+- **Why the bash metacharacter-deny + argv-allowlist?** Because `bash` invokes a shell, a prefix-glob over the raw string is ACE-by-construction. The shipped `m1_tools._is_safe_select` learned this for SQL; `bash` adopts the same discipline. The v0.1 floor reuses the shipped `local_venv` subprocess sandbox so this isn't invented from scratch.
+- **Why scrub the env + deny secret reads?** The shipped `local_venv` already strips Carve secrets from LLM-authored subprocess env; the harness must not regress that, and read-tool secret-deny stops even a `read_only` explorer leaking `.env` into an answer.
+- **Why harness-track `files_changed` + terminator `outputs`?** So the most-consumed delegation field can't be fabricated by the model, reusing the shipped `SubmitPlanCapture` pattern.
 
 ## Open questions
 
-- **Sandbox depth.** *Strategy-required.* OS-level sandbox + allowlist for v0.1; container/microVM isolation is a hosted concern. Confirm the v0.1 floor (e.g., restricted subprocess env + path/network limits vs. a full sandbox).
-- **Sync → async loop.** *Implementation default.* Make the loop awaitable; run subagents on the event loop (or a bounded executor) so a review fan-out can be concurrent. Confirm before build.
-- **Steering in batch mode.** *Implementation default.* Batch (`plan`/`build`) is non-interactive; steering is chat-mode only. Revisit if CI flows want mid-run injection.
-- **Delegation depth cap.** *Implementation default.* One level by default (orchestrator → specialist; recovery → specialist is the exception, two levels). Bound to prevent runaway fan-out.
+- **Concurrent fan-out (post-v0.1).** When it lands, make the loop awaitable / run subagents on a bounded executor. v0.1 is sequential.
+- **`[permissions]` config surface depth.** *Implementation default.* v0.1 ships hardcoded per-mode defaults + a tighten-only `runtime.toml` block; richer policy is post-v0.1.
+- **Compaction quality.** *Implementation default.* Simple oldest-summarize at a token threshold; smarter compaction later.

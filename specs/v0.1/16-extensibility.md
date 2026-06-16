@@ -1,75 +1,80 @@
 # v0.1-16 — Extensibility: declarative agents, skill packs, hooks, MCP
 
-> **Foundation spec** — the "bring your own agents, skills, MCPs, CLIs, hooks" model that makes the harness extensible. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Resolves the built-vs-spec agent drift (the AI-map finding): agents/skills become **declarative + discoverable**, not hardcoded in Python.
+> **Foundation spec** — the "bring your own agents, skills, MCPs, CLIs, hooks" model that makes the harness extensible. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Resolves the built-vs-spec agent drift: agents/skills become **declarative + discoverable**.
+>
+> **Hardened per the 15/16 adversarial review (2026-06-16):** grant validation is **runtime attenuation** (the [spec 15](./15-agent-harness.md) gate is the boundary, not load-time); MCP/load defaults are **fail-closed**; the hook event set has named **emission points** (incl. `pre_deploy`/`post_build`, per the v0.1-advanced-primitives decision).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (agents/skills/tools are defined against it), [v0.1-06 project-memory](./06-project-memory.md) (same file-discovery + mtime-cache patterns).
-- **Blocks:** the domain agent specs (04 DLT, 08 pipeline, 12 explorer, recovery, SQL) — each ships as a **declarative agent** loaded by this registry. Also the connector→skill library.
+- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (the gate/hook fire-points, the runtime grant rule, the tool set), [v0.1-06 project-memory](./06-project-memory.md) (the mtime-cache discovery pattern), [v0.1-07 runtime](./07-runtime.md) (the `run.failed` event the `on_run_failed` hook subscribes to).
+- **Blocks:** the domain agent specs (04/08/12/recovery/SQL) — each ships as a **declarative agent** loaded by this registry.
 
 ## Goal
 
-Make the harness extensible without forking. Users (and Carve's own built-ins) define agents, skills, hooks, and MCP imports **declaratively**, hot-reloaded and discoverable:
+Users (and Carve's built-ins) define agents, skills, hooks, and MCP imports **declaratively**, hot-reloaded and discoverable:
 
-1. **Agents = markdown + frontmatter** (`carve/agents/<name>.md`). Drop a file → it's a routable subagent. Built-ins and user agents use the same format; user agents override built-ins by name.
-2. **Skills = capability packs** (`carve/skills/<name>/SKILL.md` + optional scripts/resources), loaded on demand by description-match (progressive disclosure). **The curated connector library becomes a skill library** — connectors, skills, and bring-your-own unify into one model.
-3. **Hooks** (`carve/hooks.toml`) — pre/post-tool and on-event automation/policy (`sqlfluff` before commit; block writes to a prod schema; Slack on deploy).
-4. **MCP (consume)** — register external MCP servers; their tools enter the skill registry namespaced. (Carve *exposing* an MCP server is [v0.1-10](./10-mcp-server.md).)
+1. **Agents = markdown + frontmatter** (built-ins at `src/carve/core/agents/builtin/<name>.md`; user agents at `carve/agents/<name>.md`, overriding built-ins by name).
+2. **Skills = capability packs** (`carve/skills/<name>/SKILL.md`), loaded on description-match. **The connector library is a skill library.**
+3. **Hooks** (`carve/hooks.toml`) — pre/post-tool + lifecycle automation/policy.
+4. **MCP (consume)** — register external servers; their tools enter the registry namespaced + effects-tagged.
 
 ## Out of scope
 
-- The **harness core** (loop, subagents, tools, permissions) — [v0.1-15](./15-agent-harness.md).
-- The **specific built-in agents/skills** (DLT/pipeline/explorer/recovery/SQL) — their own specs; this spec ships the *format + loaders* they use.
-- **Carve-exposes-MCP** (stdio/WebSocket server) — [v0.1-10](./10-mcp-server.md).
-- **In-process custom-skill SDK** (`@skill`-decorated Python from users) and **custom step-type SDK** — post-v0.1 (the MCP + SKILL.md paths cover v0.1 extensibility).
+- The **harness core** (loop, gate, subagents, tools) — [v0.1-15](./15-agent-harness.md). This spec defines the *format + loaders* + the hook *config*; spec 15 owns the gate, the tool-set intersection, and the hook fire-points.
+- **Carve-exposes-MCP** (server) — [v0.1-10](./10-mcp-server.md).
+- **In-process custom-skill SDK** (`@skill`-decorated Python from users) + **custom step-type SDK** — post-v0.1.
 
 ## Files this spec produces
 
 ```
-src/carve/core/agents/definition.py          # NEW — parse an agent markdown file: frontmatter (name/description/model/tools/allowed_paths/classifications) + system-prompt body
-src/carve/core/agents/registry.py             # NEW — AgentRegistry: discover built-in + carve/agents/*.md agents; hot-reload (mtime); name override; routing lookup
-src/carve/core/skills/pack.py                 # NEW — SkillPack loader: parse carve/skills/<name>/SKILL.md (frontmatter + body + bundled scripts/resources); progressive disclosure by description-match
-src/carve/core/skills/registry.py             # MODIFY — register built-in @skill functions + SkillPacks + the connector library (src/carve/sources/* exposed as packs) + MCP-imported tools
-src/carve/core/agents/hooks.py                # NEW — Hook config (carve/hooks.toml), event set (pre_tool/post_tool/on_run_failed/pre_deploy/post_build), runner (ordered, fail-policy)
-src/carve/core/mcp/client.py                  # NEW — connect to an external MCP server; import its tools as namespaced skills (mcp:<server>:<tool>) with effects metadata
-src/carve/core/mcp/registry.py                # NEW — carve/mcp.toml: registered external MCP servers
-src/carve/cli/agents.py                       # NEW — carve agents list/show/create/edit/test
-src/carve/cli/skills.py                       # NEW — carve skills list/show/test
-src/carve/cli/mcp_servers.py                  # NEW — carve mcp-servers list/add/remove
-templates/agent.md.j2                         # NEW — `carve agents create` scaffold
-src/carve/sources/_reference_hackernews/SKILL.md  # NEW — the reference connector, now expressed as a skill pack (proves connector==skill)
-tests/unit/test_agent_definition.py           # NEW
-tests/unit/test_agent_registry_override.py    # NEW
-tests/unit/test_skill_pack_discovery.py       # NEW
-tests/unit/test_hooks.py                      # NEW
-tests/integration/test_mcp_import.py          # NEW
-docs/extending-carve.md                       # NEW — author an agent, a skill pack, a hook; register an MCP server
+src/carve/core/agents/builtin/                # NEW (dir) — the built-in agent source dir the registry scans (each domain spec adds its own <name>.md here: dlt-engineer, dlt-qa, dlt-security, pipeline-engineer, explorer, recovery-engineer, sql-specialist)
+src/carve/core/agents/definition.py           # NEW — parse an agent .md: frontmatter (name/description/model/tools/allowed_paths/classifications/max_mode) + system-prompt body, via a SAFE yaml loader
+src/carve/core/agents/registry.py             # NEW — AgentRegistry: discover built-in + carve/agents/*.md; mtime hot-reload AT DISPATCH TIME only; name override (no silent overwrite); routing lookup
+src/carve/core/skills/pack.py                 # NEW — SkillPack loader: parse carve/skills/<name>/SKILL.md (frontmatter + body + bundled scripts/resources, NOT executed at load); description-match discovery
+src/carve/core/skills/builtin/__init__.py     # MODIFY — register built-in @skill functions (catalog + dbt_manifest + memory_read readers) here (this is where shipped registration lives — NOT registry.py)
+src/carve/core/skills/registry.py             # MODIFY — add the SkillPack + MCP-tool registration paths + connector-library loader to the registry API (built-in @skill registration stays in builtin/__init__.py)
+src/carve/core/agents/hooks.py                # NEW — Hook config (carve/hooks.toml), event set, runner (ordered; fail-closed); wires to spec-15 fire-points + the spec-07 event subscriber
+src/carve/core/mcp/client.py                  # NEW — connect to an external MCP server; import tools as mcp:<server>:<tool> with effects metadata (fail-closed default)
+src/carve/core/mcp/registry.py                # NEW — carve/mcp.toml
+src/carve/cli/agents.py                        # NEW — carve agents list/show/create/edit/test
+src/carve/cli/skills.py                        # NEW — carve skills list/show/test
+src/carve/cli/mcp_servers.py                   # NEW — carve mcp-servers list/add/remove
+templates/agent.md.j2                          # NEW — carve agents create scaffold
+tests/fixtures/skill_packs/_example/SKILL.md   # NEW — self-contained fixture pack for the discovery test (NOT dependent on spec 04's _reference_hackernews)
+tests/unit/test_agent_definition.py            # NEW
+tests/unit/test_agent_registry_override.py     # NEW
+tests/unit/test_skill_pack_discovery.py        # NEW
+tests/unit/test_hooks.py                        # NEW
+tests/integration/test_mcp_import.py            # NEW
+docs/extending-carve.md                         # NEW
 ```
 
 ## Behavior
 
-### Declarative agents (`carve/agents/<name>.md`)
+### Declarative agents
 
 ```markdown
 ---
 name: dlt-engineer
 description: Authors and runs dlt sources/pipelines into a named dlt component. Use for ingest / extract-load goals.
-model: claude-{LATEST_SONNET} # optional; falls back to the install default. Enables per-agent model tiering.
-tools: [edit, bash, grep, glob, web_fetch, dlt_library, schema_introspect, sql]   # base tools (spec 15) + skills (this spec)
-allowed_paths: ["el/**", ".dlt/*.template"]   # write scope enforced by the permission gate (spec 15)
+model: claude-{LATEST_SONNET}      # optional; per-agent tiering; falls back to the install default
+tools: [edit, create_file, bash, grep, glob, web_fetch, dlt_library, sql]   # base tools (spec 15) + skills (this spec)
+allowed_paths: ["el/**", ".dlt/*.template"]
+max_mode: build                    # the highest permission mode this agent ever needs (advisory lint input + clamp; the runtime gate is authoritative)
 classifications: [new_pipeline, modify_pipeline, refactor_to_incremental]
 ---
 <system prompt body…>
 ```
 
-- **`AgentRegistry`** discovers built-in agents (shipped as the same markdown format, under `src/carve/core/agents/builtin/*.md`) plus user agents under `carve/agents/*.md`. A user file **overrides** a built-in of the same name (clear precedence; surfaced by `carve agents show`).
-- **Hot-reload:** mtime-watched; the next invocation re-reads a changed file (no `carve serve` restart) — per ARCHITECTURE §5.6.
-- **Routing:** the orchestrator matches a goal's classification against each agent's `classifications` (and `description` for fuzzier matches) to pick the subagent to `delegate` to (spec 15). This replaces the hardcoded `AGENT_REGISTRY` dict.
-- **Tool grants are validated against the permission mode** (spec 15): an agent can only be granted tools the active mode permits; an over-broad grant is rejected at load with a clear error.
-- **`carve agents create <name> [--template <existing>]`** scaffolds a new agent file (optionally cloning a built-in).
+- **Discovery roots:** built-ins at `src/carve/core/agents/builtin/*.md`; user agents at `carve/agents/*.md` (`PathsConfig.agents_dir`). A user file **overrides** a built-in of the same name — surfaced by `carve agents show`, with a **no-silent-overwrite** load discipline (mirroring the shipped `skills/registry.py` collision handling): a duplicate within the same root is an error, a user-over-builtin override is logged.
+- **Hot-reload at dispatch time only:** the registry re-reads a changed file when the orchestrator is about to `delegate` (build a SubagentRunner) — **never mid-conversation** — using spec 06's `(mtime, parsed)` cache. No `carve serve` restart.
+- **Loading is inert:** frontmatter is parsed with a **safe** loader (no arbitrary object construction); bundled scripts/resources are **never executed at load** (only later, if the agent invokes them via gated `bash`); a malformed/oversized file **fails the load** with a clear error rather than partially registering.
+- **Routing:** the orchestrator matches a goal's classification against each agent's `classifications` (+ `description`) to pick the subagent to `delegate` to. Replaces the hardcoded `AGENT_REGISTRY` dict (`agents/__init__.py`).
+- **`max_mode` is advisory:** a load-time **lint** warns if an agent grants a tool its `max_mode` could never use (e.g. `bash` with `max_mode: read_only`). It is **not** a security boundary — the runtime gate (spec 15) attenuates `runtime tools = grant ∩ mode-permitted` on every call, and a user override file cannot raise the effective mode or escape `allowed_paths`.
+- **`carve agents create <name> [--template <existing>]`** scaffolds a new agent file.
 
-### Skill packs (`carve/skills/<name>/SKILL.md`)
+### Skill packs
 
 ```markdown
 ---
@@ -80,12 +85,13 @@ expects_env: [STRIPE_API_KEY]
 <instructions: how to use the bundled dlt source, validation glue, conventions>
 ```
 
-- A **SkillPack** is a folder: `SKILL.md` (frontmatter + instructions) + optional `scripts/` and `resources/` (e.g. the dlt source code, a validation helper). Loaded by **description-match** (progressive disclosure) — the agent sees only the packs relevant to its task, keeping context small.
-- **The connector library is a skill library:** `src/carve/sources/<name>/` ships as skill packs; the EL agent's "copy a curated source" becomes "apply the `<name>` skill pack." The `_reference_hackernews` source is re-expressed as a `SKILL.md` to prove the model.
-- Built-in `@skill`-decorated functions (the shipped catalog skills — `list_tables`, `describe_table`, etc.) remain first-class in the same registry; SkillPacks and MCP tools join them.
-- **`carve skills list/show/test`** surfaces the catalog (built-ins + packs + MCP), incl. which agent/pack provides each.
+- A **SkillPack** is a folder: `SKILL.md` (frontmatter + instructions) + optional `scripts/`/`resources/` (e.g. the dlt source code). It surfaces as **description-matched content injected into the agent's context** (the shipped `lookup_skill` progressive-disclosure pattern) — **not** as a callable tool — keeping context small and avoiding the loop's flat tool/skill namespace.
+- **The connector library is a skill library:** `src/carve/sources/<name>/` ships as skill packs; "copy a curated source" = apply the pack. *(The real `_reference_hackernews` is created by spec 04; this spec's discovery test uses a self-contained `tests/fixtures/skill_packs/_example/` pack so it's verifiable at 16's build time.)*
+- **Built-in callable skills** stay first-class `@skill` functions registered in `skills/builtin/__init__.py`: the shipped catalog skills + the readers the explorer needs — `dbt_manifest` (manifest queries) and `memory_read` (the spec-06 loader). *(The lineage graph + `lineage`/`downstream_of` skills are a larger artifact with no v0.1 owner yet — flagged as a dependency for a dedicated lineage spec; the v0.1 explorer ships with `dbt_manifest` + `memory_read` + `grep` + the `sql` tool, lineage deferred.)*
+- **Namespace:** callable tools (base tools + `@skill` functions + `mcp:<server>:<tool>`) share the one namespace the loop guards (`loop.py` raises on collision). MCP names are namespaced (`mcp:`) so they can't collide; SkillPacks are content (not in the tool namespace); a user agent granting a name that's both a base tool and a pack resolves to the base tool (logged).
+- **`carve skills list/show/test`** surfaces the catalog (built-ins + packs + MCP), with the provider of each.
 
-### Hooks (`carve/hooks.toml`)
+### Hooks
 
 ```toml
 [[hook]]
@@ -93,47 +99,50 @@ on = "pre_tool"; match = { tool = "bash", command = "git commit*" }
 run = "sqlfluff lint --dialect snowflake {changed_sql}"   # non-zero exit blocks the tool call
 
 [[hook]]
-on = "on_run_failed"; run = "notify-slack {pipeline} {error}"
+on = "on_run_failed"; run = "notify-slack {pipeline} {error}"   # subscribes to spec 07's run.failed event
 
 [[hook]]
-on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that violate a team policy
+on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that violate a policy
 ```
 
-- **Events:** `pre_tool` / `post_tool` (gate or react to a tool call), `pre_deploy` / `post_build`, `on_run_failed` (and the other runtime events from spec 07). Ordered; a `pre_*`/`pre_tool` hook with a non-zero exit **blocks** the action (policy enforcement without forking).
-- Hooks run via `bash` (spec 15) under the same sandbox; they are the user's escape hatch for policy + automation.
+- **Events + emission points:**
+  - `pre_tool` / `post_tool` — fire at the loop's tool-execution seam ([spec 15](./15-agent-harness.md)), **after** the permission gate admits the call (so a `pre_tool` hook can only further-restrict, never enable a denied call).
+  - `pre_deploy` — emitted by `carve deploy` ([spec 14](./14-deploy-pr.md)) before promotion.
+  - `post_build` — emitted by `carve build` ([spec 08](./08-multi-step-pipeline.md)) after materialization.
+  - `on_run_failed` — a **subscriber on spec 07's `run.failed` event** (reconciles the naming; the runtime fires `run.failed` from the async worker, the hook runner subscribes via the events table).
+- **Hook execution is itself gated + clamped:** a hook command runs via the **same `bash` gate** (no bypass — same metachar-deny/allowlist/scrubbed-env/sandbox) and is **mode-clamped** (no network/git in `read_only`). A `pre_*` hook does **not** re-enter the `pre_tool` pipeline (no recursion). A hook that errors/times out is **fail-closed** (blocks the action), matching the gate.
 
 ### MCP (consume)
 
-- `carve mcp-servers add <name> --command "<stdio cmd>"` (or URL) registers an external MCP server in `carve/mcp.toml`. `src/carve/core/mcp/client.py` connects, lists the server's tools, and imports them into the skill registry **namespaced** as `mcp:<server>:<tool>`, carrying each tool's `effects` metadata (e.g. `writes=true`) so the permission gate and the `ask` no-write guardrail (spec 12) can reason about them.
-- An agent grants MCP tools the same way it grants any skill (`tools: [..., "mcp:jira:*"]`).
+- `carve mcp-servers add <name> --command "<stdio cmd>"` (or URL) registers a server in `carve/mcp.toml`; `mcp/client.py` imports its tools as `mcp:<server>:<tool>`, carrying each tool's `effects` metadata.
+- **Fail-closed default:** an imported MCP tool with **no/incomplete `effects`** is treated as **`writes=true`** — denied in `read_only`/`plan`, prompted in `build`/`deploy`. (So the `ask`/explorer no-write guarantee holds even for a sloppy or malicious server.)
+- An agent grants MCP tools like any skill (`tools: [..., "mcp:jira:*"]`).
 
 ## Tests
 
-- **Unit (agent definition):** a markdown agent parses (frontmatter + body); a malformed file raises a clear error; an over-broad `tools` grant for the mode is rejected.
-- **Unit (registry override):** a `carve/agents/dlt-engineer.md` overrides the built-in of the same name; `carve agents show` reports the override; hot-reload picks up a changed file.
-- **Unit (skill pack discovery):** a `SKILL.md` pack loads and is offered to an agent on a description-match; the `_reference_hackernews` connector loads as a pack.
-- **Unit (hooks):** a `pre_tool` hook with non-zero exit blocks the tool call; `on_run_failed` fires on a failed run; ordering respected.
-- **Integration (MCP import):** a fixture MCP server's tools appear namespaced in the registry with effects metadata; an agent can call one; a `writes=true` MCP tool is blocked in `read_only`/`ask`.
+- **Unit (agent definition):** a markdown agent parses (safe loader); a malformed/oversized file fails the load; a duplicate-name within a root errors, a user-over-builtin override is logged.
+- **Unit (registry override + reload):** a user `dlt-engineer.md` overrides the built-in; hot-reload picks up a changed file **at dispatch**, not mid-conversation.
+- **Unit (skill pack):** the self-contained fixture pack loads and is offered on a description-match; bundled scripts are **not** executed at load.
+- **Unit (hooks):** a `pre_tool` hook with non-zero exit blocks the call; it fires **after** the gate; a hook that errors is fail-closed; a hook command with `$()`/`;` is denied by the bash gate.
+- **Integration (MCP):** a fixture server's tools appear namespaced + effects-tagged; a tool **omitting effects** is treated as `writes=true` and denied in `read_only`.
 
 ## Acceptance
 
-- A user drops `carve/agents/my-agent.md` and it is immediately routable (hot-reload), overriding a built-in by name.
-- A `carve/skills/<name>/SKILL.md` pack is discovered and applied on a relevant task; the curated connector library is loaded as skill packs (connector == skill).
-- A `pre_deploy` hook can block a deploy; an `on_run_failed` hook fires.
-- A registered MCP server's tools are usable by agents, namespaced and effects-tagged; the permission gate honors the effects.
-- `carve agents/skills/mcp-servers` CLI list/show/create/test work; `carve agents create` scaffolds a working agent.
+- A user drops `carve/agents/my-agent.md` and it is routable (dispatch-time hot-reload), overriding a built-in by name — but cannot raise its effective mode or escape `allowed_paths` (the gate clamps it).
+- A `SKILL.md` pack (the fixture) is discovered and applied; loading any agent/pack is side-effect-free.
+- A `pre_deploy` hook can block a deploy; `pre_tool` hooks run after the gate and can only further-restrict; a hook itself passes the bash gate.
+- An MCP tool with missing effects is treated as a writer (denied in `read_only`); namespaced MCP tools don't collide with the base namespace.
+- `carve agents/skills/mcp-servers` CLI work; `carve agents create` scaffolds a working agent.
 
 ## Design notes
 
-- **Why declarative (markdown frontmatter)?** It is *the* extensibility unlock and it resolves the built-vs-spec drift: agents stop being hardcoded Python and become files anyone can author, version, and share — exactly the Claude Code subagent/skill model. Human-readable, diffable, hot-reloadable.
-- **Why unify connectors + skills?** A curated connector and a user skill are the same shape (a capability pack with instructions + resources). One model means the community library, the built-in catalog, and bring-your-own all flow through one loader — and the connector library stops being a special case.
-- **Why hooks?** Teams need to inject policy/automation (linting, schema guards, notifications) without forking Carve. A `pre_*` hook that can block is policy-as-config.
-- **Why MCP both directions?** Consume = bring your tools (catalog, Jira, internal APIs); expose (spec 10) = drive Carve from Claude Desktop/Cursor. Standard, no bespoke plugin protocol.
-- **Tool grants validated against the permission mode** keeps extensibility safe: a user agent can't grant itself `bash`-in-`read_only`.
+- **Why grants are runtime attenuation, not a load-time boundary?** The active mode is per-invocation (spec 15), and a user file overrides built-ins — so "reject an over-broad grant at load" can neither know the mode nor be a boundary. The runtime gate (`runtime tools = grant ∩ mode-permitted`) is the airtight surface; `max_mode` is a helpful lint, not the control.
+- **Why fail-closed MCP/load defaults?** A missing-`effects` MCP tool defaulting permissive would slip a writer past `read_only`; auto-running a pack's bundled scripts at load would be RCE-on-discovery. Both default to the safe side.
+- **Why SkillPacks as content, not callable tools?** The loop guards a flat tool/skill namespace and raises on collision; packs as description-matched content (the shipped `lookup_skill` pattern) keep the namespace clean and context small, and unify connectors + skills.
+- **Why hooks pass the same gate + are fail-closed?** A `pre_tool` hook runs on every call and runs arbitrary `bash`; without the same gate it'd be an escalation. Fail-closed-on-error matches the gate's stance.
 
 ## Open questions
 
-- **Skill-pack discovery at scale.** *Implementation default.* Description-match is fine for tens of packs; an embedding index is post-v0.1 if the library grows large (consistent with the deferred embedding-search note).
-- **Hook sandboxing + trust.** *Strategy-required.* Hooks run arbitrary commands (`bash`); for v0.1 they run under the same sandbox as agent bash and are repo-committed (so they're code-reviewed). Confirm whether unsigned/third-party hooks need an extra gate.
-- **Agent-override precedence + namespacing.** *Implementation default.* User `carve/agents/*` overrides built-ins by name; a future namespacing scheme (org/team packs) is post-v0.1.
-- **In-process custom-skill SDK.** *Deferred.* v0.1 ships SKILL.md packs + MCP; the `@skill`-decorated-Python-from-users SDK (with sandboxing/versioning) is post-v0.1.
+- **Lineage graph owner.** *Strategy-required.* The lineage skills + `lineage_nodes`/`lineage_edges` (ARCHITECTURE §6.2) have no v0.1 spec; the explorer ships without them in v0.1 (manifest + memory + grep). File a dedicated lineage spec, or fold into a skills spec, before the explorer's lineage features ship.
+- **Skill-pack discovery at scale.** *Implementation default.* Description-match for tens of packs; an embedding index is post-v0.1.
+- **Org/team agent namespacing.** *Implementation default.* User-overrides-builtin by name in v0.1; richer namespacing post-v0.1.
