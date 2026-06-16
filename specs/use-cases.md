@@ -81,7 +81,7 @@ Two operational shapes underlie every use case below:
 19. **Orchestrator:** Invokes `carve run salesforce --target dev`. Worker (local or in-process) shells out to `dlt pipeline run salesforce`. Rows land in `dev_db.raw_sfdc.{accounts, contacts, opportunities}`.
 20. **Analyst:** Inspects rows directly in Snowflake or via `carve runs show <run_id>` for log/metrics output.
 21. **Analyst:** "Ship it."
-22. **Orchestrator:** Invokes `carve deploy salesforce`. Creates a feature branch, commits the new files + `sources.yml` patch + `.env.example` update, pushes, opens a PR via GitHub MCP.
+22. **Orchestrator:** Invokes `carve deploy salesforce`. Creates a feature branch, commits the new files + `sources.yml` patch + `.env.example` update, pushes, opens a PR via the configured deploy `pr_command` (default mechanism per [v0.1-14](v0.1/14-deploy-pr.md); `handoff = pr`).
 23. **Human reviewer (could be analyst, could be data engineer):** Reviews PR. CI runs `dlt pipeline check`, `dbt parse`, lints. PR is merged to `main`.
 24. **CI workflow on merge to main:** Builds and deploys the new code to the central `carve serve` (e.g., `kubectl rollout restart`, `docker compose pull && up -d`, or `systemctl restart carve`). Recommended template ships with `carve init`.
 25. **Prod `carve serve`:** Boots with the updated code. Scheduler reads `pipelines/salesforce.toml`, finds the schedule (default daily or whatever the analyst set), inserts a row into the schedules table.

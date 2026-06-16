@@ -1,4 +1,4 @@
-# Carve — design documents
+    # Carve — design documents
 
 This folder contains the full product and engineering specification for **Carve**, an AI-first open-source framework for data engineering and analytics engineering. It captures the architectural decisions, design choices, and build plan for the project, organized so an engineering team can pick it up and execute.
 
@@ -11,6 +11,8 @@ This folder contains the full product and engineering specification for **Carve*
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the technical architecture deep-dive: components, data flow, extension points, the dev/prod target model, and the boundary between OSS and SaaS.
 
 ### Carve's four product pillars
+
+> ⚠️ **This section is stale.** The pillar ordering/bundling below is the pre-2026-05 sequential model. The authoritative pillar framing is in [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) (P1 Extract&Load, P2 Runtime, P3 Transform, P4 Multi-step; P1+P2+P4 ship in v0.1, P3 in v0.2). The structural model is being revised again per [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) (Carve is a control plane that references components, not a project). This section will be rewritten once that lands.
 
 Carve is structured as four independent-but-composable pillars. Each ships as its own version; later pillars build on earlier ones, but each pillar produces value standalone.
 

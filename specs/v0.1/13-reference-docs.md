@@ -5,7 +5,7 @@
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** all v0.1 specs 01–12. Reference docs derive from the source-of-truth specs; this spec lands last.
+- **Depends on:** all v0.1 functional specs (01–12 and 14). Reference docs derive from the source-of-truth specs; this spec lands last.
 - **Blocks:** nothing (last spec in v0.1)
 
 ## Goal
@@ -64,7 +64,7 @@ A complete, authoritative reference for the `carve` CLI surface. Structure:
 | `carve run <pipeline>`                | Execute a pipeline on demand        | M1.1, [v0.1-07/08](../v0.1/07-runtime.md) |
 | `carve run --watch <pipeline>`        | Run + stream logs until completion  | [v0.1-09](../v0.1/09-rest-api.md) |
 | `carve run --resume <run_id>`         | Resume failed steps from a prior run| [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve deploy <pipeline>`             | Promote dev → prod via PR           | M1.1 |
+| `carve deploy <pipeline>`             | Promote via a configurable handoff (default: PR) | [v0.1-14](../v0.1/14-deploy-pr.md) |
 | `carve serve`                         | Start the API + scheduler + worker(s) | [v0.1-07](../v0.1/07-runtime.md) |
 | `carve worker`                        | Run a standalone worker process     | [v0.1-07](../v0.1/07-runtime.md) |
 | `carve mcp-serve`                     | Start the MCP server                | [v0.1-10](../v0.1/10-mcp-server.md) |

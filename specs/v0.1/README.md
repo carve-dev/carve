@@ -1,6 +1,6 @@
 # Carve v0.1 — spec set
 
-13 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
+14 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
 
 All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per the *Implementation approach* section of `PROJECT_PLAN.md`). Each spec below is one `/build-spec` iteration: dependency check → phase plan → engineer → reviewer fan-out → fix iterations → spec-keeper sync → PR open for review.
 
@@ -23,6 +23,7 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 | 11 | [`11-static-html-ui.md`](./11-static-html-ui.md)                    | Jinja templates regenerated on run completion; `carve docs serve`     | Drafting |
 | 12 | [`12-ask-verb.md`](./12-ask-verb.md)                                | Read-only `carve ask` verb with no-write-skill guardrail              | Drafting |
 | 13 | [`13-reference-docs.md`](./13-reference-docs.md)                    | `cli-reference.md`, `config-schema.md`, `glossary.md`, `governance.md` rewrites | Drafting |
+| 14 | [`14-deploy-pr.md`](./14-deploy-pr.md)                              | `carve deploy <pipeline>`: configurable handoff (files→commit→push→PR), default `pr` | Drafting |
 
 ## Status legend
 
