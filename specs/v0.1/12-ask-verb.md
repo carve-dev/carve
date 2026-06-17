@@ -78,7 +78,7 @@ class CitedEntity:
         "pipeline_toml",           # a pipelines/<name>.toml
         "warehouse_table",
         "memory_file",             # conventions.md, standards.md, decisions.md, or a sidecar
-        "tool_call",               # a specific tool/skill-call row (sql, grep, lineage, …) used to produce this part of the answer
+        "tool_call",               # a specific tool/skill-call row (sql, grep, dbt_manifest, dlt_schema, …) used to produce this part of the answer
     ]
     identifier: str                # e.g., "stripe", "stg_orders", "el/stripe_charges/"
     excerpt: str                   # the relevant slice of content (≤ 500 chars)
@@ -179,7 +179,7 @@ def run_ask(   # sync; the async carve serve / REST layer invokes it in a thread
 Key behaviors:
 
 - **The explorer is its own subagent**, not the orchestrator with a guardrail. `carve ask` (and the orchestrator's `delegate` for read-only questions) runs the `explorer` agent in the **`read_only` permission mode** (spec 15). The mode — not an ask-only mechanism — structurally forbids writes.
-- **Read tools + skills only** (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool on the read role, lineage/manifest/memory skills). There are **no write tools in the grant**, and the permission gate denies any write attempt regardless.
+- **Read tools + skills only** (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool on the read role, the `dbt_manifest`/`dlt_schema`/`memory_read` skills). There are **no write tools in the grant**, and the permission gate denies any write attempt regardless.
 - **Self-gathers context.** Rather than the parent pre-scoping everything, the explorer is handed a small context bundle and reads what it needs within its own isolated window (spec 15 supersedes the manual pre-scoped-context pattern). It does not delegate further — it produces the answer itself.
 - **Output post-processing** turns the explorer's `DelegationResult` (markdown + footnotes) into the `Answer` (markdown + structured `cited_entities`) via `citation_builder.py`.
 
@@ -201,7 +201,7 @@ A built-in **declarative agent** (spec 16 format), shipped at `src/carve/core/ag
 name: explorer
 description: Read-only Q&A about the project — how/where/why, lineage, logic, definitions, tests, "where does this data come from." Use for investigative questions that change nothing.
 model: claude-{LATEST_SONNET}   # per-agent tiering (spec 16); falls back to the install default
-tools: [read_file, grep, glob, web_fetch, sql, dbt_manifest, memory_read, upstream_of, downstream_of, impact_of_change]   # read-only; no edit/bash-write. Lineage skills land in spec 19.
+tools: [read_file, grep, glob, web_fetch, sql, dbt_manifest, dlt_schema, memory_read]   # read-only; no edit/bash-write. Lineage is investigated (dbt_manifest + dlt_schema + grep), not a Carve graph — spec 19.
 allowed_paths: []               # writes nothing
 classifications: [explain, locate, lineage, why_decision, freshness, test_coverage]
 ---
@@ -214,7 +214,7 @@ The system-prompt body has the following structure:
 
 1. **Role** — "You answer the user's question about their project using only read tools. You change nothing."
 2. **Inputs** — what's in the context bundle (memory, project state, target) and that you gather the rest yourself with your read tools.
-3. **Tools** — the read tools/skills available (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool, lineage/manifest/memory skills); an explicit reminder that you are in `read_only` mode so any write is blocked.
+3. **Tools** — the read tools/skills available (`read_file`/`grep`/`glob`/`web_fetch`, the `sql` tool, the `dbt_manifest`/`dlt_schema`/`memory_read` skills); an explicit reminder that you are in `read_only` mode so any write is blocked.
 4. **Answer format** — markdown body + a list of citations (one per claim with non-obvious provenance). Citations are inline as Markdown footnotes `[^1]` with the entity references in a structured tail block the citation_builder parses.
 5. **Style** — concise, factual, no apologies for not being able to do things. If the project doesn't have the information, say so directly: "I couldn't find a decision in `carve/decisions.md` about retention for Stripe."
 6. **Common patterns** — "where do we calculate X?" → `grep` models + cite dbt_model entities; "why did we do X?" → search decisions + cite decision entries; "what's the freshness of Y?" → `sql` introspect the destination (read role) + cite warehouse_table.
@@ -278,7 +278,7 @@ Per spec 06's MemorySelector with `is_investigative=True`:
 - Always: `carve/conventions.md`, `carve/standards.md`, `carve/decisions.md`
 - When `--pipeline X` provided or the question mentions a specific pipeline: `pipelines/X.md`, `pipelines/X.toml`
 - When the question mentions an EL artifact: `el/<name>/NOTES.md`
-- Via its read tools/skills: anything the explorer decides to look up within its own context window — `sql` introspection/reads (read role), dbt-manifest queries, `grep`/`glob` across model files, lineage traversal, `web_fetch` of docs
+- Via its read tools/skills: anything the explorer decides to look up within its own context window — `sql` introspection/reads (read role), dbt-manifest queries, `dlt_schema` (dlt's resource→table), `grep`/`glob` across model files, lineage investigation (correlating these in-context), `web_fetch` of docs
 
 (Memory selection seeds the explorer's context bundle; the explorer then self-gathers the rest, per spec 15's context-isolation model.)
 

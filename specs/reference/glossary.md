@@ -68,7 +68,7 @@ Initializing a new project from scratch (no existing dbt). Carve scaffolds `dbt_
 Configurable rules the orchestration agent enforces before applying changes: approval requirements, cost limits, forbidden operations, schema restrictions. Defined in `carve/guardrails.toml`.
 
 **Lineage**
-The relationship graph between data assets. dbt provides model-level lineage. Carve also tracks pipeline-level lineage (which step produced which artifact).
+The relationship between data assets. dbt provides model-level lineage (its manifest) and dlt maps each resource to the destination table it writes (its stored schema). Carve maintains **no** lineage store of its own — the explorer **investigates** these native sources (plus the code) on demand to answer "where does this come from / what breaks if I change this" ([v0.1-19](../v0.1/19-lineage.md)). Pipeline-level lineage ("which step refreshes which table") falls out of dlt's schema + the pipeline definitions (component-by-name).
 
 **MCP**
 [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic's standard for connecting LLMs to external tools. Carve consumes external MCP servers as namespaced skills (`mcp:server:tool`) and exposes itself as an MCP server.

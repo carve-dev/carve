@@ -20,7 +20,7 @@ Carve is composed of five layers in the OSS, plus a hosted overlay that wraps an
 ┌─────────────────────────────┴────────────────────────────────────┐
 │  Core                                                            │
 │  Agent layer · Plan/Build store · State store (Postgres)         │
-│  Event bus · Skills registry · Conventions · Lineage             │
+│  Event bus · Skills registry · Conventions                       │
 └──────────┬────────────────────────────────────────┬──────────────┘
            │                                        │
 ┌──────────┴─────────────────┐         ┌────────────┴─────────────┐
@@ -74,7 +74,7 @@ The heart of Carve. Carve is a **control plane** that references independently-v
 - **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables include `pipelines`, `schedules`, `schedule_changes`, `tokens`, `plans`, `builds`, `deploys`, `jobs`, `runs`, `step_runs`, `logs`, `workers`, `events`, `workspaces` (full schema in §9). Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7). The store holds the **control plane's** running state — it references components by name (§10.1); it never contains their code.
 - **Event bus** — In-process publish-subscribe in OSS; replaceable by Redis Streams in the hosted product without changing subscribers. Events: `run.queued`, `run.started`, `step.*`, `run.completed`, `agent.invoked`, `skill.called`.
 - **Skills registry** — Catalog of built-in skills (`src/carve/skills/`) plus MCP-imported skills (namespaced `mcp:server:tool`). Each skill declares typed inputs/outputs and a description. Skills receive a `SkillContext` for connections, logging, and event emission.
-- **Conventions + lineage** — Convention inference reads existing dbt projects and writes `carve/conventions.md`. Lineage maintains a graph of dlt-resource → destination-table → dbt-source dependencies; queryable via skills but not yet rendered in the v0.1 static UI.
+- **Conventions + lineage** — Convention inference reads existing dbt projects and writes `carve/conventions.md`. **Lineage is investigated, not stored:** the explorer queries dbt's manifest + dlt's schema + the code on demand ([v0.1-19](v0.1/19-lineage.md)); Carve maintains no lineage graph.
 
 ### 2.3 Runtime
 
@@ -133,8 +133,7 @@ src/carve/
 │   ├── plan/                  # Plan + Build entities and store
 │   ├── state/                 # SQLAlchemy models + repositories
 │   ├── events/                # in-process event bus
-│   ├── config/                # config loader, validation, hash
-│   └── lineage/               # dlt-resource → table → dbt-source graph
+│   └── config/                # config loader, validation, hash
 ├── runtime/                   # scheduler, queue, workers
 │   ├── scheduler.py · job_queue.py · worker.py · heartbeat.py · reaper.py
 │   └── step_types/
@@ -364,7 +363,7 @@ Agents are **declarative** ([spec 16](v0.1/16-extensibility.md)): a markdown fil
 Given a user goal, the orchestrator:
 
 1. **Classifies the goal** — new pipeline, modification, config change, schedule change, etc. Classification determines which skills to call.
-2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage traversal.
+2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage investigation (dbt manifest + dlt schema, [v0.1-19](v0.1/19-lineage.md)).
 3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ dbt engineer in v0.2).
 4. **Hands each a starting bundle** — the goal slice, relevant file contents, conventions, impacted dependencies; the subagent gathers anything else within its own isolated context.
 5. **Generates a structured Plan** — JSON-schema-validated, with task graph, file diffs, cost estimate.
@@ -525,32 +524,21 @@ The agent layer never reads the full warehouse catalog or the full dbt manifest 
 1. **Catalog queries (`INFORMATION_SCHEMA`)** — Cheap, deterministic, exact. Skills like `list_schemas`, `list_tables`, `describe_table`, `table_exists` map to destination `INFORMATION_SCHEMA` queries. Results are facts at query time, cached briefly (default TTL 60s).
 2. **dbt manifest queries** — The dbt project's `target/manifest.json` is the source of truth for dbt structure. Skills like `list_models`, `model_columns`, `model_dependencies`, `tests_on_model` load the manifest (cached by mtime) and answer structured questions.
 3. **File grep** — When an agent needs "where is column `customer_id` referenced," a ripgrep-backed skill (`grep_dbt_models`, `grep_dlt_code`) scans the project tree. Bounded by max match count (default 50) and per-match truncation.
-4. **Lineage traversal** — Carve maintains its own lineage graph (§6.2). Skills like `downstream_of`, `upstream_of`, `impact_of_change` walk it. Results are entity pointers, not full content.
+4. **Lineage investigation** — Carve maintains *no* lineage graph (§6.2). The explorer investigates dbt's manifest (model DAG) + dlt's schema (resource→table, via the `dlt_schema` skill) + the code on demand ([v0.1-19](v0.1/19-lineage.md)), correlating dlt tables to dbt sources by relation name in-context. Results are entity pointers into the native artifacts, not full content.
 5. **Embedding search (post-v0.1)** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
 
 The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. The orchestrator's classification step decides which skills to call.
 
-### 6.2 The lineage graph
+### 6.2 Lineage: investigated, not stored
 
-Lineage is the one Carve-owned piece of retrieval. **Five node types, five edge types** — implemented at table/relation grain in [v0.1-19](v0.1/19-lineage-graph.md):
+Carve maintains **no** lineage graph. dbt's `manifest.json` already *is* model-level lineage (the model/source DAG + tests), and dlt's stored schema already maps each resource to the destination table it writes. The explorer ([v0.1-12](v0.1/12-ask-verb.md)) answers lineage questions — "where does this come from," "what reads this," "what breaks if I change this" — by **investigating those native artifacts on demand** ([v0.1-19](v0.1/19-lineage.md)):
 
-```
-Nodes:
-- dlt:source        — a dlt source in el/<name>/
-- dlt:resource      — a resource inside that source
-- warehouse:table   — a table in the destination
-- dbt:source        — a dbt source in <project>/sources.yml
-- dbt:model         — a dbt model
+- **dbt side** — the `dbt_manifest` skill (model dependencies, sources, tests). dbt owns and maintains this DAG.
+- **dlt side** — the `dlt_schema` skill surfaces dlt's own resource → destination-table schema.
+- **cross-boundary** — the agent correlates a dlt destination table with the dbt source that reads it **by relation name** (confirmable with a `sql` `INFORMATION_SCHEMA` check) in its own context; there is no persisted stitch.
+- **code** — `grep`/`read_file` over `sources.yml`, model SQL, and dlt source code fill the gaps.
 
-Edges:
-- dlt:source ──defines──▶ dlt:resource         (containment)
-- dlt:resource ──produces──▶ warehouse:table
-- warehouse:table ──consumed_by──▶ dbt:source   (stitched on the canonical relation FQN)
-- dbt:source ──consumed_by──▶ dbt:model
-- dbt:model ──consumed_by──▶ dbt:model          (model-to-model deps)
-```
-
-Recomputed on `carve build`, on dbt manifest change, and on project sync in separate-repo mode (transactional full-replace in v0.1). Stored in `lineage_nodes` / `lineage_edges` tables. Queries are bounded BFS walks with depth limit. Column-level lineage and `sql`-step producer edges are deferred to v0.2 (v0.1-19 *Out of scope*).
+Because the explorer runs in an isolated context and returns a cited summary, it pulls the relevant *slice* per question rather than holding a whole graph. This **reverses an earlier design** (a Carve-owned `lineage_nodes`/`lineage_edges` store rebuilt on every build): dbt and dlt already maintain this lineage authoritatively, so Carve uses it rather than duplicating it into derived state that can go stale. Column-level lineage is a v0.2 concern (the agent can read model SQL on demand today).
 
 ### 6.3 Caching and freshness
 
@@ -559,7 +547,6 @@ Recomputed on `carve build`, on dbt manifest change, and on project sync in sepa
 | Catalog queries       | 60 seconds             | Time-based                                  |
 | dbt manifest          | until change           | File mtime watch                            |
 | File grep             | per-invocation         | None — re-runs each agent invocation        |
-| Lineage               | until change           | On build, manifest change, project sync     |
 | Embedding (post-v0.1) | until index rebuild    | Manual `carve embeddings rebuild`           |
 
 In-process cache in the FastAPI server (OSS); Redis-backed in the hosted product so multiple API replicas share.
@@ -568,7 +555,7 @@ In-process cache in the FastAPI server (OSS); Redis-backed in the hosted product
 
 To prevent silent partial context, skills are categorized by retrieval shape, and each category has its own size policy. The agent layer never operates on partially-truncated data without the orchestrator (and ultimately the user) knowing about it.
 
-**Structural / analytical** — queries that return data *about* a specific entity: `describe_table`, `model_dependencies`, `tests_on_model`, `column_lineage`, `pipeline_show`. Results are bounded by the entity's structure (no table has 50KB of column metadata). These skills **never truncate**. If a result would exceed `result_max_chars`, they raise `ResultTooLarge` with the actual size. The orchestrator handles this by refining its query to a narrower entity.
+**Structural / analytical** — queries that return data *about* a specific entity: `describe_table`, `model_dependencies`, `tests_on_model`, `dlt_schema`, `pipeline_show`. Results are bounded by the entity's structure (no table has 50KB of column metadata). These skills **never truncate**. If a result would exceed `result_max_chars`, they raise `ResultTooLarge` with the actual size. The orchestrator handles this by refining its query to a narrower entity.
 
 **Discovery** — queries that enumerate entities: `list_tables`, `list_models`, `list_pipelines`, `list_dlt_pipelines`. Results scale with project size, not entity structure. These skills are paginated: return one page (default 100 items) plus a continuation token. Agents that need more pages call the skill again with the token. The orchestrator walks pages as needed; specialist agents don't see continuation tokens — they get a fully-resolved list from pre-scoped context.
 
@@ -595,9 +582,9 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 **Inputs**: question string, optional `--pipeline <name>` for pipeline-scoped questions, optional `--target <name>` for target-scoped queries.
 
-**Outputs**: `Ask` row in the state store with question, answer (markdown), cited entities (lineage node references), and skill-call trace. JSON file at `.carve/asks/<ask_id>.json` for durability. The CLI prints the answer plus a one-line citation summary; REST returns the structured response.
+**Outputs**: `Ask` row in the state store with question, answer (markdown), cited entities (references into dbt/dlt native lineage + files), and skill-call trace. JSON file at `.carve/asks/<ask_id>.json` for durability. The CLI prints the answer plus a one-line citation summary; REST returns the structured response.
 
-**Side effects**: reads project files; may call external read skills (catalog queries, dbt manifest, grep, lineage, MCP servers). **No writes anywhere** — no files modified, no destination warehouse touched, no state-machine transitions on pipelines, no jobs queued.
+**Side effects**: reads project files; may call external read skills (catalog queries, dbt manifest, dlt schema, grep, MCP servers). **No writes anywhere** — no files modified, no destination warehouse touched, no state-machine transitions on pipelines, no jobs queued.
 
 **Implementation**: same orchestration agent as `plan`, with a different system prompt and a guardrail block that forbids any code-write skill (`write_file`, `git_*`, `pipeline_create`, `agent_create`, etc.). The orchestrator gathers context as usual, then synthesizes a markdown answer + a list of cited entities instead of a Plan.
 
@@ -642,7 +629,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 **Inputs**: pipeline name, target (default = project default), optional `--resume <run_id>` for re-running failed steps.
 
-**Outputs**: `Run` row with status/timing/cost/per-step status; `step_runs` rows; `logs` rows streamed during execution; updated lineage graph if any step emitted lineage events.
+**Outputs**: `Run` row with status/timing/cost/per-step status; `step_runs` rows; `logs` rows streamed during execution. (No lineage graph is maintained — lineage is investigated on demand, §6.2.)
 
 **Side effects**: reads current build's manifest; invokes step executors (`dlt`, `dbt`, `sql`) which call external systems (destination warehouse, dlt subprocess, dbt subprocess); **may modify the destination warehouse** — this is the actual data movement; emits structured logs, events, webhook payloads; updates the `jobs` table (queued → claimed → running → succeeded|failed).
 
@@ -795,10 +782,7 @@ Per [v0.1-14](v0.1/14-deploy-pr.md): **one row per touched repo.** `component` =
 
 ### 9.6 Lineage
 
-Owned by [v0.1-19](v0.1/19-lineage-graph.md); rebuilt transactionally (full-replace) on build / manifest-change / sync.
-
-- `lineage_nodes(id PK, kind, fqn, label, attributes JSONB, tenant_id)` — `kind ∈ {dlt:source, dlt:resource, warehouse:table, dbt:source, dbt:model}`; `fqn` is the canonical per-kind identity (the relation FQN for `warehouse:table`, the manifest `unique_id` for dbt nodes); `UNIQUE (kind, fqn, tenant_id)`.
-- `lineage_edges(from_id FK, to_id FK, edge_type, attributes JSONB, created_at, tenant_id)` — `edge_type ∈ {defines, produces, consumed_by}`, directed producer→consumer; indexed both directions for BFS (`(from_id)`, `(to_id)`).
+**No tables.** Lineage is **investigated on demand, not stored** ([v0.1-19](v0.1/19-lineage.md)): the explorer reads dbt's manifest + dlt's schema (via the `dlt_schema` skill) + the code. Carve maintains no `lineage_nodes`/`lineage_edges` graph.
 
 ### 9.7 Events and webhooks
 

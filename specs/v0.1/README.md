@@ -30,7 +30,7 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 | 16 | [`16-extensibility.md`](./16-extensibility.md)                      | **AI foundation** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`; connector→skill library), hooks, MCP import | Drafting |
 | 17 | [`17-recovery-engineer.md`](./17-recovery-engineer.md)              | Recovery: diagnose-then-delegate; dlt-exception classification; `Investigation` entity; auto-pause/resume | Drafting |
 | 18 | [`18-sql-layer.md`](./18-sql-layer.md)                              | SQL: dialect-aware tool layer (sqlglot + per-dialect introspect + role-gated exec) + thin specialist; Snowflake + DuckDB first-class | Drafting |
-| 19 | [`19-lineage-graph.md`](./19-lineage-graph.md)                      | Lineage: Carve-owned asset graph (dlt→table→dbt) + `upstream_of`/`downstream_of`/`impact_of_change` skills wired into the explorer; table grain (column-level / `sql`-step → v0.2) | Drafting |
+| 19 | [`19-lineage.md`](./19-lineage.md)                                  | Lineage: investigate dbt (manifest) + dlt (schema) native lineage on demand — **no Carve store**; adds the `dlt_schema` reader skill for the explorer | Drafting |
 
 ## Status legend
 

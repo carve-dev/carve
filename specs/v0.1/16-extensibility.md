@@ -87,7 +87,7 @@ expects_env: [STRIPE_API_KEY]
 
 - A **SkillPack** is a folder: `SKILL.md` (frontmatter + instructions) + optional `scripts/`/`resources/` (e.g. the dlt source code). It surfaces as **description-matched content injected into the agent's context** (the shipped `lookup_skill` progressive-disclosure pattern) — **not** as a callable tool — keeping context small and avoiding the loop's flat tool/skill namespace.
 - **The connector library is a skill library:** `src/carve/sources/<name>/` ships as skill packs; "copy a curated source" = apply the pack. *(The real `_reference_hackernews` is created by spec 04; this spec's discovery test uses a self-contained `tests/fixtures/skill_packs/_example/` pack so it's verifiable at 16's build time.)*
-- **Built-in callable skills** stay first-class `@skill` functions registered in `skills/builtin/__init__.py`: the shipped catalog skills + the readers the explorer needs — `dbt_manifest` (manifest queries) and `memory_read` (the spec-06 loader). *(The lineage graph + the `upstream_of`/`downstream_of`/`impact_of_change` skills are owned by [v0.1-19](./19-lineage-graph.md); the explorer gains them there. Column-level/`sql`-step lineage remain v0.2.)*
+- **Built-in callable skills** stay first-class `@skill` functions registered in `skills/builtin/__init__.py`: the shipped catalog skills + the readers the explorer needs — `dbt_manifest` (manifest queries), `dlt_schema` (dlt's stored resource→table schema, [v0.1-19](./19-lineage.md)), and `memory_read` (the spec-06 loader). *(There is no lineage graph or `upstream_of`/`downstream_of` skill family — lineage is investigated on demand via `dbt_manifest` + `dlt_schema` + `grep`; see [v0.1-19](./19-lineage.md).)*
 - **Namespace:** callable tools (base tools + `@skill` functions + `mcp:<server>:<tool>`) share the one namespace the loop guards (`loop.py` raises on collision). MCP names are namespaced (`mcp:`) so they can't collide; SkillPacks are content (not in the tool namespace); a user agent granting a name that's both a base tool and a pack resolves to the base tool (logged).
 - **`carve skills list/show/test`** surfaces the catalog (built-ins + packs + MCP), with the provider of each.
 
@@ -143,6 +143,6 @@ on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that v
 
 ## Open questions
 
-- **Lineage graph owner.** *Resolved.* The lineage skills + `lineage_nodes`/`lineage_edges` (ARCHITECTURE §6.2) are owned by [v0.1-19](./19-lineage-graph.md) — the asset graph at table grain + `upstream_of`/`downstream_of`/`impact_of_change`, wired into the explorer. Column-level and `sql`-step lineage are deferred to v0.2 there.
+- **Lineage graph owner.** *Resolved — no graph.* Carve maintains no `lineage_nodes`/`lineage_edges` store (the original ARCHITECTURE §6.2 graph is retired). [v0.1-19](./19-lineage.md) reframes lineage as **investigation**: the explorer reads dbt's manifest + dlt's schema (the new `dlt_schema` skill) + the code on demand. Column-level lineage is a v0.2 concern.
 - **Skill-pack discovery at scale.** *Implementation default.* Description-match for tens of packs; an embedding index is post-v0.1.
 - **Org/team agent namespacing.** *Implementation default.* User-overrides-builtin by name in v0.1; richer namespacing post-v0.1.
