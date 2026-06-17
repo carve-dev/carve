@@ -140,7 +140,7 @@ The authoritative reference for every config file Carve reads or writes. Structu
 | `carve/conventions.md` | Inferred conventions | Carve-generated (refreshable) | [v0.1-06](../v0.1/06-project-memory.md) |
 | `carve/standards.md` | Team standards (user-authored) | User-editable | [v0.1-06](../v0.1/06-project-memory.md) |
 | `carve/decisions.md` | Append-only decision log | User-authored | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve/agents/*.toml` | Agent definitions (built-in overrides + custom) | User-editable | M1, [v0.1-04](../v0.1/04-el-agent-dlt.md) |
+| `carve/agents/*.md` | Agent definitions (markdown + YAML frontmatter; built-in overrides + custom) | User-editable | [v0.1-16](../v0.1/16-extensibility.md) |
 | `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
 | `pipelines/<name>.md` | Per-pipeline notes (optional) | User-authored | [v0.1-06](../v0.1/06-project-memory.md) |
 | `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below provenance header) | [v0.1-04](../v0.1/04-el-agent-dlt.md) |
@@ -192,7 +192,7 @@ Alphabetical terms with one-paragraph definitions. Revise from the existing vers
 - **Reaper** — The runtime loop that reclaims jobs from crashed workers via stale-heartbeat detection. See [v0.1-07](../v0.1/07-runtime.md).
 - **Repo topology** — Same-repo vs separate-local vs separate-remote configuration of dbt and dlt projects. Per-backend, independent.
 - **Runtime** — Carve's scheduler + job queue + worker pool. The deliberately-narrow execution layer. See [v0.1-07](../v0.1/07-runtime.md).
-- **Specialist agent** — A role-scoped agent that handles one domain (extract-load, dbt, runtime). Receives pre-scoped context from the orchestrator. See [ARCHITECTURE §5.1](../ARCHITECTURE.md).
+- **Subagent** — A specialist the orchestrator delegates a scoped task to, running in its own isolated context and returning a summary (e.g., the DLT engineer, pipeline engineer, recovery engineer, explorer). See [v0.1-15](../v0.1/15-agent-harness.md). (Built-in agents now ship as markdown definitions, [v0.1-16](../v0.1/16-extensibility.md) — the old "Specialist agent (TOML)" framing is retired.)
 - **Static HTML UI** — Carve's minimal local web UI: pages regenerated per event, served by `carve docs serve`. See [v0.1-11](../v0.1/11-static-html-ui.md).
 - **Worker** — A process that claims jobs from the queue and executes them. See [v0.1-07](../v0.1/07-runtime.md).
 

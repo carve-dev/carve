@@ -202,13 +202,13 @@ The goal is not to lock in users or contributors — it's to build something dur
 
 ## Sustainability
 
-Carve is initially funded by a sponsoring company that intends to build a hosted offering. The OSS core remains complete and self-hostable; commercial features are additive (managed runner, RBAC, audit logs, dedicated support).
+Carve is initially funded by a sponsoring company that intends to build a hosted offering. The OSS core remains complete and self-hostable; commercial features are additive (managed infrastructure, multi-tenancy, RBAC, audit log, the polished cloud UI, premium integrations).
 
 The line between OSS and commercial is committed in writing in `OSS_COMMITMENT.md`:
-- Authoring (CLI, agents, skills, dbt integration, runner abstraction): always OSS
-- Single-tenant execution (LocalVenvRunner, basic Docker): always OSS
-- Managed/multi-tenant execution: commercial
-- Enterprise auth and audit: commercial
+- Authoring (the AI harness, CLI, agents, skills, the dlt/dbt/sql component model, the REST + MCP surfaces): always OSS
+- Single-team self-hosted execution (the scheduler + worker runtime, the Postgres state store, the local static UI): always OSS
+- Managed / multi-tenant execution: commercial
+- Enterprise auth (SSO/OAuth/RBAC) and audit log: commercial
 - Anything that ships in `0.1` is forever OSS
 
 This protects against the "open-core bait and switch" pattern, where features are moved from OSS to commercial after adoption.

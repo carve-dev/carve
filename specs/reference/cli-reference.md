@@ -1,381 +1,300 @@
 # Reference — CLI
 
-Every Carve command, in alphabetical order within each group. Output of `carve --help` is auto-generated from this same source via typer.
+The authoritative reference for the `carve` command surface in v0.1. For programmatic / agent consumption, prefer the auto-generated OpenAPI schema (`GET /api/openapi.json`, spec 09) or the MCP tool listing (`tools/list`, spec 10) — the CLI, REST, and MCP surfaces are kept at parity.
+
+> **Status:** matches the v0.1 spec set. A few commands are marked **(planned)** — referenced by the quick-reference or an upstream spec but without a defining body yet; they are called out inline. The completeness test (spec 13) asserts every Typer-registered command appears here once the CLI is built.
 
 ## Global flags
 
-Available on every command.
+Available on every command:
 
-| Flag | Description |
-|---|---|
-| `--config <path>` | Override config directory (default: `./carve/`) |
-| `--profile <name>` | Override active profile (dev, staging, prod) |
-| `--quiet`, `-q` | Suppress non-error output |
-| `--verbose`, `-v` | Show debug logs (`-vv` for trace) |
-| `--no-color` | Disable ANSI colors |
-| `--json` | Machine-readable output where supported |
-| `--version` | Print Carve version and exit |
-| `--help`, `-h` | Command help |
+- `--output [table|json|yaml]` — output format (default `table`)
+- `--config-dir PATH` — override the project directory (default: search upward for `carve.toml`)
+- `--server-url URL` — REST API base URL (default `http://127.0.0.1:8765`)
+- `--verbose` / `--quiet` / `--no-color`
+- `--help`, `--version`
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Generic failure |
-| 2 | Invalid usage (bad flags, missing args) |
-| 3 | Configuration error |
-| 4 | Authentication / connection error |
-| 5 | Internal error / bug |
+| 1 | User error (bad flag, missing argument) |
+| 2 | Runtime error (e.g., a pipeline run failed) |
+| 3 | Config error (invalid `carve.toml`, unresolvable component) |
+| 4 | Drift detected (`carve deploy` pre-flight) |
+| 5 | Server unreachable |
 
-## Top-level commands
+## Quick reference
+
+| Command | Description | Spec |
+|---|---|---|
+| `carve init` | Bootstrap a Carve project | [v0.1-05](../v0.1/05-init-rewrite.md) |
+| `carve plan "<goal>"` | Produce a reviewable plan (no files written) | M1.1, [v0.1-04](../v0.1/04-el-agent-dlt.md) |
+| `carve build <plan_id>` | Materialize a plan into files | M1.1, [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
+| `carve run <pipeline>` | Execute a pipeline on demand | M1.1, [v0.1-07](../v0.1/07-runtime.md) |
+| `carve runs` | List recent runs | M1.1 |
+| `carve logs <run_id>` | Print / stream run logs | M1.1, [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve deploy <pipeline>` | Promote via a configurable handoff (default: PR) | [v0.1-14](../v0.1/14-deploy-pr.md) |
+| `carve ask "<question>"` | Read-only investigative query (the explorer) | [v0.1-12](../v0.1/12-ask-verb.md) |
+| `carve serve` | Start the API + scheduler + reaper + archiver + workers | [v0.1-07](../v0.1/07-runtime.md) |
+| `carve worker` | Run a standalone worker process | [v0.1-07](../v0.1/07-runtime.md) |
+| `carve mcp-serve` | Start the MCP server (adapter over REST) | [v0.1-10](../v0.1/10-mcp-server.md) |
+| `carve schedule list/show/pause/resume/set-cron` | Live schedule controls (data, instant, audited) | [v0.1-07](../v0.1/07-runtime.md) |
+| `carve schedule reseed <pipeline>` | Re-apply `[seed_schedule]` from code to the live row | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
+| `carve pipelines list/show/validate/diff` | Pipeline definitions | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
+| `carve component <name> --separate-remote/-local/--same-repo` | Graduate / relocate a component | [v0.1-08](../v0.1/08-multi-step-pipeline.md), [v0.1-03](../v0.1/03-flat-layout.md) |
+| `carve components show [<name>]` | List components (name, type, mode, resolved ref) | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
+| `carve memory show/edit/append-decision/refresh` | Project memory | [v0.1-06](../v0.1/06-project-memory.md) |
+| `carve asks list/show` | Prior `ask` results | [v0.1-12](../v0.1/12-ask-verb.md) |
+| `carve investigations list/show/dismiss` | Recovery investigations | [v0.1-17](../v0.1/17-recovery-engineer.md) |
+| `carve agents list/show/create/edit/test` | Agent management (markdown definitions) | [v0.1-16](../v0.1/16-extensibility.md) |
+| `carve skills list/show/test` | Skill registry (built-ins, packs, MCP) | [v0.1-16](../v0.1/16-extensibility.md) |
+| `carve mcp-servers list/add/remove` | Register external MCP servers Carve consumes | [v0.1-16](../v0.1/16-extensibility.md) |
+| `carve docs serve/regen/open` | Local static HTML UI | [v0.1-11](../v0.1/11-static-html-ui.md) |
+| `carve workspaces list/clear` | Separate-remote workspace cache | [v0.1-03](../v0.1/03-flat-layout.md) |
+| `carve auth token rotate` | Mint/rotate the OSS API token | [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve metrics costs/runs/agents` | Aggregate metrics | [v0.1-09](../v0.1/09-rest-api.md) |
+
+## Lifecycle verbs
 
 ### `carve init`
 
-Initialize Carve in the current directory.
+Bootstrap a Carve project. Configures four independent axes — Postgres state store, dbt presence, dlt presence, and project memory — interactively or via flags ([v0.1-05](../v0.1/05-init-rewrite.md)).
 
-```bash
-carve init                        # Interactive — detect existing dbt, ask questions
-carve init --greenfield           # New scaffold; no existing dbt
-carve init --import .             # Brownfield — import existing dbt project here
-carve init --import ../my-dbt     # Brownfield — dbt project elsewhere
-carve init --example ecommerce    # Clone the e-commerce example
+```
+carve init [--external-postgres URL] [--with-dbt] [--dbt-path PATH | --dbt-url URL]
+           [--with-dlt] [--dlt-path PATH | --dlt-url URL] [--default-target NAME]
+           [--migrate-from-targets] [--non-interactive] [--project-name NAME]
 ```
 
-| Flag | Description |
-|---|---|
-| `--greenfield` | Scaffold new dbt + Carve project |
-| `--import <path>` | Onboard onto an existing dbt project |
-| `--example <name>` | Clone one of the official examples |
-| `--non-interactive` | Use defaults, fail on missing values |
-
-### `carve plan`
-
-Ask Carve to plan how to achieve a goal. Produces a persisted plan that can be inspected and applied.
-
-```bash
-carve plan "ingest orders.csv into a staging table"
-carve plan --pipeline daily_revenue "add a freshness check after dbt_build"
-carve plan --agent dbt-engineer "add a customer_ltv mart"
+```
+carve init --with-dlt --dbt-path ./analytics --default-target dev
 ```
 
-| Flag | Description |
-|---|---|
-| `--pipeline <name>` | Scope the plan to an existing pipeline |
-| `--agent <name>` | Force a specific specialist agent |
-| `--output <path>` | Write plan to specific path (default: `.carve/plans/<id>.json`) |
-| `--dry-run` | Don't persist the plan |
+`--migrate-from-targets` migrates a legacy `targets/<t>/el/...` layout to the flat `el/<name>/` layout (one-shot, not undoable). Brownfield: point `--dbt-path` / `--dbt-url` at an existing dbt project; simple mode writes **no** `[components.*]` blocks (discovery is by convention — see [config-schema](./config-schema.md)).
 
-Output: a `Plan ID` that can be passed to `build`.
+### `carve plan` / `carve build` / `carve run`
+
+```
+carve plan "<goal>" [--pipeline <name>] [--refine <plan_id> "<feedback>"] [--target <name>]
+carve build <plan_id> [--force]
+carve run <pipeline> [--plan <plan_id>]
+```
+
+`plan` produces a reviewable design + a persisted Plan; it writes **no** files. `build` materializes a plan into files (dlt code, `pipelines/<name>.toml`) and emits the `post_build` hook ([v0.1-16](../v0.1/16-extensibility.md)). `run` executes an existing pipeline on demand.
+
+```
+carve plan "ingest the Stripe charges API into raw_stripe, then build the staging models"
+carve build plan_a1b2c3
+carve run daily_revenue
+```
+
+**(planned)** `carve run --watch` (stream until completion) and `carve run --resume <run_id>` (resume failed steps) are referenced by the quick-reference / MCP `run_resume` but not yet defined in a runtime spec body.
+
+### `carve runs` / `carve logs`
+
+```
+carve runs [--pipeline <name>] [--status <s>] [--since <dur>] [--limit <n>]
+carve logs <run_id> [--follow] [--step <id>]
+```
+
+```
+carve runs --pipeline daily_revenue --status failed --since 7d
+carve logs 4f6a... --follow
+```
 
 ### `carve deploy`
 
-Promote a built pipeline to prod via PR.
+Promote built code to a target via a **configurable handoff** ([v0.1-14](../v0.1/14-deploy-pr.md)). Default handoff is `pr`; cross-repo graduated components produce coordinated linked PRs (ingest-first). Emits the `pre_deploy` hook. The old `carve el deploy --from/--to` DDL-apply path is **retired**.
 
-```bash
-carve deploy <pipeline_name>
-carve deploy <pipeline_name> --auto-approve
-carve deploy <pipeline_name> --pr-only        # Open the PR but don't trigger run
+```
+carve deploy <pipeline> [--target <name>] [--handoff files|commit|push|pr] [--amend] [--draft] [--yes]
+carve deploy --reconcile-pins <pipeline>
 ```
 
-| Flag | Description |
-|---|---|
-| `--auto-approve` | Skip approval prompts (use carefully) |
-| `--pr-only` | Create code changes / PR but don't execute pipeline |
-| `--target <env>` | Target environment (dev/staging/prod) |
-
-### `carve build`
-
-Plan + deploy in one shot. Convenience for the common case.
-
-```bash
-carve build "ingest orders.csv"
-carve build --pipeline daily_revenue   # Re-plan and deploy current pipeline
+```
+carve deploy salesforce                 # default: open a PR
+carve deploy salesforce --handoff push  # commit + push, no PR
 ```
 
-Same flags as `plan` plus `deploy`.
+Pre-flight drift detection exits `4` if the target's deployed state diverges from expectations.
 
-### `carve run`
+### `carve ask`
 
-Execute an existing pipeline (or step) immediately, without re-planning.
+Run the **explorer** — a read-only subagent that investigates the project (code, dbt manifest, dlt schema, `sql` introspection) and returns a cited answer. Changes nothing ([v0.1-12](../v0.1/12-ask-verb.md)). Lineage questions are answered by investigation, not a stored graph ([v0.1-19](../v0.1/19-lineage.md)).
 
-```bash
-carve run daily_revenue
-carve run daily_revenue --step dbt_build
-carve run daily_revenue --from dbt_build       # Re-run from this step onward
-carve run daily_revenue --backfill 2025-04-01:2025-04-15
+```
+carve ask "<question>" [--pipeline <name>] [--target <name>] [--output text|json] [--watch]
 ```
 
-| Flag | Description |
-|---|---|
-| `--step <id>` | Run only one step |
-| `--from <id>` | Re-run from this step onward (downstream subset) |
-| `--backfill <range>` | Run for each date in `YYYY-MM-DD:YYYY-MM-DD` |
-| `--params <key=val>` | Override parameters |
-
-### `carve runs`
-
-List recent runs.
-
-```bash
-carve runs
-carve runs --pipeline daily_revenue
-carve runs --status failed --since 7d
+```
+carve ask "where does net_revenue come from, and what breaks if I change raw_stripe.charges?"
 ```
 
-| Flag | Description |
-|---|---|
-| `--pipeline <name>` | Filter by pipeline |
-| `--status <s>` | `running` \| `success` \| `failed` \| `cancelled` |
-| `--since <duration>` | `1h`, `7d`, `2w` |
-| `--limit <n>` | Max rows (default: 20) |
+## Runtime & serving
 
-### `carve logs`
+### `carve serve` / `carve worker`
 
-Stream or fetch logs for a run or step.
-
-```bash
-carve logs <run-id>
-carve logs <run-id> --step dbt_build
-carve logs <run-id> --follow
+```
+carve serve [--port N] [--host H] [--workers N] [--no-scheduler] [--no-reaper] [--no-archiver]
+carve worker [--workers N]
 ```
 
-### `carve serve`
+`carve serve` runs the FastAPI app (spec 09) plus the scheduler, reaper, archiver, and an in-process worker pool ([v0.1-07](../v0.1/07-runtime.md)). `carve worker` runs standalone workers that claim jobs from the queue (optimistic `FOR UPDATE SKIP LOCKED`).
 
-Start the Carve API server and web UI.
+### `carve mcp-serve`
 
-```bash
-carve serve                      # localhost:8765
-carve serve --port 9000
-carve serve --host 0.0.0.0       # Bind on all interfaces (production)
-carve serve --workers 4
+```
+carve mcp-serve [--transport stdio|ws] [--port N] [--host H] [--server-url URL] [--token T]
 ```
 
-### `carve doctor`
+Starts the MCP server, which adapts the REST surface to MCP tools ([v0.1-10](../v0.1/10-mcp-server.md)). For *consuming* external MCP servers, see `carve mcp-servers`.
 
-Run diagnostics. See [M3-13](../_archive/milestone-3-polish/13-doctor-command.md).
+## `carve schedule ...`
 
-```bash
-carve doctor
-carve doctor --verbose
-carve doctor --category connections
-carve doctor --json
+The live schedule is **data** — these commands mutate the `schedules` table instantly (effective on the next scheduler tick, ≤ the loop interval), each audited in `schedule_changes`. No deploy, no PR ([v0.1-07](../v0.1/07-runtime.md)).
+
+```
+carve schedule list
+carve schedule show <pipeline>
+carve schedule pause  <pipeline> [--reason "<text>"]
+carve schedule resume <pipeline> [--reason "<text>"]
+carve schedule set-cron <pipeline> "<cron>" [--timezone TZ] [--reason "<text>"]
+carve schedule reseed <pipeline>      # re-apply [seed_schedule] from code (spec 08)
 ```
 
-### `carve version`
-
-Print version. Long-form includes Python version, install location, and dependency tree.
-
-```bash
-carve version
-carve version --long
+```
+carve schedule set-cron daily_revenue "0 3 * * *" --timezone America/New_York
+carve schedule pause daily_revenue --reason "investigating upstream outage"
 ```
 
-## `carve agent ...`
+`list` shows cron, timezone, paused state, and last/next fire (there is no separate `next-fires` command). `reseed` is the one path by which an edited `[seed_schedule]` block takes effect — otherwise code edits to the seed are inert.
 
-### `carve agent list`
+## `carve pipelines ...`
 
-List configured agents.
-
-```bash
-carve agent list
+```
+carve pipelines list [--status <s>]
+carve pipelines show <name>
+carve pipelines validate [<name>]
+carve pipelines diff <name> --against <build_id>
 ```
 
-### `carve agent show <name>`
+`validate` checks the TOML schema + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names). Pipelines are authored via `carve plan` / `carve build`, not hand-scaffolded ([v0.1-08](../v0.1/08-multi-step-pipeline.md)).
 
-Show agent definition, current skills, recent runs.
+## `carve component` / `carve components`
 
-```bash
-carve agent show dbt-engineer
+Components are referenced by name; these commands manage where a component's code lives and how it's pinned ([v0.1-08](../v0.1/08-multi-step-pipeline.md), [v0.1-03](../v0.1/03-flat-layout.md)).
+
+```
+carve component <name> --separate-remote <url> [--ref <pin> | --branch <name>]
+carve component <name> --separate-local <path>
+carve component <name> --same-repo                # reverse a graduation
+carve components show [<name>]
 ```
 
-### `carve agent edit <name>`
-
-Open the agent's TOML in `$EDITOR`. On save, validates and reloads.
-
-```bash
-carve agent edit dbt-engineer
+```
+carve component analytics --separate-remote git@github.com:acme/analytics.git --ref 9f3a1c7
+carve components show           # name, type, mode, resolved ref/path, referencing pipelines
 ```
 
-### `carve agent test <name>`
+## `carve memory ...`
 
-Run a one-shot prompt against an agent without persisting state.
+Project memory: conventions (inferred), standards (authored), and the decision log ([v0.1-06](../v0.1/06-project-memory.md)).
 
-```bash
-carve agent test dbt-engineer "what skills do you have access to?"
+```
+carve memory show [<file>] [--pipeline <name>]
+carve memory edit <file> [--direct]
+carve memory append-decision "<title>" [--body "<text>"] [--reviewers a@,b@]
+carve memory refresh [--backend dbt|dlt]
 ```
 
-### `carve agent versions <name>`
-
-Show change history (each `carve agent edit` is a versioned snapshot).
-
-```bash
-carve agent versions dbt-engineer
+```
+carve memory append-decision "Stripe retention is 18 months" --reviewers alice@
+carve memory refresh --backend dbt
 ```
 
-## `carve skill ...`
+## `carve asks` / `carve investigations`
 
-### `carve skill list`
+```
+carve asks list [--since <dur>] [--pipeline <name>] [--limit N]
+carve asks show <ask_id> [--include-trace]
 
-List all skills available across agents.
-
-```bash
-carve skill list
-carve skill list --agent dbt-engineer
+carve investigations list [--status proposed|resolved|dismissed] [--since <dur>]
+carve investigations show <id> [--all-runs]
+carve investigations dismiss <id> --reason "<text>"
 ```
 
-### `carve skill show <name>`
+Investigations are produced by the recovery engineer on retries-exhausted failures ([v0.1-17](../v0.1/17-recovery-engineer.md)); they carry a diagnosis + a proposed Plan that flows through the normal build/deploy path.
 
-Show skill definition (parameters, source, owning agent).
+## Extensibility: `carve agents` / `carve skills` / `carve mcp-servers`
 
-```bash
-carve skill show schema.search
+Agents are **markdown files with YAML frontmatter** (`carve/agents/<name>.md`); a user file overrides a built-in of the same name ([v0.1-16](../v0.1/16-extensibility.md)). See [config-schema](./config-schema.md) for the frontmatter fields.
+
+```
+carve agents list
+carve agents show <name>
+carve agents create <name> [--template <existing>]
+carve agents edit <name>
+carve agents test <name> "<prompt>"
+
+carve skills list
+carve skills show <name>
+carve skills test <name> [--args '<json>']
+
+carve mcp-servers list
+carve mcp-servers add <name> --command "<cmd>" | --url <url>
+carve mcp-servers remove <name>
 ```
 
-### `carve skill test <name>`
-
-Invoke a skill directly with arguments.
-
-```bash
-carve skill test schema.search --args '{"query": "customer revenue"}'
+```
+carve agents create stripe-helper --template dlt-engineer
+carve skills test dlt_schema --args '{"component":"stripe_charges"}'
+carve mcp-servers add jira --command "jira-mcp"
 ```
 
-## `carve pipeline ...`
+External MCP tools are imported namespaced (`mcp:<server>:<tool>`) and effects-tagged; missing effect metadata fails closed (treated as writing). `carve mcp-serve` (Carve as a server) is separate from `carve mcp-servers` (external servers Carve consumes).
 
-### `carve pipeline list`
+## Static HTML UI: `carve docs ...`
 
-List pipelines and their status.
-
-```bash
-carve pipeline list
+```
+carve docs serve [--host H] [--port N] [--no-auto-regen] [--watch]
+carve docs regen [--page <name>]
+carve docs open
 ```
 
-### `carve pipeline show <name>`
+Serves the minimal local UI (run history, per-run detail + logs, pipelines) on loopback, regenerated on run events ([v0.1-11](../v0.1/11-static-html-ui.md)). No lineage view in v0.1.
 
-Show pipeline definition (rendered) and recent runs.
+## Auth & metrics
 
-```bash
-carve pipeline show daily_revenue
+```
+carve auth token rotate            # mint a new API token, write .carve/token (mode 0600), print plaintext
+carve metrics costs|runs|agents [--since <dur>]
 ```
 
-### `carve pipeline pause <name>` / `resume <name>`
-
-Pause or resume scheduled execution.
-
-```bash
-carve pipeline pause daily_revenue
-carve pipeline resume daily_revenue
+```
+carve auth token rotate
+carve metrics costs --since 30d
 ```
 
-### `carve pipeline history <name>`
+**(planned / thin):** `carve auth login` (OAuth to a Claude subscription) is referenced but not yet specified as a command — M1.1 configures auth via `auth_mode` in `models.toml`. `carve auth token mint`/`revoke` map to REST `POST`/`DELETE /api/v1/tokens`; only `rotate` has a defined CLI form today. The `carve metrics` subcommand spelling is defined by the quick-reference; the underlying data is the metrics router (spec 09).
 
-Show run history with status and duration.
+## Not in v0.1
 
-```bash
-carve pipeline history daily_revenue --limit 50
-```
-
-## `carve dbt <args>`
-
-Pass-through to dbt-core, with Carve's resolved profile and project paths.
-
-```bash
-carve dbt run --select stg_orders+
-carve dbt test
-carve dbt docs generate
-```
-
-Carve injects the profile and target derived from `carve.toml`, so users don't need separate `--profiles-dir` flags.
-
-## `carve mcp ...`
-
-### `carve mcp list`
-
-List configured external MCP servers and their status.
-
-```bash
-carve mcp list
-```
-
-### `carve mcp add <name>`
-
-Add an MCP server interactively.
-
-```bash
-carve mcp add pagerduty
-```
-
-### `carve mcp remove <name>`
-
-Remove an MCP server.
-
-```bash
-carve mcp remove pagerduty
-```
-
-### `carve mcp tools <server>`
-
-List tools exposed by a server.
-
-```bash
-carve mcp tools pagerduty
-```
-
-## `carve config ...`
-
-### `carve config validate`
-
-Validate all config files against schemas.
-
-```bash
-carve config validate
-```
-
-### `carve config show`
-
-Print resolved config (merged + env-var-substituted, with secrets masked).
-
-```bash
-carve config show
-carve config show pipelines/daily_revenue
-```
-
-### `carve config diff`
-
-Diff against the version checked into git.
-
-```bash
-carve config diff
-```
-
-## `carve scaffold`
-
-Generate boilerplate.
-
-```bash
-carve scaffold pipeline my_new_pipeline
-carve scaffold agent custom-helper
-carve scaffold skill my_skill --agent custom-helper
-carve scaffold connection postgres replica
-```
+- `carve target verify` — a small follow-up spec; the deploy pre-flight (spec 14) is the v0.1 readiness check.
+- `carve el deploy`, `carve doctor`, `carve config`, `carve scaffold`, `carve dbt <passthrough>`, the old `carve mcp` group — **removed/retired**; superseded as noted above.
+- Backfills, `carve run --step/--from/--backfill` — out of scope ([v0.1-08](../v0.1/08-multi-step-pipeline.md)).
 
 ## Environment variables
 
-Carve respects these globally:
+- `DATABASE_URL` — Postgres connection string for the state store (consumed by `carve.toml`'s `[state_store]`)
+- `ANTHROPIC_API_KEY` / OAuth (`auth_mode`) — model provider credentials (never passed into the `bash` tool's scrubbed env, spec 15)
+- `CARVE_SERVER_URL` — default for `--server-url`
+- Connector credentials (e.g. `STRIPE_API_KEY`) — referenced from `.dlt/secrets.toml` / `carve/connections.toml`, never stored in the state store
 
-| Variable | Default | Description |
-|---|---|---|
-| `CARVE_HOME` | `~/.carve` | Where global state lives |
-| `CARVE_CONFIG_DIR` | `./carve` | Per-project config |
-| `CARVE_LOG_LEVEL` | `info` | Override logging level |
-| `CARVE_NO_TELEMETRY` | unset | If set, disables anonymous usage telemetry |
-| `ANTHROPIC_API_KEY` | — | Required for agent loop |
-| `ANTHROPIC_BASE_URL` | (default) | For self-hosted / Bedrock proxies |
+## Cross-references
 
-## Shell completion
-
-```bash
-carve --install-completion bash
-carve --install-completion zsh
-carve --install-completion fish
-```
+- REST API: the OpenAPI schema at `/api/openapi.json` + `docs/api-reference.md` ([v0.1-09](../v0.1/09-rest-api.md))
+- MCP tools: `docs/mcp-server.md` ([v0.1-10](../v0.1/10-mcp-server.md))
+- Config files: [config-schema.md](./config-schema.md)
+- Vocabulary: [glossary.md](./glossary.md)

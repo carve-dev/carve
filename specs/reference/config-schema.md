@@ -1,345 +1,324 @@
 # Reference — Configuration schema
 
-Carve configuration is split across a small set of TOML files under `carve/` at the project root. This document is the canonical reference for every file and field.
+The canonical reference for every file Carve reads or writes in v0.1. The executable source of truth is the Pydantic models in `src/carve/`; this document is the human-readable companion. For the control-plane model behind `carve.toml`, see [v0.1-03](../v0.1/03-flat-layout.md) and [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md).
 
 ## File layout
 
+`carve.toml`, `pipelines/`, and `el/` live at the **project root** (the control plane references components by name). The `carve/` directory holds the config bundle + project memory.
+
 ```
 <project-root>/
+├── carve.toml                  # CONTROL PLANE: project meta, default target, [components.<name>]
 ├── carve/
-│   ├── carve.toml                  Project metadata, top-level settings
-│   ├── connections.toml            Snowflake, Postgres, GitHub, etc.
-│   ├── runner.toml                 Execution backend config
-│   ├── guardrails.toml             Approval rules, cost limits
-│   ├── mcp.toml                    External MCP servers
-│   ├── conventions.md              Markdown — house style for the agents
-│   ├── agents/                     Agent definitions (one TOML each)
-│   │   ├── orchestration.toml
-│   │   ├── dbt-engineer.toml
-│   │   ├── snowflake-engineer.toml
-│   │   └── quality.toml
-│   ├── skills/                     Custom skills (Python or YAML)
-│   ├── pipelines/                  Pipeline definitions
-│   │   └── daily_revenue.toml
-│   └── .carve/                     Generated state (gitignore)
-│       ├── state.db
-│       ├── plans/
-│       └── runs/
+│   ├── connections.toml        # target/connection definitions (+ dialect, role scoping)
+│   ├── runtime.toml            # scheduler / worker / reaper / archive / recovery / permissions
+│   ├── hooks.toml              # pre/post-tool + lifecycle hooks
+│   ├── mcp.toml                # external MCP servers Carve consumes
+│   ├── conventions.md          # inferred conventions (Carve-generated, refreshable)
+│   ├── standards.md            # team standards (user-authored)
+│   ├── decisions.md            # append-only decision log
+│   ├── agents/
+│   │   └── <name>.md           # agent definitions — MARKDOWN + YAML frontmatter (override built-ins)
+│   └── skills/
+│       └── <name>/SKILL.md     # skill packs (frontmatter + instructions + optional scripts/resources)
+├── pipelines/
+│   ├── <name>.toml             # pipeline composition: [pipeline], [seed_schedule], [[steps]]
+│   └── <name>.md               # per-pipeline memory sidecar (optional)
+├── el/
+│   └── <name>/                 # a dlt component (simple mode: discovered by convention)
+│       ├── __init__.py         # generated dlt source (provenance header) — refinable below the header
+│       ├── requirements.txt    # pinned dlt deps
+│       └── NOTES.md            # EL memory sidecar (optional)
+├── .dlt/                       # dlt's own config (project-root scope)
+│   ├── config.toml             # per-destination config (user-editable)
+│   └── secrets.toml            # credentials (gitignored)
+├── dbt_project.yml             # dbt project (same-repo mode; may be one level down)
+├── docker-compose.yml          # bundled Postgres (Carve-templated)
+├── .env / .env.example         # env vars (.env gitignored)
+└── .carve/                     # generated runtime state (gitignored) — NO SQLite; state is in Postgres
+    ├── token                   # OSS API token (mode 0600)
+    ├── plans/<id>.json
+    ├── asks/<id>.json
+    ├── workspaces/<derived>/   # separate-remote component cache
+    └── ui/                     # rendered static HTML
 ```
 
-## `carve.toml`
+## Files Carve reads or writes
 
-Project metadata. Small. Intentionally minimal — most config lives in dedicated files.
+| File | Purpose | Owner | Spec |
+|---|---|---|---|
+| `carve.toml` | Control-plane config: project meta, `default_target`, `[state_store]`, `[components.<name>]` | Carve (init) + user | [03](../v0.1/03-flat-layout.md), [05](../v0.1/05-init-rewrite.md), [01](../v0.1/01-state-store-postgres.md) |
+| `carve/connections.toml` | Target/connection definitions + dialect + credential references | User | [05](../v0.1/05-init-rewrite.md), [18](../v0.1/18-sql-layer.md) |
+| `carve/runtime.toml` | Scheduler/worker/reaper/archive/recovery/permissions/CORS | User | [07](../v0.1/07-runtime.md), [15](../v0.1/15-agent-harness.md), [17](../v0.1/17-recovery-engineer.md) |
+| `carve/hooks.toml` | Pre/post-tool + lifecycle hooks | User | [16](../v0.1/16-extensibility.md) |
+| `carve/mcp.toml` | External MCP server registrations | User (`carve mcp-servers add`) | [16](../v0.1/16-extensibility.md) |
+| `carve/conventions.md` | Inferred project conventions | Carve-generated (refreshable) | [05](../v0.1/05-init-rewrite.md), [06](../v0.1/06-project-memory.md) |
+| `carve/standards.md` | Team standards (override conventions) | User-authored | [06](../v0.1/06-project-memory.md) |
+| `carve/decisions.md` | Append-only dated decision log | User (append-only) | [06](../v0.1/06-project-memory.md) |
+| `carve/agents/<name>.md` | Agent definitions — **markdown + YAML frontmatter** | User (override built-ins) | [16](../v0.1/16-extensibility.md) |
+| `carve/skills/<name>/SKILL.md` | Skill packs (content, not callable tools) | User | [16](../v0.1/16-extensibility.md) |
+| `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [08](../v0.1/08-multi-step-pipeline.md) |
+| `pipelines/<name>.md` | Per-pipeline memory sidecar | User-authored | [06](../v0.1/06-project-memory.md) |
+| `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below header) | [04](../v0.1/04-el-agent-dlt.md), [03](../v0.1/03-flat-layout.md) |
+| `el/<name>/requirements.txt` | Pinned dlt deps | Carve-generated | [04](../v0.1/04-el-agent-dlt.md) |
+| `.dlt/config.toml` / `.dlt/secrets.toml` | dlt's own config / credentials | User (secrets gitignored) | [03](../v0.1/03-flat-layout.md), dlt convention |
+| `dbt_project.yml` | dbt project config (same-repo mode) | User (or `--with-dbt`) | dbt convention, [05](../v0.1/05-init-rewrite.md) |
+| `docker-compose.yml` | Bundled Postgres | Carve-templated | [02](../v0.1/02-oss-packaging.md) |
+| `.env` / `.env.example` | Env vars (`DATABASE_URL`, etc.) | User / Carve-templated | [05](../v0.1/05-init-rewrite.md) |
+| `.carve/token` | OSS API token (mode 0600) | Carve-generated | [09](../v0.1/09-rest-api.md) |
+| `.carve/plans/<id>.json` / `asks/<id>.json` | Plan / ask artifacts | Carve-generated | M1.1, [12](../v0.1/12-ask-verb.md) |
+| `.carve/workspaces/<derived>/` | Separate-remote component cache | Carve-managed | [03](../v0.1/03-flat-layout.md) |
+| `.carve/ui/` | Rendered static HTML | Carve-generated | [11](../v0.1/11-static-html-ui.md) |
+
+> Investigations (recovery diagnoses) are **not** files — they are rows in the Postgres `investigations` table, surfaced via `carve investigations` ([17](../v0.1/17-recovery-engineer.md)).
+
+## `carve.toml` — the control-plane config
+
+The project root config. It references independently-versioned dlt/dbt components **by name** rather than containing them ([03](../v0.1/03-flat-layout.md)).
 
 ```toml
-# carve/carve.toml
-
 [project]
 name = "jaffle-shop"
-version = "0.1.0"
-description = "Internal analytics for the bakery."
+default_target = "dev"
+carve_version = ">=0.1,<0.2"
 
-[carve]
-required_version = ">=0.1,<0.2"
+[state_store]
+url = "${DATABASE_URL}"          # env-var interpolation; Postgres only
 
-[paths]
-dbt_project = ".."                 # Relative path to dbt project root
-data_dir = "data"                  # Where ad-hoc data files live
+# [components.<name>] blocks are OPTIONAL. Omit them entirely for "simple mode":
+# components are then discovered by convention (each el/<name>/ is a dlt component;
+# the single detected dbt project is a dbt component). Add blocks only when a
+# component graduates to its own path/repo ("multi mode").
+
+[components.analytics]
+type = "dbt"                     # "dlt" | "dbt"
+mode = "separate-remote"         # "same-repo" | "separate-local" | "separate-remote"
+url  = "git@github.com:acme/analytics.git"   # separate-remote only
+ref  = "9f3a1c7"                 # OPTIONAL pin (commit SHA or tag); see precedence below
+# branch = "main"                # track a branch HEAD instead of pinning a ref
+
+[components.stripe_charges]
+type = "dlt"
+mode = "separate-local"
+path = "/path/to/ingest-stripe"  # required when mode == "separate-local"
 ```
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `project.name` | string | yes | — | Project identifier; appears in UI and logs |
-| `project.version` | string | no | `"0.0.0"` | SemVer; bumped on releases |
-| `project.description` | string | no | `""` | One-liner shown in UI header |
-| `carve.required_version` | string | no | unbounded | PEP 440 specifier; doctor warns on mismatch |
-| `paths.dbt_project` | string | yes if dbt used | `"."` | Path to `dbt_project.yml` |
-| `paths.data_dir` | string | no | `"data"` | Local data directory for examples and tests |
+**`[components.<name>]` fields:**
+
+| Field | Type | Required when | Notes |
+|---|---|---|---|
+| `type` | `"dlt"\|"dbt"` | always | how the locator resolves + runs it |
+| `mode` | `"same-repo"\|"separate-local"\|"separate-remote"` | always | explicit, not inferred |
+| `path` | string | `mode="separate-local"` | code path; must exist |
+| `url` | git URL | `mode="separate-remote"` | the component's repo |
+| `ref` | commit SHA / tag | optional | a **pin** — checked out exactly |
+| `branch` | string | optional | track this branch's HEAD if `ref` unset |
+| `sync_mode` | `"hard"\|"soft"` | optional (default `hard`) | opt out of hard-reset sync |
+| `sync_before_run` | bool | optional (default `true`) | set `false` for offline operation |
+
+**Pin precedence:** `ref` wins (exact pin) → else `branch` (track that branch's HEAD) → else the remote's default-branch HEAD. Simple-mode (convention-discovered) components are never pinned — branch-HEAD, zero friction.
 
 ## `carve/connections.toml`
 
-Defines every named connection. Connections are referenced by name from steps and skills.
+Named targets (connections). Each carries a **dialect** (Snowflake + DuckDB first-class in v0.1; Postgres/BigQuery/Databricks/SQL Server via `sqlglot`, introspection hardened post-v0.1, [18](../v0.1/18-sql-layer.md)) and is role-scoped (read vs write/deploy). Credentials are referenced, never inlined.
 
 ```toml
-[snowflake.default]
-account = { env = "SNOWFLAKE_ACCOUNT" }
-user = { env = "SNOWFLAKE_USER" }
-auth = "key_pair"
-private_key = { env = "SNOWFLAKE_PRIVATE_KEY" }
-role = "ANALYTICS"
+[targets.dev]
+dialect = "duckdb"
+path = "./dev.duckdb"
+
+[targets.prod]
+dialect = "snowflake"
+account = "${SNOWFLAKE_ACCOUNT}"
+user = "${SNOWFLAKE_USER}"
+auth = "key_pair"                # password | key_pair | oauth | external_browser
+private_key = "${SNOWFLAKE_PRIVATE_KEY}"
+role = "TRANSFORM"               # write/deploy role
+read_role = "READER"             # optional: a lower-privilege role for read-only introspection
 warehouse = "TRANSFORM_WH"
 database = "ANALYTICS"
 schema = "DBT"
-
-[snowflake.prod_readonly]
-account = { env = "SNOWFLAKE_ACCOUNT" }
-user = { env = "SNOWFLAKE_RO_USER" }
-auth = "key_pair"
-private_key = { env = "SNOWFLAKE_RO_PRIVATE_KEY" }
-role = "READER"
-warehouse = "READER_WH"
-
-[github.default]
-token = { env = "GITHUB_TOKEN" }
-owner = "acme-data"
-repo = "jaffle-shop"
-default_branch = "main"
-
-[postgres.replica]
-host = { env = "POSTGRES_HOST" }
-port = 5432
-database = { env = "POSTGRES_DB" }
-user = { env = "POSTGRES_USER" }
-password = { env = "POSTGRES_PASSWORD" }
-sslmode = "require"
 ```
 
-### Common patterns
+Credential indirection: `${ENV_VAR}` (environment) or `{ file = "/path" }` (Docker/K8s secrets). Carve never stores secrets in the state store ([15](../v0.1/15-agent-harness.md)).
 
-**Env-var indirection:** `{ env = "VAR_NAME" }` reads from environment. Carve never stores secrets in config files.
+## `carve/runtime.toml`
 
-**File indirection:** `{ file = "/path/to/secret" }` reads from a file (Docker/K8s secrets pattern).
-
-**Inline literal:** strings without indirection are literal. Discouraged for secrets.
-
-### Snowflake auth modes
-
-| Mode | Required fields |
-|---|---|
-| `password` | `password` |
-| `key_pair` | `private_key` (PEM bytes or path), optional `private_key_passphrase` |
-| `oauth` | `oauth_token` |
-| `external_browser` | none — opens browser for SSO (interactive, dev only) |
-
-### Connection types supported in M2/M3
-
-`snowflake`, `github`, `postgres`, `mysql`, `bigquery` (M3+), `databricks` (post-1.0), `s3` (object store), `slack`, `pagerduty` (via MCP).
-
-## `carve/runner.toml`
-
-How steps execute. M1 ships only the local backend; future backends (Docker, Kubernetes, ECS) plug in here.
+Tunes the runtime. (This replaces the pre-v0.1 `runner.toml`; there is no `backend = docker/k8s` axis — v0.1 is a single Postgres-backed queue + worker pool.)
 
 ```toml
-[runner]
-backend = "local_venv"          # local_venv | docker | k8s
+[scheduler]
+interval_s = 30                  # cron-evaluation loop interval
 
-[runner.local_venv]
-venv_dir = "carve/.venvs"
-python = "python3.11"
-default_timeout_seconds = 1800
+[reaper]
+interval_s = 30
+stale_threshold_s = 60           # missed heartbeats → reclaim a crashed worker's jobs
 
-[runner.docker]                  # M3+ when backend = "docker"
-image = "ghcr.io/carve-org/runner:0.1.0"
-network = "host"
-mount_workdir = true
+[worker]
+intra_pipeline_slots = 4         # parallel steps per worker
 
-[runner.resources]               # Per-step defaults; overridable per step
-memory_limit = "2g"
-cpu_limit = "1.0"
+[runtime.archive]
+interval_s = 3600                # hourly active→archive sweep
+jobs_window = "7d"
+runs_window = "30d"
+logs_window = "30d"
 
-[runner.logging]
-level = "info"
-retain_runs = 200                # How many runs to keep on disk
-retain_days = 30
+[recovery]
+enabled = true                   # per-pipeline opt-out: set false to disable diagnosis
+daily_token_budget_usd = 5       # spent → log-only, no diagnosis until reset
+
+[permissions]                    # TIGHTEN-ONLY: narrows mode defaults, never widens them (spec 15)
+# effective tool/bash grant = mode-default ∩ this config ∩ the agent's frontmatter
+
+[api.cors]
+allowed_origins = ["http://127.0.0.1:*"]   # OSS default: loopback for the static UI
 ```
 
-## `carve/guardrails.toml`
+## `carve/agents/<name>.md` — markdown + YAML frontmatter
 
-Rules the orchestration agent enforces before deploying a plan.
+Agents are **markdown files**, not TOML. Built-ins live at `src/carve/core/agents/builtin/<name>.md`; a user file at `carve/agents/<name>.md` **overrides a built-in of the same name** ([16](../v0.1/16-extensibility.md)).
+
+```markdown
+---
+name: dlt-engineer
+description: Authors and runs dlt sources/pipelines. Use for ingest / extract-load goals.
+model: claude-{LATEST_SONNET}            # optional; per-agent tier; falls back to install default
+tools: [edit, create_file, bash, grep, glob, web_fetch, dlt_library, sql]
+allowed_paths: ["el/**", ".dlt/*.template"]   # write scope, ENFORCED by the permission gate
+max_mode: build                          # ADVISORY lint + clamp; the runtime gate is the boundary
+classifications: [new_pipeline, modify_pipeline, refactor_to_incremental]
+---
+You are Carve's dlt engineer. You author dlt sources/resources that follow the
+project conventions, run them via `dlt pipeline run`, and self-correct on the
+parsed result before returning a proposed Plan…
+```
+
+| Frontmatter field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | unique within a discovery root; user file overrides built-in |
+| `description` | string | yes | used for orchestrator routing + `carve agents show` |
+| `model` | string | no | per-agent model tier; falls back to install default |
+| `tools` | list[string] | no | base tools (spec 15) + skills (spec 16); `mcp:<server>:<tool>` allowed |
+| `allowed_paths` | list[glob] | no | write confinement, enforced by the gate |
+| `max_mode` | `read_only\|plan\|build\|deploy` | no | **advisory** — the runtime gate is authoritative |
+| `classifications` | list[string] | no | goal classifications this agent handles |
+
+**Key semantics:** grants are runtime *attenuation* (effective set = `grant ∩ mode-permitted`), so a user override can't raise the effective mode or escape `allowed_paths`; loading is inert (safe YAML, no code execution); hot-reload happens at dispatch time, never mid-conversation.
+
+## `carve/skills/<name>/SKILL.md`
+
+A skill **pack** is a folder: `SKILL.md` (frontmatter + instructions) plus optional `scripts/` / `resources/` (e.g., a curated dlt source). A pack surfaces as **description-matched content injected into context** — not a callable tool ([16](../v0.1/16-extensibility.md)). The curated connector library ships as skill packs.
+
+```markdown
+---
+name: stripe
+description: Curated dlt source for the Stripe API. Use when ingesting Stripe data.
+expects_env: [STRIPE_API_KEY]
+---
+How to use the bundled dlt source, validation glue, and conventions…
+```
+
+Built-in *callable* skills (`@skill` functions — catalog introspection, `dbt_manifest`, `dlt_schema`, `memory_read`) are registered in `src/carve/core/skills/builtin/__init__.py`, separate from packs.
+
+## `carve/hooks.toml`
+
+User-defined hooks at tool and lifecycle seams ([16](../v0.1/16-extensibility.md)).
 
 ```toml
-[approval]
-production = "always"            # always | never | risky_only
-new_pipelines = "always"
-schema_changes = "risky_only"
+[[hook]]
+on = "pre_tool"                                       # pre_tool | post_tool | pre_deploy | post_build | on_run_failed
+match = { tool = "bash", command = "git commit*" }    # optional matcher
+run = "sqlfluff lint --dialect snowflake {changed_sql}"   # non-zero exit BLOCKS the action
 
-[cost]
-warn_credits_per_run = 5.0
-fail_credits_per_run = 50.0
-
-[ddl]
-allow_drop_table = false
-allow_truncate = false
-forbidden_schemas = ["RAW", "AUDIT"]   # No DDL ever from agents
-
-[git]
-require_pr_for_pipelines = true
-require_review_count = 1
-default_branch_protected = true
+[[hook]]
+on = "on_run_failed"
+run = "notify-slack {pipeline} {error}"
 ```
+
+Hooks run through the **same `bash` gate** (no bypass), are mode-clamped, never recurse into `pre_tool`, and **fail closed** (an error/timeout blocks the action). Emission points: `pre_tool`/`post_tool` (spec 15, after the gate admits the call), `pre_deploy` (spec 14), `post_build` (spec 08), `on_run_failed` (subscribes to spec 07's `run.failed`).
 
 ## `carve/mcp.toml`
 
-External MCP servers Carve consumes. See [M3-04](../_archive/milestone-3-polish/04-mcp-client.md).
+External MCP servers Carve consumes (managed via `carve mcp-servers`). Tools import namespaced (`mcp:<server>:<tool>`) and **effects-tagged**; missing effect metadata fails closed (treated as writing) ([16](../v0.1/16-extensibility.md)).
 
 ```toml
-[servers.pagerduty]
-type = "stdio"
-command = "npx"
-args = ["@pagerduty/mcp-server"]
-env = { PAGERDUTY_TOKEN = { env = "PAGERDUTY_TOKEN" } }
+[servers.jira]
+transport = "stdio"              # stdio | http
+command = "jira-mcp"
 enabled = true
 
 [servers.notion]
-type = "http"
+transport = "http"
 url = "https://mcp.notion.com/v1"
-auth = { bearer = { env = "NOTION_TOKEN" } }
+auth = { bearer = "${NOTION_TOKEN}" }
 enabled = true
 ```
 
-## `carve/agents/<name>.toml`
+## `pipelines/<name>.toml`
 
-Each agent is a single TOML file. The orchestration agent has access to other agents; specialists have access to skills.
-
-```toml
-# carve/agents/dbt-engineer.toml
-
-name = "dbt-engineer"
-description = "Authors and maintains dbt models."
-model = "claude-sonnet-4"
-max_tokens = 8192
-temperature = 0.0
-
-system_prompt = """
-You are Carve's dbt specialist. You author SQL models that follow the project
-conventions in conventions.md. You write tests for every new model. You do not
-modify production data directly — only files that go through PR review.
-"""
-
-skills = [
-    "dbt.read_manifest",
-    "dbt.write_model",
-    "dbt.run_tests",
-    "dbt.compile",
-    "schema.search",
-    "snowflake.preview_query",
-]
-
-# Optional context loaded into every turn
-context_files = [
-    "carve/conventions.md",
-    "../dbt_project.yml",
-]
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | string | yes | — | Unique within project |
-| `description` | string | yes | — | One-liner shown in UI |
-| `model` | string | no | `"claude-sonnet-4"` | Anthropic model identifier |
-| `max_tokens` | int | no | `8192` | Per-response cap |
-| `temperature` | float | no | `0.0` | 0.0–1.0 |
-| `system_prompt` | string | yes | — | Multi-line prompt |
-| `skills` | list[string] | no | `[]` | Skill names to expose |
-| `context_files` | list[string] | no | `[]` | Files prepended to context (relative to repo root) |
-| `subagents` | list[string] | no | `[]` | For orchestration only — agents this one can delegate to |
-
-## `carve/pipelines/<name>.toml`
-
-Pipeline = DAG of steps. Each pipeline lives in its own file.
+A pipeline composes components **by name** into a step DAG ([08](../v0.1/08-multi-step-pipeline.md)). The schedule lives in a `[seed_schedule]` block — a one-time **seed**, not the live source of truth (the live schedule is data in the `schedules` table).
 
 ```toml
-# carve/pipelines/daily_revenue.toml
-
 [pipeline]
-name = "daily_revenue"
-description = "Ingest orders + customers, build mart_revenue."
-schedule = "0 4 * * *"           # Cron, server timezone (UTC by default)
-timezone = "America/Denver"      # Override timezone
+description = "Stripe charges ingest + staging + search refresh"
+owner = "data-team"
 
-[pipeline.notifications]
-on_failure = ["slack:#data-alerts"]
-on_success = []
+# Applied ONLY at first registration. Editing it later is a no-op unless you run
+# `carve schedule reseed <pipeline>`. There is NO `paused`/`enabled` key here —
+# pause/resume is live data (carve schedule pause/resume).
+[seed_schedule]
+cron = "0 2 * * *"
+timezone = "UTC"
+target = "prod"
 
 [[steps]]
-id = "ingest_orders"
-type = "python"
+id = "ingest_stripe"
+type = "dlt"                     # dlt | dbt | sql  (only these three in v0.1)
+component = "stripe_charges"     # NAME → el/stripe_charges/ (simple) or remote repo @ ref (multi)
 depends_on = []
-command = "python scripts/ingest_orders.py"
-env = { S3_BUCKET = "acme-raw" }
-timeout_seconds = 600
-retries = 2
+[steps.failure_mode]
+mode = "retry"                   # fail | warn | continue | retry | skip_downstream
+max_attempts = 3
+backoff = "exponential"          # exponential | linear | fixed
 
 [[steps]]
-id = "ingest_customers"
-type = "python"
-depends_on = []
-command = "python scripts/ingest_customers.py"
-timeout_seconds = 600
-
-[[steps]]
-id = "dbt_build"
+id = "stage_stripe"
 type = "dbt"
-depends_on = ["ingest_orders", "ingest_customers"]
-command = "build"
-selector = "tag:daily"
-threads = 4
+component = "analytics"          # OPTIONAL in simple mode (single detected dbt project)
+command = "build"                # build | run | test | snapshot | seed
+select = "stg_stripe_charges+"
+depends_on = ["ingest_stripe"]
 
 [[steps]]
-id = "freshness_check"
+id = "refresh_search"
 type = "sql"
-depends_on = ["dbt_build"]
-connection = "snowflake.default"
-sql_file = "queries/check_freshness.sql"
-on_failure = "fail"
-
-[[steps]]
-id = "notify"
-type = "shell"
-depends_on = ["freshness_check"]
-command = "bin/post_to_slack.sh"
-on_failure = "warn"              # Don't fail the pipeline
+file = "sql/refresh_charges_search.sql"   # sql steps reference a FILE + connection, not a component
+connection = "prod"                        # target name from carve/connections.toml
+depends_on = ["stage_stripe"]
+[steps.failure_mode]
+mode = "warn"
 ```
 
-### Step types
+**Step config:** `dlt` steps require `component` (+ optional `write_disposition`, `resource_select`); `dbt` steps take an optional `component` + `command`/`select`/`exclude`/`vars`/`full_refresh`; `sql` steps take `file` + `connection`. Cross-step values flow via `[steps.<id>.jinja_vars]` referencing `{{ steps.<other>.outputs.* }}`. The old `artifact = ...` key is rejected with a migration message (renamed to `component`).
 
-| Type | Required fields | See spec |
-|---|---|---|
-| `python` | `command` | M1-05 |
-| `sql` | `connection`, (`sql` or `sql_file`) | M3-02 |
-| `dbt` | `command` (run/build/test/seed/snapshot) | M2-06 |
-| `shell` | `command` | M3-03 |
-| `http` | `method`, `url` | M3-03 |
-| `agent` | `agent`, `goal` | M2-02 |
-| `approval` | `prompt` | M2-01 |
+## Project memory
 
-### Common step fields
+`carve/conventions.md` (Carve-generated by inference, refreshable via `carve memory refresh`), `carve/standards.md` (user-authored, overrides conventions), and `carve/decisions.md` (append-only dated log via `carve memory append-decision`). Optional per-scope sidecars: `pipelines/<name>.md`, `el/<name>/NOTES.md`. All are read into agent context ([06](../v0.1/06-project-memory.md)).
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `id` | string | — | Unique within pipeline |
-| `type` | string | — | One of the types above |
-| `depends_on` | list[string] | `[]` | Step IDs that must succeed first |
-| `timeout_seconds` | int | `1800` | Hard timeout |
-| `retries` | int | `0` | On transient failure |
-| `retry_delay_seconds` | int | `30` | Initial delay; exponential backoff applied |
-| `on_failure` | string | `"fail"` | `fail` \| `warn` \| `continue` |
-| `env` | table | `{}` | Extra env vars; merged with runner defaults |
-| `if` | string | `""` | CEL-like expression; step runs only if true |
+## `el/<name>/` — a dlt component
+
+`__init__.py` carries a **provenance header** recording what generated it and from where; Carve regenerates below the header and preserves user edits, and never touches a file lacking the header (treated as user-authored). `requirements.txt` pins dlt deps. The DLT engineer writes `.dlt/config.toml.template` / `.dlt/secrets.toml.template` — never the live `.dlt/secrets.toml` ([03](../v0.1/03-flat-layout.md), [04](../v0.1/04-el-agent-dlt.md)).
+
+## `.carve/` — generated runtime state (gitignored)
+
+Postgres holds run history, plans, builds, schedules, investigations, etc. — **there is no SQLite `state.db`** (spec 01). `.carve/` holds only local artifacts: `token` (mode 0600), `plans/<id>.json`, `asks/<id>.json` (answer + tool-call trace), `workspaces/<derived-name>/` (separate-remote clones, derived from `slugify(url)-ref`), `ui/` (rendered HTML).
 
 ## Validation
 
-All configs are validated against pydantic schemas at load time. Errors are formatted with file path and line number where possible. Run `carve config validate` to check without applying.
+Configs are validated against Pydantic models at load time, with file + line context. `carve pipelines validate [<name>]` checks pipeline TOML + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names) ([08](../v0.1/08-multi-step-pipeline.md)). The Pydantic models in `src/carve/` are the executable source of truth; this doc is the human companion.
 
-```
-$ carve config validate
-✗ carve/pipelines/daily_revenue.toml:24
-  Step "dbt_build" depends on "ingest_orders" but no such step exists.
-  Did you mean "ingest_orders_v2"?
-```
+## Cross-references
 
-## Schema generation
-
-The pydantic schemas backing this document are exported to `schemas/` in the Carve repo. Editor integration:
-
-```jsonc
-// .vscode/settings.json
-{
-  "json.schemas": [
-    { "fileMatch": ["carve/pipelines/*.toml"], "url": "https://schemas.carve.dev/pipeline.json" },
-    { "fileMatch": ["carve/agents/*.toml"],    "url": "https://schemas.carve.dev/agent.json" }
-  ]
-}
-```
-
-VSCode's TOML extension (Even Better TOML) honors these and gives autocomplete.
+- The control-plane model: [v0.1-03](../v0.1/03-flat-layout.md), [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md)
+- CLI that reads/writes these: [cli-reference.md](./cli-reference.md)
+- Vocabulary: [glossary.md](./glossary.md)

@@ -73,7 +73,7 @@ my-carve-control-plane/
 │   ├── standards.md                 # user-authored (spec 06)
 │   ├── decisions.md                 # append-only (spec 06)
 │   └── agents/
-│       └── *.toml                   # agent definitions; optional, agent overrides for built-ins
+│       └── *.md                     # agent definitions (markdown + frontmatter, spec 16); optional overrides for built-ins
 ├── el/                              # dlt artifacts; one directory per pipeline
 │   ├── stripe_charges/
 │   │   ├── __init__.py              # dlt source + resource definitions

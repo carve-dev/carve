@@ -1,134 +1,203 @@
 # Reference — Glossary
 
-Terms used throughout the Carve documentation, codebase, and UI. Where a term has a specific meaning in Carve different from its general meaning, the Carve definition takes precedence.
+Terms used throughout the Carve documentation, codebase, and UI. Where a term has a specific meaning in Carve different from its general meaning, the Carve definition takes precedence. Alphabetical.
 
 ---
 
 **Agent**
-A configured LLM with a system prompt and a set of skills. Carve ships four built-in agents (orchestration, dbt-engineer, snowflake-engineer, quality) and supports user-defined ones. An agent is a TOML file in `carve/agents/` plus optional Python customization.
+A declarative role definition the AI harness runs: a markdown file with YAML frontmatter (`name`, `description`, `model`, `tools`, `allowed_paths`, `max_mode`, `classifications`) plus a system-prompt body. Built-ins live at `src/carve/core/agents/builtin/<name>.md`; a user file at `carve/agents/<name>.md` overrides a built-in of the same name. See [v0.1-16](../v0.1/16-extensibility.md).
 
 **Agent loop**
-The conversational pattern where an agent receives a goal, calls skills (tools), reads results, and continues until it produces a final answer or hits a limit. Implemented in `src/carve/agents/loop.py`.
+The conversational pattern where an agent receives a goal, calls tools, reads results, and continues until it produces an answer or hits a limit. The harness adds permission gating, context management, and subagent delegation on top of the base loop. See [v0.1-15](../v0.1/15-agent-harness.md).
 
-**Deploy**
-The verb for promoting a built pipeline to prod via PR. After `carve build` materializes a pipeline, `carve deploy <pipeline_name>` opens a PR with the pipeline's files.
+**Ask**
+A read-only investigative query, answered by the **explorer** subagent running in `read_only` mode. Produces a cited answer and changes nothing. Invoked via `carve ask`. See [v0.1-12](../v0.1/12-ask-verb.md).
 
-**Approval step**
-A pipeline step type that pauses execution and waits for a human to confirm before proceeding. Used for production deploys, destructive operations, or anything else where humans should be in the loop.
-
-**Backfill**
-Re-running a pipeline (or subset of steps) for a range of dates in the past. Used when source data was missing or wrong, and downstream tables need recomputation.
+**Backend**
+In Carve terminology, "backend" means dlt or dbt (the external tools Carve drives) — *not* a database or a server-side application.
 
 **Brownfield**
-Onboarding into an existing dbt project. Carve detects the project structure, infers conventions, and generates configuration without modifying existing files. Contrast with greenfield.
+Adopting Carve into an existing dbt/dlt project. Carve infers conventions and references the existing components without rewriting them. The orchestration-only / brownfield path is a central adoption mode, not a corner case. Contrast with greenfield.
 
-**Capability flow**
-Carve's mental model: user goal → agent decomposes → specialist agents execute → code is written → code runs → state changes. Documented in `ARCHITECTURE.md`.
+**Build**
+The verb that materializes a reviewed Plan into files (dlt code, `pipelines/<name>.toml`). `carve build <plan_id>` writes files and emits the `post_build` hook; it does not deploy. Distinct from plan (no files) and deploy (promotion).
 
-**Carve runner**
-The execution backend. M1 ships `LocalVenvRunner` (subprocess in a managed venv); future backends include Docker, Kubernetes, and managed cloud runners.
+**Component**
+An independently-versioned dlt or dbt unit the control plane references **by name** (`component = "<name>"`), rather than containing. In simple mode components are discovered by convention (each `el/<name>/` is a dlt component; the detected dbt project is a dbt component); in multi mode they are declared as `[components.<name>]` blocks in `carve.toml`. See [v0.1-03](../v0.1/03-flat-layout.md).
 
-**CEL**
-Common Expression Language — Google's expression language used for Carve's `if` conditions on steps. Chosen for its small, sandboxed footprint vs full Python eval.
+**Component locator**
+The resolver that turns a component name into a concrete code location — a local path (simple / separate-local mode) or a remote repo at a pinned ref (separate-remote mode) cloned into the workspace cache.
+
+**Control plane**
+Carve's core identity: it builds, schedules, and monitors pipelines by *referencing* independently-versioned dlt/dbt/sql components, rather than being a project that contains them. `carve.toml` is the control-plane config. See [`_strategy/2026-06-control-plane.md`](../_strategy/2026-06-control-plane.md).
 
 **Conventions**
-The house style for a project, expressed in `carve/conventions.md`. Naming, layout, tagging, test patterns. Loaded into agent context so generated code matches existing code.
+A project's inferred house style (naming, layout, tagging, test patterns) in `carve/conventions.md`. Carve-generated and refreshable; loaded into agent context so generated code matches existing code. See [v0.1-06](../v0.1/06-project-memory.md).
 
 **Convention inference**
-The brownfield process where Carve scans an existing dbt project and produces a `conventions.md` reflecting current practice. The user can edit; Carve doesn't claim the inference is correct.
+The brownfield process where Carve scans an existing dbt/dlt project and writes `conventions.md` reflecting current practice. Re-runnable via `carve memory refresh`.
 
 **DAG**
-Directed acyclic graph. Used in two places: pipelines (steps depending on other steps) and dbt models (refs forming a graph).
+Directed acyclic graph. Used for pipeline steps (a step's `depends_on`) and for dbt model dependencies (refs).
 
 **dbt**
-[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve integrates with deeply. Carve treats dbt-core as a runtime dependency and assumes dbt projects are the primary modeling format.
+[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve drives for the transform phase. Carve treats dbt-core as a runtime dependency. The dbt **engineer** (AI authoring of models) arrives in v0.2; v0.1 runs dbt via the `dbt` step type.
 
 **dbt manifest**
-The compiled representation of a dbt project, produced by `dbt parse`. JSON file at `target/manifest.json`. Carve reads this to understand model relationships, descriptions, and tests.
+dbt's compiled project representation (`target/manifest.json`). Carve reads it (via the `dbt_manifest` skill) for model dependencies, sources, and tests — this *is* dbt's model-level lineage. See [v0.1-19](../v0.1/19-lineage.md).
 
 **DCO**
-Developer Certificate of Origin — a sign-off mechanism (`git commit -s`) certifying the contributor has the right to submit the contribution. Used instead of a Contributor License Agreement.
+Developer Certificate of Origin — a sign-off (`git commit -s`) certifying the contributor's right to submit. Required on every commit; chosen over a CLA to lower friction. See [governance.md](./governance.md).
 
-**Embedding search**
-Semantic search over indexed content (model descriptions, column docs, etc.) using vector embeddings. Carve indexes the dbt manifest and convention files for the schema-search skill.
+**Delegation**
+The orchestrator handing a scoped task to a subagent via a synchronous `delegate` call that returns a `DelegationResult`. The child's permission mode is clamped to `min(parent, agent)`. The mechanism behind the engineer + review-subagent pattern. See [v0.1-15](../v0.1/15-agent-harness.md).
+
+**Deploy**
+Promoting built code to a target via a **configurable handoff** (`files` | `commit` | `push` | `pr`; default `pr`). Cross-repo graduated components produce coordinated linked PRs. `carve deploy <pipeline>`. See [v0.1-14](../v0.1/14-deploy-pr.md).
+
+**dlt**
+[Data load tool](https://dlthub.com) — the Python library Carve generates and runs for the extract-load phase. Carve authors dlt code; dlt executes it and maintains its own schema. See [v0.1-04](../v0.1/04-el-agent-dlt.md).
+
+**dlt resource**
+A dlt construct: one endpoint or table inside a source (e.g., `charges`). dlt's stored schema records which resource produced which destination table — read via the `dlt_schema` skill.
+
+**dlt source**
+A dlt construct: a logical connector (e.g., Stripe) containing one or more resources.
+
+**Embedding search** *(post-v0.1)*
+Semantic search over indexed model descriptions / column docs via vector embeddings, for fuzzy concept lookup. Deferred to post-v0.1; v0.1 retrieval is catalog + manifest + grep + investigation.
 
 **Event bus**
-The internal pub/sub for run events (step started, step completed, log line). Implemented as in-process async broadcast; consumed by the WebSocket bridge for real-time UI.
+The internal pub/sub for runtime events (`job.*`, `run.*`, `step.*`, `schedule.*`). In-process for OSS; the seam where hooks and webhooks subscribe. See [v0.1-07](../v0.1/07-runtime.md).
 
-**Event-driven UI**
-The UI updates in response to events from the event bus, not polling. A pipeline run's state flows live to all connected viewers.
+**Explorer**
+The read-only subagent behind `carve ask` — investigates code, dbt manifest, dlt schema, and live `INFORMATION_SCHEMA` to answer how/where/why/lineage questions, citing what it found. Runs in `read_only` mode. See [v0.1-12](../v0.1/12-ask-verb.md).
 
-**Fixture**
-A test artifact: a sample dbt project, a synthetic Snowflake response, a recorded MCP server interaction. Lives under `tests/fixtures/`.
+**Graduation**
+Moving a component from simple mode (convention-discovered, in-repo) to multi mode (its own local path or remote repo), via `carve component <name> --separate-local/--separate-remote`. Reversible with `--same-repo`. See [v0.1-08](../v0.1/08-multi-step-pipeline.md).
 
 **Greenfield**
-Initializing a new project from scratch (no existing dbt). Carve scaffolds `dbt_project.yml`, sample models, and configuration. Contrast with brownfield.
+Starting a new project with no existing dbt/dlt. `carve init` scaffolds the structure. Contrast with brownfield.
 
-**Guardrails**
-Configurable rules the orchestration agent enforces before applying changes: approval requirements, cost limits, forbidden operations, schema restrictions. Defined in `carve/guardrails.toml`.
+**Harness (AI harness)**
+Carve's Claude-Code-style agentic engine: an agentic loop + terminal-grade tools (edit/bash/grep/web) + a permission system + context management (subagent isolation + compaction), specialized for data work. The cross-cutting engine all the agents run on. See [`_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md).
+
+**Hook**
+A user-defined command run at a tool or lifecycle seam (`pre_tool`, `post_tool`, `pre_deploy`, `post_build`, `on_run_failed`), declared in `carve/hooks.toml`. Runs through the same `bash` gate, mode-clamped, fail-closed. See [v0.1-16](../v0.1/16-extensibility.md).
+
+**Hosted product**
+Carve's commercial offering: multi-tenant, managed infrastructure, SSO/OAuth/RBAC, audit log, a polished cloud UI, premium integrations, hosted secrets. Earns its price on operational excellence, not feature gating — no API/MCP surface is withheld from OSS. See [governance.md](./governance.md).
+
+**Idempotency**
+The property that re-running an operation yields the same result. The job queue enforces at most one queued + one running job per pipeline (partial unique indexes); the reconciler reconstitutes definitions without duplication.
+
+**Investigation**
+A recovery diagnosis: a Postgres row capturing a failure's classification, markdown diagnosis, proposed Plan, and resolution status. Produced by the recovery engineer on retries-exhausted failures; surfaced via `carve investigations`. See [v0.1-17](../v0.1/17-recovery-engineer.md).
+
+**Job (runtime)**
+A row in the `jobs` table representing one queued or executing pipeline invocation. Distinct from a Run (which records the execution). See [v0.1-07](../v0.1/07-runtime.md).
 
 **Lineage**
 The relationship between data assets. dbt provides model-level lineage (its manifest) and dlt maps each resource to the destination table it writes (its stored schema). Carve maintains **no** lineage store of its own — the explorer **investigates** these native sources (plus the code) on demand to answer "where does this come from / what breaks if I change this" ([v0.1-19](../v0.1/19-lineage.md)). Pipeline-level lineage ("which step refreshes which table") falls out of dlt's schema + the pipeline definitions (component-by-name).
 
 **MCP**
-[Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic's standard for connecting LLMs to external tools. Carve consumes external MCP servers as namespaced skills (`mcp:server:tool`) and exposes itself as an MCP server.
+[Model Context Protocol](https://modelcontextprotocol.io/) — the standard for connecting LLMs to external tools. Carve consumes external MCP servers as namespaced, effects-tagged skills (`mcp:server:tool`) and exposes itself as an MCP server (`carve mcp-serve`). See [v0.1-10](../v0.1/10-mcp-server.md), [v0.1-16](../v0.1/16-extensibility.md).
 
-**Orchestration agent**
-The "general manager" agent. Has access to other agents (not raw skills). Decomposes user goals, delegates to specialists, enforces guardrails.
+**Multi mode**
+The configuration where components live in their own paths or repos, declared as `[components.<name>]` blocks in `carve.toml` (typically pinned). Reached by graduation from simple mode. Contrast with simple mode.
+
+**Optimistic claim**
+The job-queue pattern: `UPDATE ... WHERE status='queued' ... FOR UPDATE SKIP LOCKED`. Lets multiple workers pull from one queue without a broker. See [v0.1-07](../v0.1/07-runtime.md).
+
+**Orchestrator**
+The harness's main loop: classifies a goal, gathers bounded context, and delegates scoped tasks to subagents (engineers, reviewers, the explorer, recovery). Owns refinement and the review fan-out; does not author component code itself. See [v0.1-15](../v0.1/15-agent-harness.md).
+
+**OSS edition**
+The open-source Carve (this repo), Apache 2.0, feature-complete for single-team self-hosters. Anything that ships in v0.1 stays OSS. See [governance.md](./governance.md).
+
+**Permission mode**
+One of `read_only` | `plan` | `build` | `deploy` — the harness's escalating capability tiers. The **permission gate** enforces them (and `allowed_paths`, the bash sandbox, secret-path denial) at the tool-call boundary; agent grants are *attenuated* to `grant ∩ mode-permitted`, never widened. Fail-closed. See [v0.1-15](../v0.1/15-agent-harness.md).
+
+**Pin**
+A fixed component revision (commit SHA or tag) recorded as `ref` in a `[components.<name>]` block; the locator checks out exactly that revision. `ref` wins over `branch`; absent both, the remote's default-branch HEAD is tracked. Simple-mode components are never pinned.
 
 **Pipeline**
-A named DAG of steps, scheduled or triggered manually. Defined in `carve/pipelines/<name>.toml`. The unit users think about; "run my daily revenue pipeline."
+A named DAG of steps (`dlt` / `dbt` / `sql`), defined in `pipelines/<name>.toml`. The unit users think about ("run my daily revenue pipeline"). Composed from components by name. See [v0.1-08](../v0.1/08-multi-step-pipeline.md).
+
+**Pipeline engineer**
+The subagent that composes components by name into `pipelines/<name>.toml`, verifying via `carve pipelines validate` + a dev run. The control-plane runtime specialist. See [v0.1-08](../v0.1/08-multi-step-pipeline.md).
 
 **Plan**
-A persisted, hash-validated representation of intended changes. Produced by `carve plan` (or implicitly by `carve build`). Contains: file edits, pipeline changes, expected effects, cost estimate. Lives under `.carve/plans/`.
+A persisted, reviewable representation of intended changes (goal, summary, expected effects), produced by `carve plan`. Files are written only on `carve build`. Lives under `.carve/plans/`. Refinable; refinements chain via `parent_plan_id`.
 
-**Plan/deploy**
-The two-phase workflow for changes: plan first, review, deploy only if accepted. Modeled on Terraform; gives users a chance to catch problems before they happen.
+**Provenance header**
+The comment block atop Carve-generated dlt code recording what generated it, from which source, at what commit, and which plan/build. Carve regenerates below the header and preserves user edits; a file without the header is treated as user-authored and never modified. See [v0.1-03](../v0.1/03-flat-layout.md).
 
-**Profile** (dbt)
-A connection configuration for dbt, in `~/.dbt/profiles.yml` or in-project. Carve reads but does not write profiles by default.
+**Reaper**
+The runtime loop that reclaims jobs from crashed workers via stale-heartbeat detection. See [v0.1-07](../v0.1/07-runtime.md).
 
-**Profile** (Carve)
-A named environment configuration (`dev`, `staging`, `prod`) selected via `--profile`. Determines which connections, runner, and guardrails apply.
+**Reconciler**
+The loop in `carve serve` that reconciles each `pipelines/<name>.toml` *definition* (steps, DAG, component refs, pins) into state — code wins. It seeds a schedule row from `[seed_schedule]` at first registration but never afterward touches the live schedule (which is data). See [v0.1-08](../v0.1/08-multi-step-pipeline.md).
 
-**Quality agent**
-The specialist for testing and data quality. Generates tests from data shape, identifies anomalies, recommends test coverage improvements.
+**Recovery engineer**
+The subagent that diagnoses a retries-exhausted failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer arrives in v0.2). Never writes component code or auto-deploys; produces an Investigation + a reviewable Plan. See [v0.1-17](../v0.1/17-recovery-engineer.md).
+
+**Refine**
+Iterating on a Plan with feedback (`carve plan --refine <plan_id> "<feedback>"`), producing a child plan in the same chain.
+
+**Repo topology**
+Same-repo vs separate-local vs separate-remote placement of a component's code — chosen per component, independently. See [v0.1-03](../v0.1/03-flat-layout.md).
 
 **Run**
-A single execution of a pipeline (or step). Has a unique ID, status, start/end times, and step-level subrecords. Persisted in the state DB.
+A single execution of a pipeline: a row with status/timing/cost and per-step subrecords, plus streamed logs. Persisted in Postgres (with an active→archive lifecycle). Distinct from a Job (the queue entry).
+
+**Runtime**
+Carve's deliberately-narrow execution layer: scheduler + Postgres-backed job queue + worker pool + reaper + archiver. No asset-graph reactivity, conditional branching, or cross-pipeline triggers (those are explicitly out of scope). See [v0.1-07](../v0.1/07-runtime.md).
 
 **Schema retrieval**
 The pattern of letting agents query the schema (catalog, dbt manifest, dlt schema) on demand rather than memorizing it in the prompt. Implemented via reader skills (`dbt_manifest`, `dlt_schema`, catalog introspection); lineage is investigated, not stored (see *Lineage*).
 
+**Seed schedule**
+The optional `[seed_schedule]` block (`cron` / `timezone` / `target`) in `pipelines/<name>.toml`. A one-time **seed** of the live `schedules` row at first registration — not the source of truth, and it cannot pause (no `paused`/`enabled` key). Re-applied only via `carve schedule reseed`. The live schedule is data, changed via `carve schedule`. See [v0.1-07](../v0.1/07-runtime.md), [v0.1-08](../v0.1/08-multi-step-pipeline.md).
+
+**Simple mode**
+The default single-repo configuration: no `[components.*]` blocks, components discovered by convention, schedules from `[seed_schedule]`, branch-HEAD (unpinned). The delightful zero-friction default; teams graduate to multi mode incrementally. Contrast with multi mode.
+
 **Skill**
-A function an agent can call. Skills can be Python callables (in `src/carve/skills/`), user code (in `carve/skills/`), or MCP tools from external servers. Skills have typed parameters validated by pydantic.
+A capability an agent can use. Built-in callable skills are `@skill` functions (catalog introspection, `dbt_manifest`, `dlt_schema`, `memory_read`); external MCP tools arrive as namespaced skills. Distinct from a skill pack (content, not a callable). See [v0.1-16](../v0.1/16-extensibility.md).
 
-**Skills SDK**
-The Python API for authoring custom skills. `from carve.skills import skill, SkillContext`. Documented in `M3-06`.
-
-**Snowflake agent**
-The specialist for Snowflake-specific work: warehouse sizing, role grants, query optimization, DDL crafting. Has connection-aware skills.
+**Skill pack**
+A folder (`carve/skills/<name>/SKILL.md` + optional `scripts/`/`resources/`) that surfaces as description-matched **content injected into context** — not a callable tool. The curated connector library ships as skill packs. See [v0.1-16](../v0.1/16-extensibility.md).
 
 **Source of truth**
-The authoritative location of state. In Carve, the source of truth for definitions is the git repo; the source of truth for run history is the state DB.
+The authoritative location of state. Pipeline *definitions* are code (git); the *schedule* and *run state* are data (Postgres); dbt/dlt own their respective schemas. The three-tier code/data split underpins the control-plane model.
 
-**State DB**
-The SQLite (or Postgres) database that persists run history, plan store, agent versions, and audit log. Default: `carve/.carve/state.db`. Schema in `src/carve/db/`.
+**SQL tool**
+The dialect-aware capability every agent uses (parse/validate/transpile via `sqlglot`, per-dialect `INFORMATION_SCHEMA` introspection, role-gated execution). SQL is a cross-cutting *tool*, not an agent. A thin SQL specialist handles explicit authoring. See [v0.1-18](../v0.1/18-sql-layer.md).
+
+**State store**
+The Postgres database that persists pipelines, plans, builds, jobs, runs, steps, logs, schedules, investigations, and audit trails. SQLite was retired in spec 01. See [v0.1-01](../v0.1/01-state-store-postgres.md).
+
+**Static HTML UI**
+Carve's minimal local web UI: pages (run history, per-run detail + logs, pipelines) regenerated on run events and served on loopback by `carve docs serve`. No live updates, no auth, no lineage view in v0.1. The polished operational UI is the hosted product. See [v0.1-11](../v0.1/11-static-html-ui.md).
 
 **Step**
-The unit of execution. A step has a type (`python`, `sql`, `dbt`, `shell`, `http`, `agent`, `approval`), parameters, and dependencies. Steps compose into pipelines.
+The unit of execution inside a pipeline. v0.1 has three step types — `dlt`, `dbt`, `sql` — each with `id`, `depends_on`, and a `[steps.failure_mode]` (`fail`/`warn`/`continue`/`retry`/`skip_downstream`). `dlt`/`dbt` steps reference a component by name; `sql` steps reference a file + connection. See [v0.1-08](../v0.1/08-multi-step-pipeline.md).
 
-**Step type**
-One of the seven built-in types, plus user-registered custom types. Each step type is a Python class implementing the `Step` protocol in `src/carve/steps/base.py`.
+**Subagent**
+A specialist agent the orchestrator delegates a scoped task to, running in its own isolated context and returning a summary (the context-isolation mechanism that keeps the main loop bounded). The DLT engineer, pipeline engineer, recovery engineer, explorer, and the review subagents (dlt-qa, dlt-security) are subagents. See [v0.1-15](../v0.1/15-agent-harness.md).
 
-**Sub-agent**
-A specialist agent invoked by orchestration. Sub-agents don't directly receive user goals; they receive scoped tasks from the orchestrator.
+**Target**
+A named environment (e.g., `dev`, `prod`) defined in `carve/connections.toml`, carrying a dialect, credentials, and role scoping. `default_target` is set in `carve.toml`.
 
-**Telemetry**
-Anonymous usage data collected to understand how Carve is used. Opt-out via `CARVE_NO_TELEMETRY`. Documented in `docs/privacy.md`.
+**Token (API)**
+The bearer token authenticating REST/MCP requests. The OSS install writes a single token to `.carve/token` (mode 0600); `carve auth token rotate` mints a new one. Hosted adds scoped service accounts. See [v0.1-09](../v0.1/09-rest-api.md).
 
-**Workbench**
-The primary UI screen for daily use: goal input, active goals, task graph, artifact preview. Documented in `M2-12`.
+**TOML**
+The config format for `carve.toml`, `pipelines/<name>.toml`, `connections.toml`, `runtime.toml`, `hooks.toml`, and `mcp.toml`. (Agents and skill packs are markdown, not TOML.)
 
-**WebSocket bridge**
-The component that translates internal event-bus events to WebSocket frames for the UI. Implemented in `src/carve/server/ws.py`.
+**Verify-by-execution**
+The harness's accuracy primitive: an engineer generates code, *runs* it (e.g., `dlt pipeline run`, `dbt build`, `carve pipelines validate`), reads the parsed result, and self-corrects within bounded iterations before returning a Plan. Grounding in real tool output over the model's guesses. See [v0.1-15](../v0.1/15-agent-harness.md).
+
+**Workspace cache**
+The local cache (`.carve/workspaces/<derived-name>/`) where separate-remote components are cloned at their pinned ref for use. Managed by Carve; cleared via `carve workspaces clear`. See [v0.1-03](../v0.1/03-flat-layout.md).
