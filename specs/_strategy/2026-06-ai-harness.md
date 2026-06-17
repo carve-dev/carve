@@ -33,7 +33,7 @@ The orchestrator is the **main loop**; everything else is a delegated subagent. 
 | **DBT engineer** (**v0.2**) | author + run dbt models/tests/sources | dlt + dbt repo context; verifies via `dbt build`/`test` |
 | **DBT qa** (review, v0.2) | test/coverage/convention review | |
 | **Pipeline engineer** | compose components **by name** into `pipelines/<name>.toml` | the control-plane runtime specialist (spec 08) |
-| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT/DBT/SQL engineer | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
+| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT or SQL engineer (dbt engineer in v0.2) | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
 | **Explorer** | read-only Q&A: how/where/why, lineage, logic, definitions, tests, "where does this data come from" | the `ask` verb (spec 12), elevated; citation-backed |
 
 **SQL is a cross-cutting capability, not a silo:** a **dialect-aware tool layer** every subagent uses (snowflake / duckdb / postgres / bigquery / databricks / sqlserver) — `sqlglot` for transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution (read vs write, DDL prompts) — plus a thin **SQL specialist** for "explain / write / modify this query." **Connect/onboarding** (the `carve connect` first-magical-moment) is a capability the orchestrator wields, not a standing agent.

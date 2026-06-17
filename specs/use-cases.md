@@ -18,12 +18,19 @@ Each use case follows this shape:
 
 ## Cross-cutting model
 
+**Carve is a control plane plus an AI harness, over independently-versioned dlt/dbt/sql components — not a project that contains them.** The value proposition: **build, schedule, and monitor pipelines — all with AI.** Carve schedules, orchestrates, and monitors dlt + dbt + sql pipelines; its AI builds and deploys those components for you, **or** you bring your own (built outside Carve) and Carve just orchestrates them. (See [`_strategy/2026-06-control-plane.md`](_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md).)
+
+- **The control plane** is the thing you run (`carve serve`), backed by Postgres. It holds the orchestration entities — pipelines, steps, schedules, jobs, runs, deploys — plus **versioned references** to the code components. It is a control-plane *instance*, not a monorepo of your code.
+- **The components** — EL (dlt), Transform (dbt), and `sql`/other steps — are independently-versioned, independently-deployed code the control plane references **by name**. EL and dbt are **symmetric**: neither is a privileged fused directory. A `pipelines/<name>.toml` composition references each component (by pinned ref, or branch-HEAD in simple mode), composes them into a step DAG (dlt → dbt → sql), and attaches a schedule.
+- **Two modes, both first-class.** *Build-with-Carve* — the AI harness authors components into their repos. *Orchestration-only* — Carve references existing dlt/dbt/sql by version and only composes/schedules/monitors them, generating no code. The orchestration-only / brownfield org (an existing dbt repo with its own CI/CD and team, an existing dlt source) is a central adoption path, not a corner case — it is exactly why the control plane *references* components rather than owning them.
+- **Simple mode is the delightful default.** A small team can keep the control-plane config and all components in one repo (single working tree); the architecture is unchanged — the control plane still references components, they just happen to be co-located. Components can **graduate** to separate repos (pinned by ref) incrementally, with no pipeline rewrites and no state migration; "born multi" (brownfield) uses the same machinery.
+
 Two operational shapes underlie every use case below:
 
-- **Developer install (laptop).** `pip install carve` + project repo cloned. `.env` holds only **dev** credentials. Carve is **Postgres-only from day one** (SQLite was retired in spec 01): `carve init` bundles a one-command docker-compose Postgres, or you point at managed Postgres via `--external-postgres`. The same install authors (`plan`/`build`/`deploy`) and runs a local `carve serve` with scheduler/workers. CLI/MCP can drive a local `carve serve` OR run plan/build in-process.
+- **Developer install (laptop).** `pip install carve` + the control-plane repo (and, in simple mode, co-located components) cloned. `.env` holds only **dev** credentials. Carve is **Postgres-only from day one** (SQLite was retired in spec 01): `carve init` bundles a one-command docker-compose Postgres, or you point at managed Postgres via `--external-postgres`. The same install authors (`plan`/`build`/`deploy`) and runs a local `carve serve` with scheduler/workers. CLI/MCP can drive a local `carve serve` OR run plan/build in-process.
 - **Central server install (one per organization).** Same package, deployed as a long-running service. `.env` holds only **prod** credentials. Managed Postgres. `carve serve` runs 24/7 with scheduler + workers. Exposes REST + MCP on an internal URL.
 
-**Targets are a soft contract; credential presence is what makes a target actually runnable on a given install.** A laptop physically cannot touch prod because it has no prod credentials. Code crosses the dev/prod gap via git PR → CI-driven deploy to the central server.
+**Targets are a soft contract; credential presence is what makes a target actually runnable on a given install.** A laptop physically cannot touch prod because it has no prod credentials. Code crosses the dev/prod gap via the configurable deploy handoff (default git PR) → CI-driven deploy to the central server.
 
 **Credentials are referenced, never owned.** Carve writes `${VAR}` references into `.dlt/secrets.toml`, `profiles.yml`, and `connections.toml`. Actual values live in `.env` (or env vars injected by the host). Carve never persists secrets in its state store.
 
@@ -70,7 +77,7 @@ Two operational shapes underlie every use case below:
 12. **EL specialist:** Generates Plan with file diffs:
     - `el/salesforce/__init__.py` (customized from curated source)
     - `el/salesforce/requirements.txt`
-    - `pipelines/salesforce.toml` (single-step dlt pipeline, dev target by default, stub `[schedule]` block)
+    - `pipelines/salesforce.toml` (single-step dlt pipeline, dev target by default, optional stub `[seed_schedule]` block)
     - `sources.yml` patch adding `salesforce` source with three tables (if dbt is wired up)
 13. **Plan returned to chat.** Analyst sees file diffs, cost estimate, the inferred schema (`raw_salesforce`).
 14. **Analyst (chat):** "Use `raw_sfdc` schema instead, that's what we use." → triggers `carve plan --refine`.
@@ -84,7 +91,7 @@ Two operational shapes underlie every use case below:
 22. **Orchestrator:** Invokes `carve deploy salesforce`. Creates a feature branch, commits the new files + `sources.yml` patch + `.env.example` update, pushes, opens a PR via the configured deploy `pr_command` (default mechanism per [v0.1-14](v0.1/14-deploy-pr.md); `handoff = pr`).
 23. **Human reviewer (could be analyst, could be data engineer):** Reviews PR. CI runs `dlt pipeline check`, `dbt parse`, lints. PR is merged to `main`.
 24. **CI workflow on merge to main:** Builds and deploys the new code to the central `carve serve` (e.g., `kubectl rollout restart`, `docker compose pull && up -d`, or `systemctl restart carve`). Recommended template ships with `carve init`.
-25. **Prod `carve serve`:** Boots with the updated code. Scheduler reads `pipelines/salesforce.toml`, finds the schedule (default daily or whatever the analyst set), inserts a row into the schedules table.
+25. **Prod `carve serve`:** Boots with the updated code. On first registration of `pipelines/salesforce.toml`, the scheduler seeds a `schedules` row from the pipeline's optional `[seed_schedule]` block (default daily, or whatever the analyst seeded). Thereafter the live schedule is **data** — changed via `carve schedule`, not by re-deploying (see UC2).
 26. **Prod scheduler (next cron tick):** Inserts a job. A worker claims it, runs `dlt pipeline run salesforce --target prod` using prod's env vars. Rows land in `prod_db.raw_sfdc.{accounts, contacts, opportunities}`.
 27. **Analyst (later, from laptop, optional):** `CARVE_SERVER_URL=https://carve.internal.co carve runs --pipeline salesforce` to confirm the first prod run succeeded. Or just gets a Slack webhook notification on `run.succeeded`.
 
@@ -98,7 +105,7 @@ Two operational shapes underlie every use case below:
 - **Hint style follows dlt's verified-sources defaults: mostly inference, with explicit hints on critical columns** (primary key, cursor column, anything the agent has a structural reason to pin). The EL specialist can add hints during refinement when the analyst needs stricter contracts on specific columns; otherwise dlt's schema inference does the work.
 - Once a source is verified, the orchestrator can call source-specific introspection skills (`salesforce_list_objects`, etc.) to inform planning. These are exposed as part of each curated source.
 - No credentials ever pass through the LLM context. The flow is intentionally split between chat (instructions) and terminal (credential entry + verification).
-- `carve deploy` opens a PR; it does **not** push code to the central server. CI on merge handles the rollout.
+- `carve deploy` is a **configurable handoff** (`files` / `commit` / `push` / `pr`; default `pr`, per [v0.1-14](v0.1/14-deploy-pr.md)). In the default PR mode it opens a PR; it does **not** push code to the central server. CI on merge handles the rollout. When a component has graduated to its own repo, deploy coordinates a **linked PR** across the component repo and the control-plane composition (ingest-first ordering).
 - `--target` defaults to `dev` for laptop-driven actions. Prod runs are always either scheduled or explicitly invoked against the central server (`CARVE_SERVER_URL=...`).
 - The analyst can view prod state from their laptop by pointing the CLI/MCP at the prod URL with their personal token.
 
@@ -124,15 +131,16 @@ Two operational shapes underlie every use case below:
 **Goal.** Promote the pipeline to prod and have it run every 15 minutes from the central server.
 
 **Where it happens.**
-- Setting the schedule → analyst's laptop (declarative, via plan/build/deploy)
+- Deploying the pipeline code → analyst's laptop (configurable handoff, default PR)
 - Reviewing the PR → git provider
 - Rolling out → CI workflow on PR merge
-- Picking up the schedule → prod `carve serve` reconciles `pipelines/*.toml` against the `schedules` table
+- Seeding the schedule → prod `carve serve` seeds a `schedules` row from `[seed_schedule]` at first registration
+- Setting / adjusting the live schedule → `carve schedule` against the prod server (instant, audited) — the schedule is **data**, not code
 - Running → prod scheduler fires; prod worker executes against prod target
-- Observing / adjusting later → analyst's laptop CLI/MCP pointed at the prod server with their personal token
+- Observing later → analyst's laptop CLI/MCP pointed at the prod server with their personal token
 
 **Pre-conditions.**
-- UC1 completed locally: `el/salesforce/`, `pipelines/salesforce.toml` (no `[schedule]` block or a `paused = true` placeholder), and the dbt source patch exist on a feature branch
+- UC1 completed locally: `el/salesforce/`, `pipelines/salesforce.toml` (optionally a `[seed_schedule]` block, e.g. a daily default), and the dbt source patch exist on a feature branch
 - Local `carve run salesforce --target dev` has been verified
 - Central `carve serve` is deployed at `https://carve.internal.co` and CI rollout pipeline is configured
 - `connections.toml` has a `[snowflake.prod]` block referencing prod env vars; prod server has those env vars set
@@ -140,39 +148,32 @@ Two operational shapes underlie every use case below:
 
 ### Walkthrough
 
-**Setting the initial schedule (laptop)**
+**Deploying the pipeline code (laptop)**
 
-1. **Analyst (chat):** "Set this pipeline to run every 15 minutes in prod."
-2. **Orchestrator:** Classifies → pipeline modification (schedule only). Routes through plan/build for the audit trail rather than mutating runtime state directly (see open question on this choice).
-3. **Orchestrator → runtime specialist:** Pre-scoped context includes current `pipelines/salesforce.toml` content, the requested cadence, and the team's timezone convention from `carve/conventions.md` or `runtime.toml`.
-4. **Runtime specialist:** Generates a Plan with a single file diff — `pipelines/salesforce.toml` gains:
-   ```toml
-   [schedule]
-   cron = "*/15 * * * *"
-   timezone = "UTC"
-   target = "prod"
-   paused = false
-   ```
-5. **Plan returned to chat.** Analyst sees the one-file diff and a human-readable cron summary ("every 15 minutes, UTC").
-6. **Analyst:** "Build and deploy."
-7. **Orchestrator:** `carve build <plan_id>` writes the file. `carve deploy salesforce` either amends the still-open UC1 PR (if it hasn't merged) or opens a new PR (if UC1 has already shipped). See open question.
+1. **Analyst (chat):** "Ship the Salesforce pipeline to prod."
+2. **Orchestrator:** Classifies → deploy of the existing composition + EL component. No code change is needed to set a schedule (schedule is data); deploy just promotes the pipeline so prod can register it.
+3. **Orchestrator:** `carve deploy salesforce` via the configured handoff (default `pr`). Either amends the still-open UC1 PR (if it hasn't merged) or opens a new PR (if UC1 has already shipped). See open question.
 
 **PR review and rollout (collaborative)**
 
-8. **Reviewer:** Reviews PR diff. CI runs `dlt pipeline check`, `dbt parse`, lints, plus a `carve schedule validate` check that the cron expression parses cleanly. PR is merged.
-9. **CI on merge to main:** Triggers the rollout job (recommended template ships with `carve init`). For K8s: `kubectl rollout restart deployment/carve-serve`. For docker-compose: `docker compose pull && docker compose up -d`.
+4. **Reviewer:** Reviews PR diff. CI runs `dlt pipeline check`, `dbt parse`, lints. (If the pipeline carries a `[seed_schedule]` block, CI also runs `carve schedule validate` to confirm the cron expression parses cleanly.) PR is merged.
+5. **CI on merge to main:** Triggers the rollout job (recommended template ships with `carve init`). For K8s: `kubectl rollout restart deployment/carve-serve`. For docker-compose: `docker compose pull && docker compose up -d`.
 
-**Prod picks it up**
+**Prod registers the pipeline and seeds the schedule**
 
-10. **Prod `carve serve` boots (and runs a reconciler loop):** The schedule reconciler scans `pipelines/*.toml`. For each pipeline:
-    - No row in `schedules` table → insert from TOML
-    - Row exists, TOML differs, no active runtime override → update from TOML
-    - Row exists, TOML differs, active runtime override → override holds for its TTL; TOML update is staged and takes effect when override expires (Option B precedence — see "Adjusting the schedule after deploy" below)
-    - Row exists for a pipeline whose TOML has no `[schedule]` block → mark schedule as `removed`
-    - TOML has `paused = true` → row created with status `paused-by-code` (visible in `carve schedule list` so the team can see intentionally-paused pipelines)
+6. **Prod `carve serve` boots (and runs a reconciler loop):** The reconciler scans `pipelines/*.toml` and reconciles each **pipeline definition** (steps, DAG, component refs, pins) into state — code wins. The **schedule is the one concern the reconciler does NOT own**:
+    - First registration of a pipeline → if it carries a `[seed_schedule]` block, seed a `schedules` row from it (the seed applies *once*, at first registration). No block → no schedule row is created.
+    - Pipeline already registered → the reconciler leaves the `schedules` row untouched. Editing `[seed_schedule]` in code is a no-op on an already-seeded pipeline (re-seeding requires an explicit `carve schedule set-cron … --reseed`). The live schedule is data; it is never overwritten by a deploy.
     
-    Emits `schedule.reconciled` events with before/after for each change.
-11. **Schedule row exists:** `schedules.salesforce.next_fires_at` is set to the next `*/15` boundary.
+    Emits `pipeline.reconciled` events with before/after for definition changes.
+7. **Schedule row (if seeded):** `schedules.salesforce.next_fires_at` is set to the next boundary of the seeded cron.
+
+**Setting the live schedule (laptop → prod, instant + audited)**
+
+8. **Analyst (chat, MCP pointed at prod):** "Set salesforce to run every 15 minutes in prod."
+9. **Orchestrator:** Classifies → schedule change. The schedule is **data**, so this is a direct `carve schedule` call against the prod control plane — **not** a plan/build/deploy/PR. No code changes, no rollout.
+10. **`carve schedule set-cron salesforce "*/15 * * * *" --target prod --timezone UTC`** (whether the analyst typed it or the orchestrator issued it via the API): updates `schedules.salesforce` in place. Takes effect on the next tick; a `schedule.changed` event fires and a row is appended to the `schedule_changes` audit table (`actor_token_id`, `before`, `after`, `reason`). The change is instant — no merge, no CI.
+11. **Confirmation:** CLI/chat echoes a human-readable summary ("every 15 minutes, UTC; next run at HH:MM").
 
 **First scheduled run**
 
@@ -187,53 +188,49 @@ Two operational shapes underlie every use case below:
 
 ### Adjusting the schedule after deploy
 
-**Durable change (code path):**
-- Edit `pipelines/salesforce.toml` locally (or via chat: "Change schedule to every 30 mins")
-- `plan → build → deploy → PR merge → CI rollout → reconciler picks up`
-- This is the "real" answer — code is source of truth
+The schedule is **data**, so every adjustment is the same instant, audited `carve schedule` operation against the running control plane — there is **no** code path, no PR, no reconciler precedence to reason about:
 
-**Ad-hoc change (runtime path, audited):**
-- `carve schedule pause salesforce` (against prod) → sets `schedules.paused = true`. Takes effect within 30 seconds. Reason captured.
+- `carve schedule set-cron salesforce "*/30 * * * *" --reason "reduce load"` → updates the live cron. Takes effect on the next tick.
+- `carve schedule pause salesforce --reason "source maintenance window"` → sets `schedules.paused = true`. Takes effect within 30 seconds.
 - `carve schedule resume salesforce`
-- `carve schedule override salesforce "*/30 * * * *" --reason "load test" --expires "+2h"` → runtime override visible alongside the TOML value. **Override survives reconciles until its TTL expires** (Option B precedence — kubectl-style). A deploy in the middle of an override's TTL doesn't wipe the override; once the TTL expires, the reconciler applies the current TOML value.
 
-**Audit trail:** Every schedule mutation (code reconcile or runtime override) appends a row to a `schedule_changes` audit table with `actor_token_id`, `change_kind`, `before`, `after`, `reason`, `expires_at`. Visible via `carve schedule history <pipeline>`.
+(In chat, "change the salesforce schedule to every 30 minutes" routes the orchestrator to the same `carve schedule set-cron` API call.)
+
+**Audit trail:** Every schedule mutation appends a row to the `schedule_changes` audit table with `actor_token_id`, `change_kind`, `before`, `after`, `reason`. Visible via `carve schedule history <pipeline>`. The audit comes from this log + the `schedule` RBAC scope — not from git.
 
 ### Permissions
 
-| Role | View | Pause / resume | Runtime override | Code-path change (PR) | Clear another's override |
-|---|---|---|---|---|---|
-| **admin** | yes | yes | yes (any TTL) | via PR | yes |
-| **member** | yes | yes | yes (TTL ≤ configured cap, default 24h) | via PR | no |
-| **read-only** | yes | no | no | n/a | no |
+| Role | View | Pause / resume | Set cron | Reseed from code (`--reseed`) |
+|---|---|---|---|---|
+| **admin** | yes | yes | yes | yes |
+| **member** | yes | yes | yes | yes |
+| **read-only** | yes | no | no | no |
 
-The member-override TTL cap lives in `runtime.toml` (`[scheduling] member_override_max_ttl = "24h"`). Repo-write access is independent of Carve roles — anyone who can open a PR can propose a code-path schedule change.
+Schedule mutation is gated by the `schedule` RBAC scope (held by `admin` and `member`); `read-only` can view but not change. All mutations are audited via `schedule_changes`.
 
 ### Design decisions surfaced
 
-- **Schedule is declared in `pipelines/<name>.toml`** (code is source of truth) and reconciled into the `schedules` table on prod server boot and on a periodic reconciler loop.
-- **A reconciler loop runs inside `carve serve`** alongside the scheduler. Configurable interval (default 60s). Emits `schedule.reconciled` events.
-- **Runtime overrides exist for ops scenarios** (pause, temporary cadence change) but are time-bound and audited.
+- **Schedule is data, not code.** The live schedule lives in the `schedules` table and is changed via `carve schedule` (CLI/API/UI) — instant and audited. A pipeline's optional `[seed_schedule]` block seeds the row **once**, at first registration; thereafter the reconciler never touches the schedule. (Reverses the earlier "schedule changes go through PR" decision, per [`_strategy/2026-06-control-plane.md`](_strategy/2026-06-control-plane.md).)
+- **The reconciler owns the pipeline *definition*, not the schedule.** It runs inside `carve serve` (configurable interval, default 60s) and reconciles steps / DAG / component refs / pins (code wins). It does **not** reconcile the `schedules` table — there is no code-vs-runtime precedence machinery to manage.
+- **`[seed_schedule]` is a one-time seed.** Applied only at first registration. Editing it later is a no-op; re-seeding requires an explicit `carve schedule set-cron … --reseed`. No `[seed_schedule]` block → no schedule row (the pipeline runs only on manual `carve run`).
 - **A `schedule_changes` audit table** records every mutation with the actor token. New table, add to ARCHITECTURE §9.
-- **CLI surface:** `carve schedule show / list / pause / resume / override / clear-override / history` — all available via REST + MCP.
-- **CI runs `carve schedule validate`** on every PR to catch broken cron expressions before merge.
-- **First scheduled run is on the next cron tick** after rollout, not immediate. A separate `carve run salesforce --target prod` (manual, member-allowed) lets the analyst trigger an immediate run to verify prod before waiting.
-- **Timezone defaults to UTC** with per-schedule override; team default settable in `runtime.toml`.
+- **CLI surface:** `carve schedule show / list / set-cron / pause / resume / history` — all available via REST + MCP.
+- **CI runs `carve schedule validate`** on PRs only to catch a broken cron in a `[seed_schedule]` block before merge; live schedule changes are validated at the point of the `carve schedule` call.
+- **First scheduled run is on the next cron tick** after the schedule is set, not immediate. A separate `carve run salesforce --target prod` (manual, member-allowed) lets the analyst trigger an immediate run to verify prod before waiting.
+- **Timezone defaults to UTC**, settable per schedule on `carve schedule set-cron`; team default settable in `runtime.toml`.
 - **Per-pipeline serialization (ARCHITECTURE §4.2)** means a 15-min schedule that occasionally takes longer than 15 mins won't pile up — at most one queued + one running per pipeline; missed ticks emit `schedule.skipped`.
-- **Permissions matrix:** admin / member / read-only as defined; code-path changes require repo write, not a Carve role.
+- **Permissions matrix:** schedule mutation gated by the `schedule` RBAC scope (admin + member); read-only views only.
 
 ### Resolved decisions
 
-- **Schedule changes go through plan/build/deploy/PR** even for one-line TOML diffs. Consistency + audit trail win over speed. Runtime overrides (with TTL) are the escape hatch for short-term needs.
-- **TOML-vs-runtime-override precedence: Option B (kubectl-style).** Overrides survive reconciles until their TTL expires; TOML updates stage during an active override and take effect when it expires. A teammate's PR can't silently wipe your incident mitigation.
-- **Member runtime-override TTL cap: 24h default**, configurable in `runtime.toml` (`[scheduling] member_override_max_ttl = "24h"`). Long enough for an overnight incident, short enough that "I'll fix it Monday" forces a PR.
-- **`paused = true` in TOML creates a `schedules` row** with status `paused-by-code`. Visible in `carve schedule list`. Omitting `[schedule]` entirely creates no row.
-- **`carve deploy` output + post-merge Slack** include "next scheduled run at HH:MM" so the analyst knows when to expect the first prod run. No magic `--run-now-after-merge` flag — manual `carve run salesforce --target prod` is the explicit verification path.
+- **Schedule changes are data, applied instantly via `carve schedule` — NOT via plan/build/deploy/PR.** Audit comes from the `schedule_changes` log + the `schedule` RBAC scope. This reverses the earlier consistency-via-PR decision and deletes the code-vs-override TTL-precedence machinery entirely. Tradeoff: schedules reconstitute from the (backed-up) state store + the code seed, not from `git clone`.
+- **`[seed_schedule]` seeds once.** A `paused = true` in the seed block creates the row in a paused state at first registration; thereafter pause/resume is a `carve schedule` operation. Omitting `[seed_schedule]` creates no row.
+- **`carve deploy` output + post-merge Slack** include the pipeline's current/seeded schedule so the analyst knows when to expect the first prod run. No magic `--run-now-after-merge` flag — manual `carve run salesforce --target prod` is the explicit verification path.
 
 ### Open questions
 
 - **What if the UC1 PR hasn't been merged yet?** Amend the existing PR (cleaner git history but confuses reviewers mid-review) or open a second PR (more churn but each PR is one logical change)? Probably: amend if same logical work being iterated; new branch if UC1 already merged. Worth a CLI flag.
-- **Multiple schedules per pipeline.** Some pipelines want "every hour business hours, every 4 hours at night." Not in v0.1; flag as deferred. Future shape: `[[schedule]]` table list.
+- **Multiple schedules per pipeline.** Some pipelines want "every hour business hours, every 4 hours at night." Not in v0.1; flag as deferred. Future shape: a list of schedule rows per pipeline.
 
 ---
 
@@ -421,10 +418,10 @@ We chose a type change as the failure scenario because it's what dlt's recommend
 15. **Analyst (chat):** "Looks good — take the text-hint option. Also flag in the dbt source that the column type changed."
 16. **Orchestrator refines the plan**, includes a dbt source comment + a marker in the staging model for the type change.
 17. **Analyst:** "Build and deploy."
-18. **`carve build → deploy`** opens a PR. PR description auto-references investigation ID and failed run.
+18. **`carve build → deploy`** runs the configured handoff (default `pr`), opening a PR. PR description auto-references investigation ID and failed run.
 19. **PR reviewed. CI checks pass. Merged.**
 20. **CI rollout completes; prod restarts with new code.**
-21. **Deploy-event handler:** Investigation `inv_abc123` transitions to `resolved` (with `resolved_by_deploy_id`); paused schedule auto-resumes.
+21. **Deploy-event handler:** Investigation `inv_abc123` transitions to `resolved` (with `resolved_by_deploy_id`); the paused schedule auto-resumes via the same `schedules`-row mutation (audited in `schedule_changes`).
 22. **`schedule.resumed` event fires.** Slack: "✅ salesforce auto-resumed — fix from inv_abc123 deployed." Next scheduled tick runs normally.
 
 ### What categories of failures get auto-diagnosed in v0.1?
@@ -449,10 +446,10 @@ Classification uses dlt's actual exception hierarchy — the recovery agent unwr
 
 ### Design decisions surfaced
 
-- **New specialist: the recovery agent.** Triggered on retries-exhausted `run.failed`. Pre-scoped to one failed run. Allowed skills strictly read-only (no `write_file`, no `pipeline_*` mutators). Output: a diagnosis (markdown) plus, when possible, a proposed Plan via the normal Plan entity.
+- **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT or SQL engineer subagent (the dbt engineer arrives in v0.2), whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
 - **New state-store entity: `Investigation`** with columns `id, triggering_run_id, diagnosis_md, proposed_plan_id NULL, status, created_at, resolved_by_plan_id NULL, resolved_by_deploy_id NULL, recurring_run_ids JSONB`. Status set: `proposed | acknowledged | resolved | dismissed`.
 - **Carve never auto-deploys a fix.** The proposed Plan is reviewable; it goes through build/deploy/PR like any other change. **Human in the loop is a hard v0.1 invariant.** The hosted product's plan-approval workflows extend it but don't replace it.
-- **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the schedule auto-pauses immediately (status `paused-by-recovery`, distinct from `paused-by-code` from UC2 and `paused-by-user`). The recovery agent diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
+- **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the runtime auto-pauses the schedule immediately — the same `schedules`-row mutation as a manual `carve schedule pause`, audited in `schedule_changes` (status `paused-by-recovery`, distinct from `paused-by-code` from a seed block and `paused-by-user`). The recovery agent diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
 - **Auto-resume on deploy of the resolving change.** Plans/Builds/Deploys carry an `investigation_id` through the chain. When the deploy lands and prod restarts with the new code, the matching investigation transitions to `resolved` and the paused schedule auto-resumes. If the fix doesn't work, the next scheduled run re-enters the retries-pause-diagnose cycle.
 - **Recovery agent runs on dev-target failures too**, with the same flow. Pause logic applies if a dev schedule exists; ad-hoc dev runs just get diagnosed without anything to pause. Per-pipeline opt-out available via `[recovery] enabled = false`.
 - **Investigation dedup.** Same error class + same pipeline + within a configurable window → recurring runs append `run_id` to the existing investigation's `recurring_run_ids` instead of creating a new investigation.
