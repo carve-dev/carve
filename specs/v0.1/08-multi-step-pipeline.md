@@ -503,7 +503,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 
 - **Unit (schema):** valid TOML loads cleanly (`component = "<name>"` on dlt/dbt steps; `[seed_schedule]`); invalid TOMLs (missing required fields, a dlt step missing `component`, unknown step types, duplicate step ids, missing depends_on refs, cycles, bad cron) raise structured errors; an `artifact = ...` key on a dlt step (the old name) is rejected with a migration-pointing message
 - **Unit (component resolution):** a `component` name resolves to `el/<name>/` in simple mode and to the workspace clone @ pinned ref in multi mode for the **same** pipeline TOML; an omitted dbt-step `component` resolves to the single detected dbt project; an unresolvable name fails validation
-- **Unit (seed schedule):** `[seed_schedule]` parses (`cron`/`timezone`/`target`); a missing block yields an unscheduled pipeline; `paused`/`enabled` keys in the block are rejected (live data, not seedable)
+- **Unit (seed schedule):** `[seed_schedule]` parses (`cron`/`timezone`/`target`); a missing block yields an unscheduled pipeline; `paused`/`enabled` keys in the block are rejected (live data, not seedable — this is why the `schedules.paused_by` origin is only `user`/`recovery`, never `code`; see spec 07 / ARCHITECTURE §9.1)
 - **Unit (DAG):** topological order is correct for representative DAGs (linear, fan-out, fan-in, diamond); ready_steps correctly accounts for completed/failed/skipped sets
 - **Unit (failure modes each):** one test per mode, exercising the transition rules from the table above
 - **Unit (Jinja sandbox):** template renders against the standard namespace; attempts to access filesystem or import os raise sandbox errors

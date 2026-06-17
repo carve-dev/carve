@@ -15,7 +15,7 @@ When a scheduled run fails (retries exhausted), Carve **diagnoses the failure wi
 1. **Trigger:** the `run.failed` event (retries exhausted, per spec 07). Per-pipeline opt-out (`[recovery] enabled = false`); a daily LLM cost cap.
 2. **Diagnose:** the recovery engineer (a subagent) classifies the failure on **dlt's real exception hierarchy** and computes a per-resource **schema diff** (dlt's destination-side cached schema vs. the current source schema), grounded in real tool output — never a guessed cause.
 3. **Delegate the fix:** for a code-fixable failure, recovery **delegates to the relevant engineer** (DLT/DBT/SQL) via the harness `delegate` tool; that engineer produces a normal, reviewable **Plan** (file diffs) — which flows through `plan → build → deploy/PR` like any other change. **Human-in-the-loop is a hard invariant** (PRD §6.3); Carve never auto-deploys a fix.
-4. **Record + pause:** an **`Investigation`** row captures the diagnosis + proposed plan; the schedule auto-pauses (`paused-by-recovery`) and **auto-resumes** when the resolving deploy lands.
+4. **Record + pause:** an **`Investigation`** row captures the diagnosis + proposed plan; the schedule auto-pauses (`paused_by = recovery`, unless a user already paused it) and **auto-resumes** when the resolving deploy lands (only if still recovery-paused).
 
 ## Out of scope
 
@@ -72,11 +72,11 @@ Forward-declared nullable FKs (plans exist; deploys per spec 14) follow the same
 ### Trigger → diagnose → delegate
 
 1. **Trigger.** On `run.failed` with `retries_exhausted=true` (spec 07), the runtime invokes the recovery engineer — unless `[recovery] enabled = false` for the pipeline or the **daily cost cap** (`[recovery] daily_token_budget_usd`, default $5) is spent (then: log only, no diagnosis until reset).
-2. **Auto-pause.** The schedule is set `paused-by-recovery` immediately (distinct from `paused-by-code`/`paused-by-user`); a `schedule.paused` event fires.
+2. **Auto-pause.** The runtime's `auto_pause_recovery` mutator (spec 07) sets the schedule `paused, paused_by = 'recovery'` immediately — **unless a user has already paused it** (`paused_by = 'user'`), in which case the human's pause is left untouched and only the diagnosis proceeds. A `schedule.paused` event fires with `source = 'recovery'`. (There is no `paused-by-code`: `[seed_schedule]` cannot seed a pause — spec 08 — so the only origins are `user` and `recovery`.)
 3. **Diagnose (read-only, grounded).** The recovery engineer runs in a **read-only permission mode** (spec 15): it reads the failed run's logs, classifies the exception (`classify.py`), and computes a per-resource **schema diff** (`schema_diff.py` — dlt's destination cached schema vs. the current source schema). It **degrades gracefully**: no cached schema → "manual review required," surface logs, no proposed plan.
 4. **Record.** An `Investigation` row is written (`status=proposed`) with the markdown diagnosis + category; an `incident.diagnosed` event fires (Slack/webhook).
 5. **Delegate the fix (when code-fixable).** Recovery calls `delegate(<engineer>, fix_task, context)` — DLT engineer for a dlt-source fix, DBT engineer (v0.2) for a model fix, SQL specialist for a query fix. The engineer returns a **proposed Plan** (file diffs) linked to the Investigation (`proposed_plan_id`). **No write to prod** — the Plan is reviewable and flows through the normal `build → deploy/PR` path.
-6. **Resolve.** When the resolving deploy lands (the deploy carries the `investigation_id`, spec 14), the Investigation → `resolved` (`resolved_by_deploy_id`) and the schedule auto-resumes (`schedule.resumed`). If the analyst dismisses ("won't fix"), → `dismissed`.
+6. **Resolve.** When the resolving deploy lands (the deploy carries the `investigation_id`, spec 14), the Investigation → `resolved` (`resolved_by_deploy_id`) and the schedule **auto-resumes only if it is still `paused_by = 'recovery'`** (`auto_resume_recovery`, spec 07). If a user paused it in the interim (`paused_by = 'user'`), auto-resume is **suppressed** — the Investigation still resolves, but the schedule stays paused until a human resumes it; `schedule.resumed` fires only when an auto-resume actually happens. If the analyst dismisses ("won't fix"), → `dismissed`.
 
 ### Classification (grounded in dlt's real hierarchy)
 
@@ -107,14 +107,14 @@ REST/MCP parity per specs 09/10. Recurring-run display capped (10 + "… and N m
 - **Unit (classify):** real dlt exceptions (`DataValidationError`, `LoadClientJobFailed`, `DatabaseUndefinedRelation`, transient/terminal) map to the right categories; `PipelineStepFailed` is unwrapped; an auth 401/403 with no dlt class is classified `credentials`.
 - **Unit (schema diff):** per-resource add/remove/type-change detected against a fixture cached schema; missing cached schema → graceful "manual review."
 - **Integration (delegate):** a `run.failed` with a schema-contract drift → diagnosis → `delegate(dlt-engineer, …)` → a reviewable Plan linked to the Investigation; **no autonomous write to any target** (asserted).
-- **Integration (auto-pause/resume):** failure → `paused-by-recovery`; a deploy carrying the `investigation_id` → Investigation `resolved` + schedule auto-resumes.
+- **Integration (auto-pause/resume):** failure → `paused_by = recovery`; a deploy carrying the `investigation_id` → Investigation `resolved` + schedule auto-resumes. Plus the **origin gate**: a user pause after the auto-pause (`paused_by = user`) suppresses the auto-resume on deploy (Investigation still `resolved`, schedule stays paused); and an auto-pause attempt on an already-user-paused schedule leaves it `paused_by = user`.
 - **Unit (cost cap / opt-out):** budget exhausted → no diagnosis (log only); `[recovery] enabled = false` → no invocation.
 
 ## Acceptance
 
-- A failed scheduled run produces a grounded `Investigation` (real dlt category + schema diff or graceful degradation), an `incident.diagnosed` event, and a `paused-by-recovery` schedule.
+- A failed scheduled run produces a grounded `Investigation` (real dlt category + schema diff or graceful degradation), an `incident.diagnosed` event, and a `paused_by = recovery` schedule.
 - For a code-fixable failure, recovery **delegates** to the right engineer and surfaces a **reviewable Plan** — never deploying autonomously.
-- The resolving deploy auto-resolves the Investigation and auto-resumes the schedule.
+- The resolving deploy auto-resolves the Investigation and auto-resumes the schedule — **unless a human paused it in the interim**, in which case the Investigation still resolves but the human's pause is preserved.
 - The shipped POC's retired deploy invocation contexts are gone; classification uses dlt's real exception classes.
 - `carve investigations list/show/dismiss` (+ REST/MCP) work; the daily cost cap + per-pipeline opt-out hold.
 

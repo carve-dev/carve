@@ -73,6 +73,7 @@ tests/integration/test_manual_trigger_dedup.py          # NEW — 50 manual requ
 tests/integration/test_scheduled_dedup.py               # NEW — scheduled fires while queued exists → schedule.skipped
 tests/unit/test_schedule_source_of_truth.py             # NEW — scheduler fires from the `schedules` table; a [seed_schedule] edit (no reseed) does NOT change live firing
 tests/integration/test_schedule_pause_resume_audited.py # NEW — `carve schedule pause/resume` is instant, emits schedule.* + writes a schedule_changes row
+tests/unit/test_schedule_pause_origin.py                # NEW — paused_by gating: recovery auto-pause skips a user-paused row; auto-resume fires only while still paused_by='recovery'
 
 docs/runtime.md                                         # NEW — user-facing reference: scheduling, retries, alerts, worker scaling
 docs/runtime-troubleshooting.md                         # NEW — common failure modes and recovery
@@ -147,6 +148,30 @@ CREATE TABLE events (
 );
 CREATE INDEX ix_events_unprocessed ON events(occurred_at) WHERE processed_at IS NULL;
 
+-- Live schedule (DATA): created + owned here. The reconciler (spec 08) seeds/maintains rows at
+-- first registration; the scheduler below reads this as its source of truth; `carve schedule
+-- pause/resume/set-cron` mutate it live. See ARCHITECTURE §9.1.
+CREATE TABLE schedules (
+  id UUID PRIMARY KEY,
+  pipeline TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  target TEXT NOT NULL,
+  paused BOOLEAN NOT NULL DEFAULT false,  -- the gate: list_due skips WHERE paused
+  paused_by TEXT,                         -- pause origin: user | recovery; NULL iff active
+  pause_reason TEXT,                      -- human-readable reason, denormalized for `schedule list`; NULL iff active
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  last_fired_at TIMESTAMPTZ,
+  next_fires_at TIMESTAMPTZ,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  -- pause origin is set iff paused; there is no 'code' origin ([seed_schedule] cannot pause, spec 08)
+  CONSTRAINT ck_schedules_pause_origin CHECK (
+    (paused = false AND paused_by IS NULL) OR
+    (paused = true  AND paused_by IN ('user', 'recovery'))
+  )
+);
+CREATE UNIQUE INDEX ix_schedules_one_per_pipeline ON schedules(pipeline, tenant_id);
+CREATE INDEX ix_schedules_due ON schedules(next_fires_at) WHERE paused = false;
+
 -- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)
 CREATE TABLE schedule_changes (
   id BIGSERIAL PRIMARY KEY,
@@ -154,8 +179,8 @@ CREATE TABLE schedule_changes (
   change_kind TEXT NOT NULL,        -- pause | resume | set_cron | set_timezone | reseed
   before JSONB,                     -- prior schedule row state (NULL on first registration)
   after JSONB,                      -- new schedule row state
-  actor_token_id TEXT,              -- who made the change (token id); NULL for the code seed
-  source TEXT NOT NULL,             -- cli | api | mcp | ui | seed | reseed
+  actor_token_id TEXT,              -- who made the change (token id); NULL for the code seed and for recovery auto-actions
+  source TEXT NOT NULL,             -- cli | api | mcp | ui | seed | reseed | recovery
   reason TEXT,
   changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   tenant_id BIGINT NOT NULL DEFAULT 1
@@ -168,7 +193,7 @@ Notes:
 - Partial unique indexes include `tenant_id` so the constraint is per-tenant in hosted
 - Archive tables use `LIKE ... INCLUDING ALL EXCLUDING INDEXES` to inherit columns + types but specify their own indexes (different access patterns)
 - `runs`, `logs`, `step_runs` tables themselves were added in earlier specs (01 carries them forward from M1; 08 may extend with cols); this spec only adds their archives
-- The `schedules` table (`id PK, pipeline FK UNIQUE, cron, target, paused, timezone, last_fired_at, next_fires_at` — ARCHITECTURE §9.3) is **not** created here: the reconciler ([v0.1-08](./08-multi-step-pipeline.md)) inserts/updates the row at first registration, applying the pipeline's optional `[seed_schedule]` block as the **initial seed**. Thereafter the row is **live data**: this spec's scheduler reads it as the source of truth, and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it instantly. The `id` PK the scheduler loop references (`schedule.id`) is the one already present from that reconciliation. This spec adds only the `schedule_changes` audit log above.
+- The `schedules` table (`id PK, pipeline FK UNIQUE, cron, target, paused, paused_by, pause_reason, timezone, last_fired_at, next_fires_at` — ARCHITECTURE §9.1) **is created here** (migration 0008, above), resolving the prior ownership gap where neither spec created it. The reconciler ([v0.1-08](./08-multi-step-pipeline.md)) **seeds/maintains the row** at first registration, applying the pipeline's optional `[seed_schedule]` block as the **initial seed** (cron/timezone/target only — it cannot seed `paused`). Thereafter the row is **live data**: this spec's scheduler reads it as the source of truth, and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it instantly. `paused` is the boolean gate `list_due` skips on; `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin**, which gates recovery auto-resume (see *Schedule mutations* below). The reconciler runs at `carve serve` boot — well after this migration — so the table always exists before the first row is seeded.
 
 ### Scheduler
 
@@ -220,7 +245,18 @@ These call `state_store.schedules` mutators (`pause`, `resume`, `set_cron`), eac
 2. Appends a `schedule_changes` row capturing `before`/`after`, `actor_token_id`, `source`, and optional `reason`.
 3. Emits the matching `schedule.*` event.
 
+A user-initiated `pause` sets `paused = true, paused_by = 'user'` (and `pause_reason` from `--reason`); `resume` clears all three back to active. `source` records the interface (`cli`/`api`/`mcp`/`ui`).
+
 The change takes effect on the **next scheduler tick** (≤ the 30s loop interval) — no deploy, no reconcile, no PR. RBAC is enforced via the `schedule` scope (hosted; the OSS single-token install is unscoped). This is the audited, instant path the control-plane model specifies; `carve schedule reseed` (spec 08) is the separate code→data re-seed for when a team deliberately wants to re-apply `[seed_schedule]` (it writes a `schedule_changes` row with `source = "reseed"`).
+
+#### Pause origin and recovery auto-pause/auto-resume
+
+The runtime also exposes two **system mutators** the recovery flow uses (spec 17); both write `schedule_changes` with `source = 'recovery'`, `actor_token_id = NULL`:
+
+- **`auto_pause_recovery(pipeline, reason)`** — fired when a run's retries are exhausted (the `run.failed` → auto-pause trigger this spec owns). Transitions **active → `paused, paused_by = 'recovery'`** only. If the schedule is **already paused by a user**, it is **left untouched** — recovery never overrides or relabels a human's pause; it still records the diagnosis and notifies.
+- **`auto_resume_recovery(pipeline)`** — fired when the resolving deploy lands (carrying the `investigation_id`, spec 14/17). Resumes **only if the row is still `paused_by = 'recovery'`**. If a user paused it in the interim (`paused_by = 'user'`), auto-resume is **suppressed** — the Investigation still transitions to `resolved`, but the schedule stays paused until a human resumes it.
+
+This origin gate is the entire residue of UC2's retired "precedence" concern, reduced to one column and two rules: **a human's explicit pause always wins over the recovery engine's automatic one.** There is no `paused_by = 'code'` — `[seed_schedule]` cannot pause (spec 08), so every pause is either `user` or `recovery`.
 
 > **Supersedes UC2's TTL-precedence machinery.** UC2 previously routed schedule changes through plan/build/deploy/PR, with runtime *overrides* that survived reconciles until a TTL (`schedule override` / `clear-override`, `member_override_max_ttl`). Under the control-plane model the schedule is just data, so there is no code-vs-override conflict to arbitrate and **no TTL, no override-survival logic, no `member_override_max_ttl`** — `carve schedule pause/resume/set-cron` *are* the change, audited via `schedule_changes`. See [Design notes](#design-notes).
 
@@ -537,6 +573,7 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 - **Unit (scheduler):** cron `*/5 * * * *` fires at expected times under a controlled `Clock`; missed ticks (clock jumps forward by 20 minutes) produce one fire, not four
 - **Unit (schedule source of truth):** the scheduler fires from the `schedules` table row, not from `pipelines/<name>.toml`; a paused row is skipped by `list_due`; mutating a `[seed_schedule]` block (without `carve schedule reseed`) does not change which ticks fire
 - **Integration (schedule mutation audited):** `carve schedule pause`/`resume`/`set-cron` updates the row, takes effect within one scheduler loop interval, emits the matching `schedule.*` event, and appends a `schedule_changes` row with `before`/`after`/`actor_token_id`/`source` — no deploy/reconcile involved
+- **Unit (pause origin gate):** `auto_pause_recovery` sets `paused_by='recovery'` on an active row but leaves a `paused_by='user'` row untouched; `auto_resume_recovery` resumes a `paused_by='recovery'` row but is suppressed when a user paused it in the interim; the `ck_schedules_pause_origin` CHECK rejects a paused row with NULL `paused_by` (and an active row with a non-NULL one)
 - **Unit (job_queue dedup):** two consecutive `enqueue_scheduled` for the same pipeline+scheduled_for: the second raises `QueuedJobAlreadyExists`
 - **Unit (job_queue manual upsert):** `enqueue_manual` on a pipeline with an existing queued job updates it; the returned job_id matches the existing job's id
 - **Unit (optimistic claim):** spawn 10 concurrent `claim_next` calls against 1 queued job; exactly one returns a job, nine return None
@@ -555,6 +592,7 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 
 - `carve serve --workers 1` against a freshly-initialized Postgres runs end-to-end: scheduler fires due jobs, worker claims and runs them, reaper reclaims stale claims, archiver moves old rows
 - The scheduler treats the `schedules` table as the source of truth; `carve schedule pause/resume/set-cron` changes firing within one loop interval without a deploy or reconcile, and every such change appends a `schedule_changes` audit row
+- A human's explicit pause always wins over recovery's automatic one: recovery's `auto_pause_recovery`/`auto_resume_recovery` never override or auto-resume a `paused_by='user'` schedule
 - Per ARCHITECTURE §13.1 budgets:
   - Scheduler latency: jobs fire within 30 seconds of their cron time
   - Run startup overhead: under 10 seconds from claim to first step execution
