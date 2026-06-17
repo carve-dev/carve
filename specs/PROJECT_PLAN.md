@@ -2,20 +2,22 @@
 
 > Last major revision 2026-05-19, aligned to [`_strategy/2026-05-positioning.md`](./_strategy/2026-05-positioning.md), [`_strategy/spec-audit.md`](./_strategy/spec-audit.md), [`PRD.md`](./PRD.md), and [`ARCHITECTURE.md`](./ARCHITECTURE.md). For the prior version, see [`_archive/PROJECT_PLAN-pre-2026-05-positioning.md`](./_archive/PROJECT_PLAN-pre-2026-05-positioning.md).
 
-## The shape of Carve
+**Carve is a control plane plus an AI harness, over independently-versioned dlt/dbt/sql components — not a project that contains them.** Per [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md). The value proposition: **build, schedule, and monitor pipelines — all with AI.** Carve schedules, orchestrates, and monitors dlt + dbt + sql pipelines; its AI builds and deploys those components for you, or you bring your own and Carve just orchestrates.
 
-Carve is **four product pillars** plus a separately-tracked **hosted product**. Pillars 1, 2, and 4 ship together in v0.1; Pillar 3 ships as v0.2; the hosted product runs on a parallel timeline.
-
-This is a change from the original four-version-per-pillar plan, driven by the 2026-05 positioning shift (positioning decision #14): Carve's first release needs the runtime to demonstrate the full pitch (agent + runtime + composed pipelines), and shipping P1 alone — "an AI that writes dlt code" — would leave the first release feeling incomplete and indistinguishable from dltHub's agentic scaffolding.
+The work is organized as **four product pillars** plus a separately-tracked **hosted product**. Pillars 1, 2, and 4 ship together in v0.1; Pillar 3 ships as v0.2; the hosted product runs on a parallel timeline. v0.1 bundles them because the control plane needs at least one component-engineer (DLT) + composition + the AI harness to demonstrate the full pitch — shipping "an AI that writes dlt code" alone would be indistinguishable from dltHub's agentic scaffolding.
 
 ## The four pillars
 
-| Pillar | Theme                    | Ships in | Status              |
-|--------|--------------------------|----------|---------------------|
-| **P1** | Extract & Load           | v0.1     | Spec rewrite needed |
-| **P2** | Runtime                  | v0.1     | Largely net-new     |
-| **P3** | Transform (dbt agent)    | v0.2     | Planned             |
-| **P4** | Multi-step pipeline      | v0.1     | Largely net-new     |
+Re-articulated around the control-plane model: **P2 is the control plane**; **P1 and P3 are the components the AI builds**; **P4 is the composition that binds them**; and the **AI harness** is the cross-cutting agentic engine all of it runs on.
+
+| Pillar | Theme | Ships in | Status |
+|--------|-------|----------|--------|
+| **P1** | Extract & Load — the **DLT component + engineer** (AI authors/runs dlt components) | v0.1 | Specs drafted (04) |
+| **P2** | Runtime — the **control plane** (scheduler / executor / monitor that references components by name) | v0.1 | Specs drafted (07) |
+| **P3** | Transform — the **dbt component + engineer** | v0.2 | Planned |
+| **P4** | Multi-step pipeline — **composition** (the binding contract: components by name → step DAG) | v0.1 | Specs drafted (08) |
+
+Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine (subagent orchestration, terminal-grade tools, a permission system, verify-by-execution, and declarative agents/skills/hooks extensibility), specs 15–16, plus the recovery engineer (17) and the dialect-aware SQL tool layer (18).
 
 **The hosted product** is a separately-tracked release. It depends on a stable v0.1 OSS and adds: multi-tenancy, SSO/OAuth/RBAC, audit log, push-button deploy, polished cloud UI, premium integrations, hosted secrets, billing. Some hosted work can happen in parallel with v0.2 once v0.1 OSS stabilizes.
 
@@ -40,8 +42,8 @@ All other M1 and M1.1 specs are HISTORICAL (the code is what shipped) and requir
 - **Ship before perfect.** The version that gets feedback in week 2 is more valuable than the one that ships in month 6 with three more features.
 - **Pick boring technology.** `typer`, `pydantic`, `SQLAlchemy`, `Postgres`, `Anthropic SDK`, `tomlkit`, `dlt`, `dbt-core`. Save the novelty budget for the agent layer.
 - **OSS feature-complete; hosted operationally distinct.** No API endpoints or MCP tools gated behind hosted (positioning decision #13). Hosted earns its price on operational excellence, not feature exclusivity.
-- **Ship pillars together when they need each other.** v0.1 bundles P1 + P2 + P4 because without the runtime and multi-step composition, P1 alone is too narrow to demonstrate Carve's pitch.
-- **Defer extension points.** Hard-code built-in skills, agents, and step types until they've stabilized. Custom skill SDK and custom step type SDK both ship post-v0.1.
+- **Ship pillars together when they need each other.** v0.1 bundles the control plane (P2) + the DLT component-engineer (P1) + composition (P4) + the AI harness, because the control plane needs a component to build, compose, and run to demonstrate the pitch.
+- **Extensibility is declarative + in v0.1.** Declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks, and MCP import ship in v0.1 (specs 15–16) — the "bring your own agents/skills/tools" foundation. Only the *in-process* custom-skill SDK and the custom *step-type* SDK are deferred post-v0.1 (the MCP + `SKILL.md` paths cover v0.1).
 - **dlt and dbt are external backends, not internal modules.** We generate code that uses them; we do not reimplement them.
 - **Revise plans, not code.** Catching strategic shifts at the spec level is cheap; catching them in shipped code is expensive. Multiple rounds of spec revision are healthy, not waste.
 
@@ -58,7 +60,7 @@ The `/build-spec` skill (built-in to this repo) is the primary implementation me
 
 ## v0.1 — agent + runtime + multi-step (in flight)
 
-**Theme.** A self-hoster with a Snowflake account (and possibly an existing dbt project) can describe what they want, get a working pipeline, and run it on a schedule — all in one Carve install. Multi-step pipelines composing dlt + dbt + sql execute end-to-end.
+**Theme.** **Build, schedule, and monitor pipelines — all with AI.** A self-hoster with a Snowflake account (and possibly an existing dbt project) describes what they want; Carve's AI harness builds the dlt component, composes a multi-step pipeline (dlt + dbt + sql), and the control plane schedules + runs + monitors it — all in one install. Or they bring existing dlt/dbt and Carve just orchestrates (orchestration-only mode).
 
 **Acceptance criteria.** A data engineer can:
 
@@ -76,25 +78,18 @@ The `/build-spec` skill (built-in to this repo) is the primary implementation me
 
 **External-driver acceptance.** A Claude Desktop user registers Carve's MCP server and runs the same loop above by chatting with Claude. A CI workflow calls the REST API to plan/build/deploy from a GitHub Action.
 
-**Spec rewrite needed.** The 23 in-flight Pillar 1 and Pillar 1.1 specs all need REVISE, REWRITE, or DELETE per the spec audit. The biggest single rewrite is P1-04 (extract-load agent), whose premise — agent authors bespoke Python with `executemany` / `MERGE` — is broken under the new positioning. The runtime specs (P2) and the multi-step composition specs (P4) are largely net-new and will be drafted fresh.
+**Spec status.** The v0.1 spec set is drafted and revised to the control-plane + AI-harness model; the original Pillar 1/1.1 specs were archived and their content carried forward. The foundation harness specs (15 agent-harness, 16 extensibility) have been adversarially reviewed and hardened.
 
-**Spec set, in rough implementation order** (per the audit's suggested order, adjusted for the v0.1 bundling):
+**Spec set** (full list + per-spec status in [`v0.1/README.md`](./v0.1/README.md) — 18 specs), grouped:
 
-1. **State store migration** — bump the M1 SQLAlchemy state to Postgres-from-day-one; ship the one-shot `carve migrate-state` tool
-2. **OSS packaging** — bundled `docker-compose.yml` with Postgres; `carve init --external-postgres` path
-3. **Layout** (P1-01 + P1.1-01 revisions) — flat `el/<name>/` for dlt artifacts; per-backend repo topology in `carve.toml`
-4. **EL agent rewrite** (P1-04) — agent generates dlt code; chooses among native dlt source, REST API config, curated library, MCP-wrapped Singer/Airbyte
-5. **Init rewrite** (P1-03) — bootstraps Carve + Postgres + (optional) dlt/dbt scaffolds; integrates with brownfield dlt/dbt; scaffolds memory files
-6. **Project memory** (new) — `carve/{conventions, standards, decisions}.md`, per-pipeline sidecars, `carve memory *` CLI surface (PRD §6.3)
-7. **Runtime** (new P2 specs) — scheduler, job table with partial unique indexes, optimistic claim, workers, heartbeats, reaper
-8. **Multi-step pipeline composition** (new P4 specs) — pipeline TOML schema, step DAG executor, dlt/dbt/sql step types, failure modes
-9. **REST API** — FastAPI app with full coverage of CLI surface
-10. **MCP server** — auto-generated from REST endpoints (stdio + WebSocket transports)
-11. **Static HTML UI** — Jinja templates + regeneration on run-completion
-12. **Ask verb** — read-only orchestrator path with the no-write-skills guardrail (PRD §6.5)
-13. **Reference doc rewrites** — `cli-reference.md`, `config-schema.md`, `glossary.md`, `governance.md`
+- **Foundation:** 01 state-store (Postgres-only), 02 OSS packaging, 03 control-plane layout (`carve.toml` + `[components.<name>]`), 15 agent-harness, 16 extensibility.
+- **Components + composition:** 04 DLT engineer, 08 multi-step pipeline composition, 18 SQL tool layer.
+- **Control plane / runtime + bootstrap:** 07 runtime (scheduler / workers / reconciler), 05 init, 06 project-memory.
+- **Interfaces:** 09 REST API, 10 MCP server, 11 static-HTML UI, 12 explorer (`ask`).
+- **Deploy + recovery:** 14 deploy (configurable handoff + linked-PR), 17 recovery engineer.
+- **Docs:** 13 reference-doc rewrites.
 
-The audit-derived REVISE/REWRITE/DELETE table in [`spec-audit.md`](./spec-audit.md) is the per-spec source of truth.
+The two foundational decisions are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md); the now-historical pre-control-plane audit is in [`spec-audit.md`](./spec-audit.md).
 
 **Pace.** Elapsed time is gated by spec rigor and review pace, not engineer-weeks (see *Implementation approach* above). Each spec lands via one `/build-spec` iteration plus Nate's PR review; total v0.1 is roughly "however long Nate takes to write the specs and review the PRs," with Claude Code's build time as a smaller component.
 
