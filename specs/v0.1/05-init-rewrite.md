@@ -2,6 +2,8 @@
 
 > Rebuilds `carve init` around the v0.1 positioning: Postgres-from-day-one, bundled docker-compose, flat dlt layout, per-backend repo topology, project memory scaffolding, full dlt/dbt symmetry. Per [PRD §6.1](../PRD.md), [PRD §6.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §3 code layout](../ARCHITECTURE.md), [ARCHITECTURE §10.5 convention inference](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 5](../PROJECT_PLAN.md). Replaces the archived [P1-03 init-per-target-layout draft](../_archive/pillar-1-extract-load/03-init-per-target-layout.md), whose premise (`targets/<target>/el/`) is broken by the flat-layout decision in spec 03.
 
+> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md); concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). The rendered `carve.toml` is the **control-plane config**: `[project]` + `[state_store]` + `[components.<name>]` blocks ([v0.1-03](./03-flat-layout.md)). In **simple mode** (same-repo dbt/dlt — detected brownfield *or* a `--with-*` greenfield scaffold), init writes **no** `[components.*]` blocks — components are discovered by convention. A `[components.<name>]` block is written **only** for a component that lives elsewhere (`--dbt-path`/`--dbt-url`/`--dlt-path`/`--dlt-url`, i.e. separate-local / separate-remote). The old singular `[dbt]` / `[dlt]` / `[models]` blocks are **retired** (this reconciles spec 05 to spec 03; agent-model tiers are per-agent frontmatter in [v0.1-16](./16-extensibility.md) + the install default, not a `carve.toml` block).
+
 ## Status
 
 - **Status:** Drafting
@@ -40,7 +42,7 @@ src/carve/init/detect.py                                # NEW — brownfield det
 src/carve/init/prompts.py                               # NEW — interactive prompts (uses Typer + a TUI library)
 src/carve/init/scaffold.py                              # NEW — file-writing primitives with idempotency
 src/carve/init/templates/                               # NEW — Jinja2 templates rendered by init
-    carve.toml.j2                                       #   project metadata, [dbt], [dlt] blocks
+    carve.toml.j2                                       #   [project], [state_store], [components.<name>] (separate-* only)
     connections.toml.j2                                 #   target definitions
     runtime.toml.j2                                     #   scheduler / worker / archive defaults
     standards.md.j2                                     #   templated comment-only "what goes here"
@@ -167,7 +169,7 @@ The init orchestrator runs roughly as:
   - `<cwd>/.dlt/` exists → brownfield dlt
   - `<cwd>/el/<name>/__init__.py` files with `import dlt` or `@dlt.` decorators (parse via AST, no execution) → brownfield dlt
   - `<cwd>/*.py` with `@dlt.source`/`@dlt.resource`/`@dlt.pipeline` decorators at the project root → brownfield dlt (less common shape)
-- **Provenance distinction**: detected dlt files are scanned for the Carve provenance header (per spec 03). Those *with* the header are Carve-generated artifacts from a prior install. Those *without* are user-authored (PRD §6.2 mode 2). Init records this distinction in `carve.toml` for later phases (e.g., the orchestrator routes "schedule my X pipeline" to runtime specialist if X is user-authored, to EL agent if it's Carve-generated and needs modification).
+- **Provenance distinction**: detected dlt files are scanned for the Carve provenance header (per spec 03). Those *with* the header are Carve-generated artifacts from a prior install; those *without* are user-authored (PRD §6.2 mode 2). This distinction lives in the **files themselves** (header present/absent), read on demand by later phases — it is **not** recorded in `carve.toml` (simple-mode components aren't enumerated there). E.g., the orchestrator routes "schedule my X pipeline" to the pipeline engineer if X is user-authored, or to the DLT engineer if it's Carve-generated and needs modification.
 
 ### Interactive prompts
 
@@ -261,23 +263,22 @@ name = "{{ project_name }}"
 default_target = "{{ default_target }}"
 carve_version = "{{ carve_version }}"
 
-{% if dbt %}
-[dbt]
-mode = "{{ dbt.mode }}"
-{% if dbt.mode != "same-repo" %}path = "{{ dbt.path }}"{% endif %}
-{% if dbt.mode == "separate-remote" %}url = "{{ dbt.url }}"{% endif %}
-{% if dbt.mode == "separate-remote" %}branch = "{{ dbt.branch }}"{% endif %}
-{% endif %}
+[state_store]
+url = "${DATABASE_URL}"
 
-{% if dlt %}
-[dlt]
-mode = "{{ dlt.mode }}"
-{# ... same shape as [dbt] block ... #}
-{% endif %}
-
-[models]
-# Customize agent models here. Defaults match the v0.1 baseline.
-# orchestration = "claude-sonnet-..."
+# SIMPLE MODE writes NO [components.*] blocks: same-repo dbt/dlt (detected or
+# scaffolded) is discovered by convention (each el/<name>/ is a dlt component; the
+# detected dbt project is a dbt component — spec 03). A block is rendered ONLY for a
+# component that lives elsewhere (--dbt-path/--dbt-url/--dlt-path/--dlt-url).
+{% for c in components if c.mode != "same-repo" %}
+[components.{{ c.name }}]
+type = "{{ c.type }}"                 # "dlt" | "dbt"
+mode = "{{ c.mode }}"                 # "separate-local" | "separate-remote"
+{% if c.mode == "separate-local" %}path = "{{ c.path }}"{% endif %}
+{% if c.mode == "separate-remote" %}url = "{{ c.url }}"{% endif %}
+{% if c.mode == "separate-remote" and c.ref %}ref = "{{ c.ref }}"{% endif %}
+{% if c.mode == "separate-remote" and not c.ref %}branch = "{{ c.branch }}"{% endif %}
+{% endfor %}
 ```
 
 `standards.md.j2` (the empty-with-template version):
@@ -332,10 +333,10 @@ For users who started with the pre-positioning `targets/<target>/el/<artifact>/`
 - **Unit**: convention inference produces deterministic markdown given identical input
 - **Unit**: prompts module degrades cleanly on non-TTY stdin (raises non-interactive error)
 - **Integration (greenfield)**: fresh tempdir + `carve init` (with interactive prompts mocked) → expected layout per spec 03
-- **Integration (brownfield dbt)**: tempdir with `dbt_project.yml` + `models/staging/stg_orders.sql` etc. → init produces `[dbt] mode = "same-repo"`, conventions.md mentions `stg_*` pattern
-- **Integration (brownfield dlt)**: tempdir with `el/stripe_charges/__init__.py` (user-authored, no Carve provenance) → init produces `[dlt] mode = "same-repo"`, conventions.md mentions dlt patterns, `carve.toml` records the pipeline as user-authored
-- **Integration (mixed brownfield)**: dbt + dlt both present → both detected, both registered, conventions covers both
-- **Integration (separate-remote)**: `--dbt-url <fixture-url>` triggers initial workspace clone via the workspace cache from spec 03; `carve.toml` records `mode = "separate-remote"`
+- **Integration (brownfield dbt, simple mode)**: tempdir with `dbt_project.yml` + `models/staging/stg_orders.sql` etc. → init writes **no** `[components.*]` block (same-repo = convention discovery, spec 03); `carve components show` lists the discovered dbt component; conventions.md mentions the `stg_*` pattern
+- **Integration (brownfield dlt, simple mode)**: tempdir with `el/stripe_charges/__init__.py` (user-authored, no Carve provenance) → init writes **no** `[components.*]` block; the dlt component is convention-discovered; conventions.md mentions dlt patterns; the user-authored-vs-generated distinction is the (absent) provenance header in the file, **not** a `carve.toml` record
+- **Integration (mixed brownfield)**: dbt + dlt both present same-repo → both convention-discovered (no `[components.*]` blocks written); conventions covers both
+- **Integration (separate-remote)**: `--dbt-url <fixture-url>` writes a `[components.analytics]` block (`type = "dbt"`, `mode = "separate-remote"`) and triggers the initial workspace clone via the cache from spec 03
 - **Integration (idempotency)**: running `carve init` twice in the same directory leaves user-editable files unchanged; only `conventions.md` and `.env.example` get refreshed
 - **Integration (non-interactive)**: `carve init --non-interactive --external-postgres ... --default-target dev` in CI completes without prompting; missing required flags produces exit code 3 with a helpful message
 - **Integration (migrate-from-targets)**: synthetic `targets/dev/el/iowa_liquor/` tree → `--migrate-from-targets` produces the flat layout, with a pre-migration git commit recorded
