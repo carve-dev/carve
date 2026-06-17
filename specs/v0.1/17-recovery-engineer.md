@@ -61,6 +61,7 @@ investigations(
   diagnosis_md, category,                 -- the classified failure category
   proposed_plan_id NULL,                  -- forward-declared FK to plans
   status,                                 -- proposed | acknowledged | resolved | dismissed
+  resolved_by_plan_id NULL,               -- final merged plan in the refinement chain (UC4); FK to plans
   resolved_by_deploy_id NULL,             -- forward-declared FK to deploys (spec 14)
   recurring_run_ids JSONB,                -- dedup: same error+pipeline within a window appends here
   tenant_id BIGINT NOT NULL DEFAULT 1, created_at, resolved_at NULL

@@ -163,7 +163,7 @@ Two operational shapes underlie every use case below:
 
 6. **Prod `carve serve` boots (and runs a reconciler loop):** The reconciler scans `pipelines/*.toml` and reconciles each **pipeline definition** (steps, DAG, component refs, pins) into state — code wins. The **schedule is the one concern the reconciler does NOT own**:
     - First registration of a pipeline → if it carries a `[seed_schedule]` block, seed a `schedules` row from it (the seed applies *once*, at first registration). No block → no schedule row is created.
-    - Pipeline already registered → the reconciler leaves the `schedules` row untouched. Editing `[seed_schedule]` in code is a no-op on an already-seeded pipeline (re-seeding requires an explicit `carve schedule set-cron … --reseed`). The live schedule is data; it is never overwritten by a deploy.
+    - Pipeline already registered → the reconciler leaves the `schedules` row untouched. Editing `[seed_schedule]` in code is a no-op on an already-seeded pipeline (re-seeding requires an explicit `carve schedule reseed`). The live schedule is data; it is never overwritten by a deploy.
     
     Emits `pipeline.reconciled` events with before/after for definition changes.
 7. **Schedule row (if seeded):** `schedules.salesforce.next_fires_at` is set to the next boundary of the seeded cron.
@@ -200,7 +200,7 @@ The schedule is **data**, so every adjustment is the same instant, audited `carv
 
 ### Permissions
 
-| Role | View | Pause / resume | Set cron | Reseed from code (`--reseed`) |
+| Role | View | Pause / resume | Set cron | Reseed from code (`carve schedule reseed`) |
 |---|---|---|---|---|
 | **admin** | yes | yes | yes | yes |
 | **member** | yes | yes | yes | yes |
@@ -212,8 +212,8 @@ Schedule mutation is gated by the `schedule` RBAC scope (held by `admin` and `me
 
 - **Schedule is data, not code.** The live schedule lives in the `schedules` table and is changed via `carve schedule` (CLI/API/UI) — instant and audited. A pipeline's optional `[seed_schedule]` block seeds the row **once**, at first registration; thereafter the reconciler never touches the schedule. (Reverses the earlier "schedule changes go through PR" decision, per [`_strategy/2026-06-control-plane.md`](_strategy/2026-06-control-plane.md).)
 - **The reconciler owns the pipeline *definition*, not the schedule.** It runs inside `carve serve` (configurable interval, default 60s) and reconciles steps / DAG / component refs / pins (code wins). It does **not** reconcile the `schedules` table — there is no code-vs-runtime precedence machinery to manage.
-- **`[seed_schedule]` is a one-time seed.** Applied only at first registration. Editing it later is a no-op; re-seeding requires an explicit `carve schedule set-cron … --reseed`. No `[seed_schedule]` block → no schedule row (the pipeline runs only on manual `carve run`).
-- **A `schedule_changes` audit table** records every mutation with the actor token. New table, add to ARCHITECTURE §9.
+- **`[seed_schedule]` is a one-time seed.** Applied only at first registration. Editing it later is a no-op; re-seeding requires an explicit `carve schedule reseed`. No `[seed_schedule]` block → no schedule row (the pipeline runs only on manual `carve run`).
+- **A `schedule_changes` audit table** records every mutation with the actor token. Recorded in ARCHITECTURE §9.1 (created by the runtime migration, spec 07).
 - **CLI surface:** `carve schedule show / list / set-cron / pause / resume / history` — all available via REST + MCP.
 - **CI runs `carve schedule validate`** on PRs only to catch a broken cron in a `[seed_schedule]` block before merge; live schedule changes are validated at the point of the `carve schedule` call.
 - **First scheduled run is on the next cron tick** after the schedule is set, not immediate. A separate `carve run salesforce --target prod` (manual, member-allowed) lets the analyst trigger an immediate run to verify prod before waiting.
@@ -224,7 +224,7 @@ Schedule mutation is gated by the `schedule` RBAC scope (held by `admin` and `me
 ### Resolved decisions
 
 - **Schedule changes are data, applied instantly via `carve schedule` — NOT via plan/build/deploy/PR.** Audit comes from the `schedule_changes` log + the `schedule` RBAC scope. This reverses the earlier consistency-via-PR decision and deletes the code-vs-override TTL-precedence machinery entirely. Tradeoff: schedules reconstitute from the (backed-up) state store + the code seed, not from `git clone`.
-- **`[seed_schedule]` seeds once.** A `paused = true` in the seed block creates the row in a paused state at first registration; thereafter pause/resume is a `carve schedule` operation. Omitting `[seed_schedule]` creates no row.
+- **`[seed_schedule]` seeds once.** It seeds `cron`/`timezone`/`target` at first registration only; it **cannot** seed a pause (the `paused`/`enabled` keys are rejected — spec 08), so there is no `paused-by-code` origin. Pause/resume is always a live `carve schedule` operation. Omitting `[seed_schedule]` creates no row.
 - **`carve deploy` output + post-merge Slack** include the pipeline's current/seeded schedule so the analyst knows when to expect the first prod run. No magic `--run-now-after-merge` flag — manual `carve run salesforce --target prod` is the explicit verification path.
 
 ### Open questions

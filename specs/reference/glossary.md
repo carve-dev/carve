@@ -98,7 +98,7 @@ The specialist for testing and data quality. Generates tests from data shape, id
 A single execution of a pipeline (or step). Has a unique ID, status, start/end times, and step-level subrecords. Persisted in the state DB.
 
 **Schema retrieval**
-The pattern of letting agents query the schema (catalog, manifest, lineage) on demand rather than memorizing it in the prompt. Implemented via the `schema.*` family of skills.
+The pattern of letting agents query the schema (catalog, dbt manifest, dlt schema) on demand rather than memorizing it in the prompt. Implemented via reader skills (`dbt_manifest`, `dlt_schema`, catalog introspection); lineage is investigated, not stored (see *Lineage*).
 
 **Skill**
 A function an agent can call. Skills can be Python callables (in `src/carve/skills/`), user code (in `carve/skills/`), or MCP tools from external servers. Skills have typed parameters validated by pydantic.

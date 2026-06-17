@@ -5,7 +5,7 @@
 ## Status
 
 - **Status:** Drafting
-- **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), "Resolved design decisions (2026-06-16)"). The reconciler reconciles the pipeline *definition* only (steps, DAG, component refs, pins — owned by [v0.1-08](./08-multi-step-pipeline.md)); the **schedule is data** — this spec's scheduler reads the `schedules` table as its source of truth, seeded once from a pipeline's optional `[seed_schedule]` block (the seed + `carve schedule reseed` live in [v0.1-08](./08-multi-step-pipeline.md); this spec owns the live `schedules` table, the scheduler that reads it, and `carve schedule list/show/pause/resume`). This **supersedes UC2's code-vs-runtime-override TTL-precedence machinery** (see [Design notes](#design-notes)). Deploy events are untouched (pending the Wave 2 deploy revision).
+- **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), "Resolved design decisions (2026-06-16)"). The reconciler reconciles the pipeline *definition* only (steps, DAG, component refs, pins — owned by [v0.1-08](./08-multi-step-pipeline.md)); the **schedule is data** — this spec's scheduler reads the `schedules` table as its source of truth, seeded once from a pipeline's optional `[seed_schedule]` block (the seed + `carve schedule reseed` live in [v0.1-08](./08-multi-step-pipeline.md); this spec owns the live `schedules` table, the scheduler that reads it, and `carve schedule list/show/pause/resume/set-cron`). This **supersedes UC2's code-vs-runtime-override TTL-precedence machinery** (see [Design notes](#design-notes)). Deploy events are untouched (pending the Wave 2 deploy revision).
 - **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) (partial unique indexes, FOR UPDATE SKIP LOCKED), [v0.1-03 flat-layout](./03-flat-layout.md) (path resolution at run time)
 - **Blocks:** [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) (which ships the actual step-type implementations on top of this spec's executor framework), [v0.1-09 rest-api](./09-rest-api.md), [v0.1-11 static-html-ui](./11-static-html-ui.md)
 - **Built on:** the `LocalVenvRunner` subprocess primitive from M1-05 (HISTORICAL — preserved). This spec wraps that primitive in a scheduler + queue + worker layer; M1-05's code is not replaced.
@@ -51,9 +51,9 @@ src/carve/runtime/events.py                             # NEW — runtime event 
 
 src/carve/cli/serve.py                                  # NEW — `carve serve` command
 src/carve/cli/worker.py                                 # NEW — `carve worker` command
-src/carve/cli/schedule.py                               # NEW — `carve schedule list/show/pause/resume` (live-data mutation surface; audited)
+src/carve/cli/schedule.py                               # NEW — `carve schedule list/show/pause/resume/set-cron` (live-data mutation surface; audited)
 
-src/carve/core/state/models.py                          # MODIFY — add Job, JobArchive, Worker, RunArchive, LogArchive, StepRunArchive, Event, ScheduleChange tables
+src/carve/core/state/models.py                          # MODIFY — add Schedule, ScheduleChange, Job, JobArchive, Worker, RunArchive, LogArchive, StepRunArchive, Event tables
 migrations/versions/0008_runtime_tables.py              # NEW — Alembic migration for the above
 src/carve/core/state/repositories/jobs.py               # NEW — job repository (claim, enqueue, mark_done, list, archive)
 src/carve/core/state/repositories/workers.py            # NEW — worker registration
@@ -176,7 +176,7 @@ CREATE INDEX ix_schedules_due ON schedules(next_fires_at) WHERE paused = false;
 CREATE TABLE schedule_changes (
   id BIGSERIAL PRIMARY KEY,
   pipeline TEXT NOT NULL,
-  change_kind TEXT NOT NULL,        -- pause | resume | set_cron | set_timezone | reseed
+  change_kind TEXT NOT NULL,        -- pause | resume | set_cron | reseed  (a timezone change rides under set_cron --timezone)
   before JSONB,                     -- prior schedule row state (NULL on first registration)
   after JSONB,                      -- new schedule row state
   actor_token_id TEXT,              -- who made the change (token id); NULL for the code seed and for recovery auto-actions
@@ -223,7 +223,7 @@ async def scheduler_loop(state_store: StateStore, *, interval_s: float = 30.0, c
 
 Key properties:
 - Runs as a single task per `carve serve` process; hosted uses leader election (out of scope for this spec)
-- Cron evaluation via `croniter` (already pinned in M1); each schedule's `this_tick_at(now)` returns the canonical cron-tick timestamp for the current window
+- Cron evaluation via `croniter` (already pinned in M1); each schedule's `this_tick_at(now)` returns the canonical cron-tick timestamp for the current window. `list_due` evaluates cron against `now`; after enqueuing a fire, `set_last_fired` records `last_fired_at` **and recomputes `next_fires_at`** to the following tick, so the `ix_schedules_due` partial index (built on `next_fires_at`) stays accurate rather than going stale after the first fire
 - Sleeps until the next 30-second wall-clock boundary, not `now + 30s` — keeps fires aligned with cron expressions like `*/5 * * * *`
 - A `Clock` abstraction makes the loop deterministic in tests (no `time.sleep`)
 - **The scheduler reads the `schedules` table as the single source of truth.** It does not read `pipelines/<name>.toml`, the reconciler, or any `[seed_schedule]` block — the live row (cron, timezone, `paused`) is authoritative. A paused row (`paused = true`) is skipped by `list_due`. This is the data tier of the three-tier code/data split ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): definition is code (reconciled by spec 08), schedule is data (this table), run state is data.

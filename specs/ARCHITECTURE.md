@@ -767,6 +767,7 @@ Active + archive pattern from §4.2:
 - `logs(id PK BIGSERIAL, run_id FK, step_run_id FK NULL, timestamp, level, source, message)`
   - Archive: `logs_archive`
 - `workers(id PK, host, pid, started_at, last_heartbeat_at, status)`
+- `schedules` / `schedule_changes` — the live schedule + its audit log, created by this runtime's migration (0008); see §9.1 for columns + the pause-origin model.
 
 ### 9.4 Deploys
 
