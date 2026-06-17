@@ -4,11 +4,18 @@ This folder contains the full product and engineering specification for **Carve*
 
 ## Document map
 
+The corpus splits into **durable design** (version-independent — what Carve is and how it works) and a **delivery plan** (temporal — what to build, when). See [`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md).
+
 ### Top-level
 
+**Durable design:**
 - [`PRD.md`](./PRD.md) — the master product requirements document. The single source of truth for what Carve is, who it's for, and what it does.
-- [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — the build plan, organized around four product pillars released as v0.1 → v0.4.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the technical architecture deep-dive: components, data flow, extension points, the dev/prod target model, and the boundary between OSS and SaaS.
+- Capability specs in [`v0.1/`](./v0.1/) — the lowest level of *design* detail, one per capability area.
+
+**Delivery:**
+- [`DELIVERY.md`](./DELIVERY.md) — the live, dependency-aware, **delta-aware** delivery plan, organized into foundation-first increments. **The source of truth for sequencing and scope.**
+- [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — the prior pillar-based build plan; **superseded for sequencing** by `DELIVERY.md` (its durable "shape of Carve" framing folds into PRD/ARCHITECTURE).
 
 ### Carve's four product pillars
 

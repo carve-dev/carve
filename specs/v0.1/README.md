@@ -2,6 +2,8 @@
 
 19 specs that compose Carve's first formal release. v0.1 bundles Pillars 1, 2, and 4 (per [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md)). v0.2 will add Pillar 3 (dbt agent) in a separate spec set.
 
+> **Sequencing now lives in [`../DELIVERY.md`](../DELIVERY.md)** (per [`../_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md)). These specs are the *design* references; the dependency-ordered build sequence — grouped into foundation-first increments — is in `DELIVERY.md`. The table below is retained as a per-spec index/status, not the build order. (Specs will migrate from `v0.1/NN` to capability-organized files in a later step; until then these IDs persist.)
+
 > **Foundational reading order:** specs 15 (agent harness) and 16 (extensibility) are the AI-layer foundation the agent specs (04/08/12 + recovery/SQL) run on — read them right after 01–03, despite their late numbers (a placement reorg is a noted follow-up).
 
 All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per the *Implementation approach* section of `PROJECT_PLAN.md`). Each spec below is one `/build-spec` iteration: dependency check → phase plan → engineer → reviewer fan-out → fix iterations → spec-keeper sync → PR open for review.
