@@ -25,7 +25,7 @@ After this spec lands, a user can `open http://127.0.0.1:8766` (or `carve docs o
 
 - Live updates (no WebSocket, no SSE in the rendered page; the user reloads to see new state)
 - Authentication beyond loopback-only binding (deliberately no login UI; this is local-machine OSS)
-- Lineage view rendering (deferred per the resolved audit question — lineage is captured in the state store but not rendered until post-v0.1)
+- Lineage view rendering (deferred per the resolved audit question — the lineage graph is captured + queryable via [v0.1-19](./19-lineage-graph.md)'s skills/CLI, but not rendered in the static UI until post-v0.1)
 - Cost / token usage dashboards (basic metrics surfaced via `/metrics/*` REST endpoints; cloud UI gets the polished version)
 - Pipeline / step authoring UI (users author via `carve plan` / `carve build`)
 - Anything fancy (the cloud UI in hosted has the polish; this exists to be honestly minimal)

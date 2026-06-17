@@ -80,12 +80,12 @@ The `/build-spec` skill (built-in to this repo) is the primary implementation me
 
 **Spec status.** The v0.1 spec set is drafted and revised to the control-plane + AI-harness model; the original Pillar 1/1.1 specs were archived and their content carried forward. The foundation harness specs (15 agent-harness, 16 extensibility) have been adversarially reviewed and hardened.
 
-**Spec set** (full list + per-spec status in [`v0.1/README.md`](./v0.1/README.md) — 18 specs), grouped:
+**Spec set** (full list + per-spec status in [`v0.1/README.md`](./v0.1/README.md) — 19 specs), grouped:
 
 - **Foundation:** 01 state-store (Postgres-only), 02 OSS packaging, 03 control-plane layout (`carve.toml` + `[components.<name>]`), 15 agent-harness, 16 extensibility.
 - **Components + composition:** 04 DLT engineer, 08 multi-step pipeline composition, 18 SQL tool layer.
 - **Control plane / runtime + bootstrap:** 07 runtime (scheduler / workers / reconciler), 05 init, 06 project-memory.
-- **Interfaces:** 09 REST API, 10 MCP server, 11 static-HTML UI, 12 explorer (`ask`).
+- **Interfaces:** 09 REST API, 10 MCP server, 11 static-HTML UI, 12 explorer (`ask`), 19 lineage graph (asset lineage + the explorer's lineage skills).
 - **Deploy + recovery:** 14 deploy (configurable handoff + linked-PR), 17 recovery engineer.
 - **Docs:** 13 reference-doc rewrites.
 

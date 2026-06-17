@@ -27,7 +27,7 @@ Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine
 
 ### The v0.1 spec set
 
-The current, authoritative spec set is [`v0.1/`](./v0.1/) — **18 specs**, drafted/revised to the control-plane + AI-harness model. See [`v0.1/README.md`](./v0.1/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
+The current, authoritative spec set is [`v0.1/`](./v0.1/) — **19 specs**, drafted/revised to the control-plane + AI-harness model. See [`v0.1/README.md`](./v0.1/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
 
 ### Foundation (M1, M1.1) — already shipped
 
@@ -65,5 +65,5 @@ If you're contributing to a specific area:
 ## Status
 
 - **M1 and M1.1 are shipped.** Code is in `src/`. ~300 tests passing; spec 01 (state store → Postgres) landed.
-- **The v0.1 spec set (18 specs) is drafted/revised** to the control-plane + AI-harness model ([`v0.1/`](./v0.1/)); the foundation harness specs (15/16) have been adversarially reviewed and hardened. Implementing the v0.1 set is the active phase.
+- **The v0.1 spec set (19 specs) is drafted/revised** to the control-plane + AI-harness model ([`v0.1/`](./v0.1/)); the foundation harness specs (15/16) have been adversarially reviewed and hardened. Implementing the v0.1 set is the active phase.
 - **The two foundational decisions** are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md).

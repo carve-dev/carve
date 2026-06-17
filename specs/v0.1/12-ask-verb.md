@@ -201,7 +201,7 @@ A built-in **declarative agent** (spec 16 format), shipped at `src/carve/core/ag
 name: explorer
 description: Read-only Q&A about the project — how/where/why, lineage, logic, definitions, tests, "where does this data come from." Use for investigative questions that change nothing.
 model: claude-{LATEST_SONNET}   # per-agent tiering (spec 16); falls back to the install default
-tools: [read_file, grep, glob, web_fetch, sql, dbt_manifest, memory_read]   # read tools only; no edit/bash-write (lineage skills deferred — spec 16)
+tools: [read_file, grep, glob, web_fetch, sql, dbt_manifest, memory_read, upstream_of, downstream_of, impact_of_change]   # read-only; no edit/bash-write. Lineage skills land in spec 19.
 allowed_paths: []               # writes nothing
 classifications: [explain, locate, lineage, why_decision, freshness, test_coverage]
 ---

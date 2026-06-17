@@ -532,7 +532,7 @@ The agent doesn't pick a layer. The agent picks a *skill*; skills are implemente
 
 ### 6.2 The lineage graph
 
-Lineage is the one Carve-owned piece of retrieval. Four node types, four edge types:
+Lineage is the one Carve-owned piece of retrieval. **Five node types, five edge types** — implemented at table/relation grain in [v0.1-19](v0.1/19-lineage-graph.md):
 
 ```
 Nodes:
@@ -543,13 +543,14 @@ Nodes:
 - dbt:model         — a dbt model
 
 Edges:
+- dlt:source ──defines──▶ dlt:resource         (containment)
 - dlt:resource ──produces──▶ warehouse:table
-- warehouse:table ──consumed_by──▶ dbt:source
+- warehouse:table ──consumed_by──▶ dbt:source   (stitched on the canonical relation FQN)
 - dbt:source ──consumed_by──▶ dbt:model
-- dbt:model ──consumed_by──▶ dbt:model     (model-to-model deps)
+- dbt:model ──consumed_by──▶ dbt:model          (model-to-model deps)
 ```
 
-Recomputed on `carve build`, on dbt manifest change, and on project sync in separate-repo mode. Stored in `lineage_nodes` / `lineage_edges` tables. Queries are bounded BFS walks with depth limit.
+Recomputed on `carve build`, on dbt manifest change, and on project sync in separate-repo mode (transactional full-replace in v0.1). Stored in `lineage_nodes` / `lineage_edges` tables. Queries are bounded BFS walks with depth limit. Column-level lineage and `sql`-step producer edges are deferred to v0.2 (v0.1-19 *Out of scope*).
 
 ### 6.3 Caching and freshness
 
@@ -794,8 +795,10 @@ Per [v0.1-14](v0.1/14-deploy-pr.md): **one row per touched repo.** `component` =
 
 ### 9.6 Lineage
 
-- `lineage_nodes(id PK, kind, name, fqn, attributes JSONB)`
-- `lineage_edges(from_id FK, to_id FK, edge_type, attributes JSONB, created_at)`
+Owned by [v0.1-19](v0.1/19-lineage-graph.md); rebuilt transactionally (full-replace) on build / manifest-change / sync.
+
+- `lineage_nodes(id PK, kind, fqn, label, attributes JSONB, tenant_id)` — `kind ∈ {dlt:source, dlt:resource, warehouse:table, dbt:source, dbt:model}`; `fqn` is the canonical per-kind identity (the relation FQN for `warehouse:table`, the manifest `unique_id` for dbt nodes); `UNIQUE (kind, fqn, tenant_id)`.
+- `lineage_edges(from_id FK, to_id FK, edge_type, attributes JSONB, created_at, tenant_id)` — `edge_type ∈ {defines, produces, consumed_by}`, directed producer→consumer; indexed both directions for BFS (`(from_id)`, `(to_id)`).
 
 ### 9.7 Events and webhooks
 
