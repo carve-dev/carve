@@ -15,7 +15,7 @@ All v0.1 code is implemented by Claude Code via the `/build-spec` workflow (per 
 | 01c | [`01-followup-database-url-env-precedence.md`](./01-followup-database-url-env-precedence.md) | Native `DATABASE_URL` precedence in `resolve_state_store_url` (collapses the `cli_env` shim) | Landed (2026-05-20) |
 | 02 | [`02-oss-packaging.md`](./02-oss-packaging.md)                      | Bundled docker-compose with Postgres; external-Postgres option        | Ready |
 | 03 | [`03-flat-layout.md`](./03-flat-layout.md)                          | Flat `el/<name>/` layout for dlt artifacts; per-backend repo topology | Drafting |
-| 04 | [`04-el-agent-dlt.md`](./04-el-agent-dlt.md)                        | EL specialist agent generates dlt code (native, REST API config, curated library, MCP wrapper) | Drafting |
+| 04 | [`04-el-agent-dlt.md`](./04-el-agent-dlt.md)                        | DLT engineer subagent generates dlt code (native, REST API config, curated library, MCP wrapper) | Drafting |
 | 05 | [`05-init-rewrite.md`](./05-init-rewrite.md)                        | `carve init` for greenfield/brownfield dlt+dbt; scaffolds memory      | Drafting |
 | 06 | [`06-project-memory.md`](./06-project-memory.md)                    | `carve/{conventions,standards,decisions}.md`, per-pipeline sidecars, `carve memory *` | Drafting |
 | 07 | [`07-runtime.md`](./07-runtime.md)                                  | Scheduler, job table, optimistic claim, workers, heartbeats, reaper   | Drafting |

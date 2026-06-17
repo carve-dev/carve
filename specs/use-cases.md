@@ -12,7 +12,7 @@ Each use case follows this shape:
 - **Goal** — what they want to accomplish
 - **Where it happens** — laptop, central server, chat tool, CI
 - **Pre-conditions** — what must already be true
-- **Walkthrough** — numbered steps, naming the actor (analyst, orchestrator, EL specialist, CI, prod scheduler) at each turn
+- **Walkthrough** — numbered steps, naming the actor (analyst, orchestrator, DLT engineer, CI, prod scheduler) at each turn
 - **Design decisions surfaced** — concrete things the spec must support
 - **Open questions** — decisions deferred or still fuzzy
 
@@ -39,7 +39,7 @@ Two operational shapes underlie every use case below:
 **Carve follows dlt's defaults unless explicitly overridden.** When generating EL artifacts we mirror dlt's idioms — `--refresh` modes, schema contract defaults, source scaffolding, exception classification — rather than invent Carve-specific equivalents. Any deviation from dlt's recommended behavior must be named explicitly in the use case where it's introduced. Three concrete consequences:
 - **Curated source library is a registry over dlt's verified sources**, not a fork. `src/carve/sources/<name>/` is a small Carve-side metadata file (env vars expected, connection-validation glue, optional convention hints); the actual dlt source code lands via `dlt init <source>` wrapped by `carve connect`. dlt's verified-sources upstream bug fixes flow through on `pip install -U dlt`.
 - **`carve run --refresh <mode>` mirrors dlt's modes** (`drop_sources`, `drop_resources`, `drop_data`) one-to-one. Carve adds confirmation prompts on `drop_data` against prod, but does not rename or collapse the modes.
-- **The recovery agent classifies failures on dlt's exception hierarchy** (`DataValidationError` for schema-contract violations, `LoadClientJobFailed` for terminal load failures, `DatabaseUndefinedRelation` for missing relations, etc.) rather than a Carve-invented taxonomy. It unwraps the top-level `PipelineStepFailed` to its `.exception` and matches on dlt's terminal-vs-transient base classes (`DestinationTerminalException` / `DestinationTransientException`). Auth failures have no dedicated dlt class — they're matched on the source-side HTTP 401/403 inside `.exception`.
+- **The recovery engineer classifies failures on dlt's exception hierarchy** (`DataValidationError` for schema-contract violations, `LoadClientJobFailed` for terminal load failures, `DatabaseUndefinedRelation` for missing relations, etc.) rather than a Carve-invented taxonomy. It unwraps the top-level `PipelineStepFailed` to its `.exception` and matches on dlt's terminal-vs-transient base classes (`DestinationTerminalException` / `DestinationTransientException`). Auth failures have no dedicated dlt class — they're matched on the source-side HTTP 401/403 inside `.exception`.
 
 ---
 
@@ -73,8 +73,8 @@ Two operational shapes underlie every use case below:
 8. **`carve connect` command:** Resolves env vars, attempts a Salesforce auth call. Succeeds. Prints "✓ salesforce@dev verified."
 9. **Analyst (chat):** "Done. Now plan the ingest."
 10. **Orchestrator:** Calls `verify_dlt_source(salesforce, dev)` again — passes. Calls `verify_dlt_destination(snowflake, dev)` — passes. Calls `salesforce_list_objects()` (now possible since we have creds) to confirm the requested objects exist.
-11. **Orchestrator → EL specialist:** Pre-scoped context includes the verified connection metadata, the matched curated source (`src/carve/sources/salesforce/`), inferred conventions from `carve/conventions.md` (e.g., team uses `raw_*` schema prefix), the existing dbt sources file, the requested object list.
-12. **EL specialist:** Generates Plan with file diffs:
+11. **Orchestrator → DLT engineer:** Pre-scoped context includes the verified connection metadata, the matched curated source (`src/carve/sources/salesforce/`), inferred conventions from `carve/conventions.md` (e.g., team uses `raw_*` schema prefix), the existing dbt sources file, the requested object list.
+12. **DLT engineer:** Generates Plan with file diffs:
     - `el/salesforce/__init__.py` (customized from curated source)
     - `el/salesforce/requirements.txt`
     - `pipelines/salesforce.toml` (single-step dlt pipeline, dev target by default, optional stub `[seed_schedule]` block)
@@ -102,7 +102,7 @@ Two operational shapes underlie every use case below:
 - `verify_dlt_source` / `verify_dlt_destination` are **skills** (not specialists). The orchestrator calls them before planning; failure produces a guidance response, not a plan.
 - The orchestrator is a **gatekeeper** in addition to a planner — it can refuse to plan and instead instruct the user to complete pre-flight steps.
 - Curated source library (`src/carve/sources/<name>/`) is a Carve-side **registry** that maps source names to dlt's verified-sources packages, declares the env var names a source expects, and provides Carve-specific connection-validation glue. The actual dlt source code is scaffolded by wrapping `dlt init` — Carve does not maintain a fork of dlt's source code.
-- **Hint style follows dlt's verified-sources defaults: mostly inference, with explicit hints on critical columns** (primary key, cursor column, anything the agent has a structural reason to pin). The EL specialist can add hints during refinement when the analyst needs stricter contracts on specific columns; otherwise dlt's schema inference does the work.
+- **Hint style follows dlt's verified-sources defaults: mostly inference, with explicit hints on critical columns** (primary key, cursor column, anything the agent has a structural reason to pin). The DLT engineer can add hints during refinement when the analyst needs stricter contracts on specific columns; otherwise dlt's schema inference does the work.
 - Once a source is verified, the orchestrator can call source-specific introspection skills (`salesforce_list_objects`, etc.) to inform planning. These are exposed as part of each curated source.
 - No credentials ever pass through the LLM context. The flow is intentionally split between chat (instructions) and terminal (credential entry + verification).
 - `carve deploy` is a **configurable handoff** (`files` / `commit` / `push` / `pr`; default `pr`, per [v0.1-14](v0.1/14-deploy-pr.md)). In the default PR mode it opens a PR; it does **not** push code to the central server. CI on merge handles the rollout. When a component has graduated to its own repo, deploy coordinates a **linked PR** across the component repo and the control-plane composition (ingest-first ordering).
@@ -255,9 +255,9 @@ Schedule mutation is gated by the `schedule` RBAC scope (held by `admin` and `me
 **Specifying the policy (laptop)**
 
 1. **Analyst (chat):** "Make the Salesforce pipeline incremental — first run pulls everything, after that only changes since last run."
-2. **Orchestrator:** Classifies → pipeline modification (resource policy change on EL artifact). Routes to EL specialist.
-3. **Orchestrator → EL specialist:** Pre-scoped context includes the current `el/salesforce/__init__.py`, the curated source declaration in `src/carve/sources/salesforce/` (which already knows each object's natural cursor column — typically `LastModifiedDate` or `SystemModstamp`), conventions, and the matching dbt source's hints about primary keys.
-4. **EL specialist:** Generates Plan with diffs to `el/salesforce/__init__.py`. For each requested resource:
+2. **Orchestrator:** Classifies → pipeline modification (resource policy change on EL artifact). Routes to DLT engineer.
+3. **Orchestrator → DLT engineer:** Pre-scoped context includes the current `el/salesforce/__init__.py`, the curated source declaration in `src/carve/sources/salesforce/` (which already knows each object's natural cursor column — typically `LastModifiedDate` or `SystemModstamp`), conventions, and the matching dbt source's hints about primary keys.
+4. **DLT engineer:** Generates Plan with diffs to `el/salesforce/__init__.py`. For each requested resource:
    ```python
    @dlt.resource(
        write_disposition="merge",
@@ -333,8 +333,8 @@ Carve mirrors dlt's `--refresh` modes one-to-one — no Carve-invented aliases. 
 - **dlt state location is a Carve-managed choice surfaced in `pipelines/<name>.toml`** — `state_location = "destination"` (recommended for prod) or `"file"` (laptop default, fine for dev only).
   - Destination state: survives container restarts, works across multiple workers, naturally isolated per target by the destination schema.
   - File state: simpler but fragile in containerized prod.
-  - `carve init` default to file for local; the EL specialist proposes `destination` whenever a pipeline has a prod schedule.
-- **Per-resource incremental policy is encoded in the dlt source code itself**, not in pipeline TOML. The EL specialist generates the right decorators based on the curated source library's per-object metadata + analyst intent.
+  - `carve init` default to file for local; the DLT engineer proposes `destination` whenever a pipeline has a prod schedule.
+- **Per-resource incremental policy is encoded in the dlt source code itself**, not in pipeline TOML. The DLT engineer generates the right decorators based on the curated source library's per-object metadata + analyst intent.
 - **Plans surface incremental behavior in plain language** — first-run cost, ongoing cost, lookback window. Plain-language summary is a deliberate UX feature, not just JSON diff.
 - **`carve pipelines show <name> --target <t>`** displays per-resource cursor state and last-run rowcount. New CLI surface; needs REST/MCP equivalents.
 - **Per-pipeline serialization handles the "long first run + short cron interval" case** automatically — no additional logic needed. The `schedule.skipped` event is the existing signal.
@@ -365,7 +365,7 @@ Carve mirrors dlt's `--refresh` modes one-to-one — no Carve-invented aliases. 
 **Where it happens.**
 - Failure happens → prod `carve serve`
 - Detection → prod runtime emits `run.failed`
-- Diagnosis → prod runtime invokes the **recovery agent** (new specialist), produces a diagnosis + (when possible) a proposed fix plan
+- Diagnosis → prod runtime invokes the **recovery engineer** (new specialist), produces a diagnosis + (when possible) a proposed fix plan
 - Notification → Slack/email webhook with diagnosis link
 - Human review → analyst's laptop, via chat/CLI pointed at prod
 - Fix → same plan/build/deploy/PR loop from UC1; CI rollout to prod
@@ -396,13 +396,13 @@ We chose a type change as the failure scenario because it's what dlt's recommend
 
 **Carve diagnoses automatically**
 
-6. **Recovery agent triggers on the retries-exhausted `run.failed` event.** Pre-scoped context: failed run's log tail, pipeline TOML, current dlt source code, dlt's destination-side schema state (the cached "what we expect"), and the current source schema from `salesforce_describe_object`.
-7. **Recovery agent classifies:** "data type change — `Account.AnnualRevenue` was `bigint` in cached schema, now arriving as `text` in source. `data_type: freeze` raised."
-8. **Recovery agent produces a Plan** with file diffs to `el/salesforce/__init__.py`. Two options presented:
+6. **Recovery engineer triggers on the retries-exhausted `run.failed` event.** Pre-scoped context: failed run's log tail, pipeline TOML, current dlt source code, dlt's destination-side schema state (the cached "what we expect"), and the current source schema from `salesforce_describe_object`.
+7. **Recovery engineer classifies:** "data type change — `Account.AnnualRevenue` was `bigint` in cached schema, now arriving as `text` in source. `data_type: freeze` raised."
+8. **Recovery engineer produces a Plan** with file diffs to `el/salesforce/__init__.py`. Two options presented:
    - *Default proposal (safer):* keep `data_type: freeze`, but **add an explicit hint** for AnnualRevenue with `{"data_type": "text"}` so dlt accepts the new type. Note that historical destination data still numeric; downstream consumers (dbt models) may need updates.
    - *Alternative:* relax `data_type` to `evolve` for the accounts resource — dlt will widen automatically. Less strict; future type changes won't surface.
    - *Discard alternatives presented for completeness:* `data_type: discard_row` (drop rows with the new type), `discard_value` (drop the value but keep the row). **Both silently lose data** — surfaced as options for analysts who explicitly want this, with the warning called out in the proposal text.
-9. **Recovery agent records an Investigation row** (new state-store entity) with: triggering `run_id`, `diagnosis_md`, `proposed_plan_id`, `status='proposed'`, `created_at`. Artifact at `.carve/investigations/<id>.json` on prod, mirrored to the state store.
+9. **Recovery engineer records an Investigation row** (new state-store entity) with: triggering `run_id`, `diagnosis_md`, `proposed_plan_id`, `status='proposed'`, `created_at`. Artifact at `.carve/investigations/<id>.json` on prod, mirrored to the state store.
 10. **`incident.diagnosed` event emits.** Slack follow-up:
    > 🟡 *Investigation ready* — Carve diagnosed salesforce run #347 as data-type drift on `Account.AnnualRevenue` (bigint → text). Proposed fix: add a text-type hint. Review: `carve investigations show inv_abc123`.
 
@@ -410,7 +410,7 @@ We chose a type change as the failure scenario because it's what dlt's recommend
 
 11. **Analyst gets Slack ping. From chat (MCP pointed at prod):** "Show me the salesforce investigation."
 12. **MCP tool returns the Investigation** — failed run logs (last 50 lines), diagnosis in markdown, proposed plan diff with the three options labeled.
-13. **Analyst reviews diff:** the recovery agent's default is the text-hint approach. Analyst thinks about it — AnnualRevenue going to text means downstream dbt models that did numeric aggregations will break. Decides to take a more cautious path: keep numeric, push back to the Salesforce admin to revert the type change. Dismisses the investigation as "won't fix — source change being reverted."
+13. **Analyst reviews diff:** the recovery engineer's default is the text-hint approach. Analyst thinks about it — AnnualRevenue going to text means downstream dbt models that did numeric aggregations will break. Decides to take a more cautious path: keep numeric, push back to the Salesforce admin to revert the type change. Dismisses the investigation as "won't fix — source change being reverted."
 14. **A week later** (after Salesforce admin reverts), retries succeed and pipeline resumes. Investigation status → `dismissed`. (Alternative path: if analyst had accepted the proposed plan, the rest is steps 14–22 from the previous version of this walkthrough.)
 
 **Alternative path: analyst accepts the proposed fix**
@@ -426,9 +426,9 @@ We chose a type change as the failure scenario because it's what dlt's recommend
 
 ### What categories of failures get auto-diagnosed in v0.1?
 
-Bounded list. The recovery agent's value depends on staying within what it can reliably classify.
+Bounded list. The recovery engineer's value depends on staying within what it can reliably classify.
 
-Classification uses dlt's actual exception hierarchy — the recovery agent unwraps `PipelineStepFailed` to its `.exception` and matches on real classes (`DataValidationError`, `LoadClientJobFailed`, `DatabaseUndefinedRelation`, and the `DestinationTerminalException`/`DestinationTransientException` split) rather than a Carve-invented taxonomy.
+Classification uses dlt's actual exception hierarchy — the recovery engineer unwraps `PipelineStepFailed` to its `.exception` and matches on real classes (`DataValidationError`, `LoadClientJobFailed`, `DatabaseUndefinedRelation`, and the `DestinationTerminalException`/`DestinationTransientException` split) rather than a Carve-invented taxonomy.
 
 | Category | Detect | Propose fix? |
 |---|---|---|
@@ -449,20 +449,20 @@ Classification uses dlt's actual exception hierarchy — the recovery agent unwr
 - **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT or SQL engineer subagent (the dbt engineer arrives in v0.2), whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
 - **New state-store entity: `Investigation`** with columns `id, triggering_run_id, diagnosis_md, proposed_plan_id NULL, status, created_at, resolved_by_plan_id NULL, resolved_by_deploy_id NULL, recurring_run_ids JSONB`. Status set: `proposed | acknowledged | resolved | dismissed`.
 - **Carve never auto-deploys a fix.** The proposed Plan is reviewable; it goes through build/deploy/PR like any other change. **Human in the loop is a hard v0.1 invariant.** The hosted product's plan-approval workflows extend it but don't replace it.
-- **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the runtime auto-pauses the schedule immediately — the same `schedules`-row mutation as a manual `carve schedule pause`, audited in `schedule_changes` with `paused_by = recovery` (distinct from a human's `paused_by = user`; there is no seed-time pause — `[seed_schedule]` can't pause, spec 08). If the schedule was **already paused by a human**, recovery leaves it untouched and just diagnoses. The recovery agent diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
+- **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the runtime auto-pauses the schedule immediately — the same `schedules`-row mutation as a manual `carve schedule pause`, audited in `schedule_changes` with `paused_by = recovery` (distinct from a human's `paused_by = user`; there is no seed-time pause — `[seed_schedule]` can't pause, spec 08). If the schedule was **already paused by a human**, recovery leaves it untouched and just diagnoses. The recovery engineer diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
 - **Auto-resume on deploy of the resolving change.** Plans/Builds/Deploys carry an `investigation_id` through the chain. When the deploy lands and prod restarts with the new code, the matching investigation transitions to `resolved` and the schedule auto-resumes — **only if it is still `paused_by = recovery`**; a human pause in the interim is preserved (the investigation still resolves, but the schedule stays paused until a person resumes it). If the fix doesn't work, the next scheduled run re-enters the retries-pause-diagnose cycle.
-- **Recovery agent runs on dev-target failures too**, with the same flow. Pause logic applies if a dev schedule exists; ad-hoc dev runs just get diagnosed without anything to pause. Per-pipeline opt-out available via `[recovery] enabled = false`.
+- **Recovery engineer runs on dev-target failures too**, with the same flow. Pause logic applies if a dev schedule exists; ad-hoc dev runs just get diagnosed without anything to pause. Per-pipeline opt-out available via `[recovery] enabled = false`.
 - **Investigation dedup.** Same error class + same pipeline + within a configurable window → recurring runs append `run_id` to the existing investigation's `recurring_run_ids` instead of creating a new investigation.
 - **New CLI / REST / MCP surface:** `carve investigations list / show / dismiss`, `/api/v1/investigations`, MCP tools.
 - **PR descriptions auto-link the investigation and failed run** when the plan came from a recovery flow. Closes the audit loop.
-- **Recovery agent doesn't run for `failure_mode = warn` or `failure_mode = continue` steps** — those aren't real failures by the pipeline author's declaration.
-- **Recovery agent's diagnosis can be refined via chat** before accepting. The proposed Plan is just a Plan; `plan --refine` works on it normally; investigation_id carries through refinements.
+- **Recovery engineer doesn't run for `failure_mode = warn` or `failure_mode = continue` steps** — those aren't real failures by the pipeline author's declaration.
+- **Recovery engineer's diagnosis can be refined via chat** before accepting. The proposed Plan is just a Plan; `plan --refine` works on it normally; investigation_id carries through refinements.
 
 ### Resolved decisions
 
 - **Destination outage handling: skip auto-pause for infra-class failures.** Detection: error class indicates destination unreachable (connection refused, timeout from destination) AND ≥2 pipelines failing concurrently in the last 5 minutes. Classified as "infra outage, no action recommended"; no pause; no code-change proposal; retries pick up automatically when the destination recovers. Pause is reserved for code/schema/data issues that need human action.
 - **Recurring-run list display cap.** `carve investigations show` displays the 10 most recent recurring run IDs with "... and N more (see `carve investigations show inv_xyz --all-runs`)". Same cap applied in MCP and REST responses.
-- **LLM cost cap per day, configurable per-install.** `runtime.toml` setting `[recovery] daily_token_budget_usd = 5.00` (default $5/day). When exhausted, recovery agent stops invoking; failures still emit `run.failed` with logs but no automated diagnosis until the next day. Surfaces in Slack: "Recovery agent paused — daily budget exhausted, resumes at 00:00 UTC."
+- **LLM cost cap per day, configurable per-install.** `runtime.toml` setting `[recovery] daily_token_budget_usd = 5.00` (default $5/day). When exhausted, recovery engineer stops invoking; failures still emit `run.failed` with logs but no automated diagnosis until the next day. Surfaces in Slack: "Recovery engineer paused — daily budget exhausted, resumes at 00:00 UTC."
 - **Investigation/Plan refinement relationship.** Refined plans are children of the recovery-proposed plan via `parent_plan_id`; `investigation_id` carries through. `resolved_by_plan_id` points at the final merged-and-deployed plan in the chain.
 
 ### Open questions
@@ -483,7 +483,7 @@ Classification uses dlt's actual exception hierarchy — the recovery agent unwr
 
 **Goal.** Resolve a more dangerous schema drift than UC4: the Salesforce team made three different kinds of change at once. The pipeline fails on all three resources, and the recovery flow has to handle multiple distinct change types in a single Investigation.
 
-**Where it happens.** Same as UC4 — failure surfaces in prod, recovery agent diagnoses, analyst reviews and refines from chat, fix lands via PR. The new wrinkle is that the proposed plan touches multiple resources with materially different change semantics.
+**Where it happens.** Same as UC4 — failure surfaces in prod, recovery engineer diagnoses, analyst reviews and refines from chat, fix lands via PR. The new wrinkle is that the proposed plan touches multiple resources with materially different change semantics.
 
 **Pre-conditions.**
 - UC1–UC4 completed
@@ -517,12 +517,12 @@ Carve does not attempt to correlate the Account changes as a rename — dlt has 
 
 **Diagnosis (multi-part)**
 
-5. **Recovery agent triggers.** Pre-scoped context includes **dlt's destination-side cached schema** from the last successful run, the **current source schema** from `salesforce_describe_object` per object, and the failed run logs. Carve does not maintain its own source schema cache — it reads what dlt has already stored.
-6. **Recovery agent computes a per-resource schema diff (against dlt's cached schema):**
+5. **Recovery engineer triggers.** Pre-scoped context includes **dlt's destination-side cached schema** from the last successful run, the **current source schema** from `salesforce_describe_object` per object, and the failed run logs. Carve does not maintain its own source schema cache — it reads what dlt has already stored.
+6. **Recovery engineer computes a per-resource schema diff (against dlt's cached schema):**
    - **Account**: `Industry` missing in current source; `IndustrySector` present in current source but not in cached. Two independent changes — diagnosed as **one column removed + one column added**. No rename correlation attempted (dlt doesn't model renames; we don't either).
    - **Opportunity**: `LegacyForecastCategory` in cached but missing in current → **column removed**.
    - **Lead**: `LeadScore__c` present in current but not in cached → **column added**.
-7. **Recovery agent generates a single Plan with multiple labeled sections** — one per change, not one per resource. The four labeled sections:
+7. **Recovery engineer generates a single Plan with multiple labeled sections** — one per change, not one per resource. The four labeled sections:
    - *Account — column removed (`Industry`):* Remove `Industry` from the dlt accounts resource. Destination column NOT dropped (dlt behavior; historical data preserved).
    - *Account — column added (`IndustrySector`):* Add `IndustrySector` to the dlt accounts resource. Diagnosis note: "If this is conceptually a rename of `Industry`, you'll likely want a dbt staging-layer alias to combine the historical `industry` values with new `industrysector` values. That belongs in dbt, not dlt — Carve does not propose the migration."
    - *Opportunity — column removed (`LegacyForecastCategory`):* Remove from the dlt opportunities resource. **Destination column preserved.**
@@ -563,7 +563,7 @@ Carve does not attempt to correlate the Account changes as a rename — dlt has 
 ### Design decisions surfaced
 
 - **No rename concept; rename = delete + add.** Carve mirrors dlt's worldview exactly. The agent does not attempt naming/type heuristics to correlate "column gone" and "column appeared" into a rename. The analyst, not Carve, decides whether to treat them as related at refine time.
-- **Per-resource schema_contract overrides are a first-class pattern.** Default follows dlt's recommendation, but critical resources can crank up to `columns: freeze` or `data_type: freeze` when downstream consumers can't tolerate silent change. The recovery agent reads the resource's actual contract to scope its diagnosis correctly.
+- **Per-resource schema_contract overrides are a first-class pattern.** Default follows dlt's recommendation, but critical resources can crank up to `columns: freeze` or `data_type: freeze` when downstream consumers can't tolerate silent change. The recovery engineer reads the resource's actual contract to scope its diagnosis correctly.
 - **One Investigation, one Plan, multiple labeled sections — one per change, not one per resource.** Multiple distinct schema events on the same resource (Account had both a removal and an addition) get separate sections in the same plan.
 - **Carve reads dlt's existing destination-side schema state** as the "cached schema" input for diff. No Carve-side source-schema cache exists.
 - **Carve never drops a destination column.** Hard rule, inherited from dlt's behavior — dlt itself never drops columns. We're consistent.
@@ -574,12 +574,12 @@ Carve does not attempt to correlate the Account changes as a rename — dlt has 
 
 ### Resolved decisions
 
-- **Recovery agent degrades gracefully when dlt's destination-side schema state is missing or stale** (first-ever failure, state table corrupted): "schema drift detected, but no cached schema to diff against; manual review required." Surfaces logs, no proposed plan.
+- **Recovery engineer degrades gracefully when dlt's destination-side schema state is missing or stale** (first-ever failure, state table corrupted): "schema drift detected, but no cached schema to diff against; manual review required." Surfaces logs, no proposed plan.
 - **Schema drift on separate runs.** If `Industry` is removed in one Salesforce change and `IndustrySector` is added a week later as a separate change, Carve sees two independent failures and produces two investigations (and two PRs). Known consequence of the no-rename-concept stance.
 
 ### Verification tasks — resolved (verified against dlt 1.27.2 + dlt docs, 2026-06-12)
 
-- **Multi-resource failure execution in dlt → RESOLVED: dlt does *not* aggregate.** Extract runs round-robin (interleaved) by default, and a contract violation raises a single `PipelineStepFailed` that **aborts on the first failing resource** — one run never hands back a list of all failing resources. This is precisely why the recovery agent's section count is **diff-driven, not exception-driven**: step 6 above already builds sections from a per-resource schema diff (dlt's cached destination schema vs. the current source schema), which is the correct and only reliable approach. No walkthrough change needed; the context-building skill is specified to diff schemas, using the exception only to confirm the failure is schema-class.
+- **Multi-resource failure execution in dlt → RESOLVED: dlt does *not* aggregate.** Extract runs round-robin (interleaved) by default, and a contract violation raises a single `PipelineStepFailed` that **aborts on the first failing resource** — one run never hands back a list of all failing resources. This is precisely why the recovery engineer's section count is **diff-driven, not exception-driven**: step 6 above already builds sections from a per-resource schema diff (dlt's cached destination schema vs. the current source schema), which is the correct and only reliable approach. No walkthrough change needed; the context-building skill is specified to diff schemas, using the exception only to confirm the failure is schema-class.
 - **dlt exception class names → RESOLVED.** The real public classes (replacing the `SchemaFrozenException` / `LoadJobFailed` stand-ins): schema-contract violation = `dlt.common.schema.exceptions.DataValidationError` (read `.schema_entity` ∈ {`columns`, `data_type`} and `.contract_mode` for the sub-split); terminal load failure = `dlt.load.exceptions.LoadClientJobFailed` (transient sibling `LoadClientJobRetry`); missing relation = `dlt.destinations.exceptions.DatabaseUndefinedRelation`; generic terminal/transient DB errors = `DatabaseTerminalException` / `DatabaseTransientException` / `DestinationConnectionError`. The top-level wrapper is always `dlt.pipeline.exceptions.PipelineStepFailed` — **unwrap `.exception`** and classify via `isinstance` against the `DestinationTerminalException` / `DestinationTransientException` base classes (survives leaf renames). **There is no native dlt auth-exception class** — auth failures are matched on source-side HTTP 401/403 inside `.exception`. The "small adapter layer" = this class→category table + the unwrap rule + base-class `isinstance` checks.
 
 ---
