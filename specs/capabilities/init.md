@@ -1,15 +1,15 @@
-# v0.1-05 — `carve init` rewrite: greenfield, brownfield, dlt + dbt symmetry
+# `carve init` rewrite: greenfield, brownfield, dlt + dbt symmetry
 
 > Rebuilds `carve init` around the v0.1 positioning: Postgres-from-day-one, bundled docker-compose, flat dlt layout, per-backend repo topology, project memory scaffolding, full dlt/dbt symmetry. Per [PRD §6.1](../PRD.md), [PRD §6.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §3 code layout](../ARCHITECTURE.md), [ARCHITECTURE §10.5 convention inference](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 5](../PROJECT_PLAN.md). Replaces the archived [P1-03 init-per-target-layout draft](../_archive/pillar-1-extract-load/03-init-per-target-layout.md), whose premise (`targets/<target>/el/`) is broken by the flat-layout decision in spec 03.
 
-> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md); concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). The rendered `carve.toml` is the **control-plane config**: `[project]` + `[state_store]` + `[components.<name>]` blocks ([v0.1-03](./03-flat-layout.md)). In **simple mode** (same-repo dbt/dlt — detected brownfield *or* a `--with-*` greenfield scaffold), init writes **no** `[components.*]` blocks — components are discovered by convention. A `[components.<name>]` block is written **only** for a component that lives elsewhere (`--dbt-path`/`--dbt-url`/`--dlt-path`/`--dlt-url`, i.e. separate-local / separate-remote). The old singular `[dbt]` / `[dlt]` / `[models]` blocks are **retired** (this reconciles spec 05 to spec 03; agent-model tiers are per-agent frontmatter in [v0.1-16](./16-extensibility.md) + the install default, not a `carve.toml` block).
+> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md); concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). The rendered `carve.toml` is the **control-plane config**: `[project]` + `[state_store]` + `[components.<name>]` blocks ([layout](./layout.md)). In **simple mode** (same-repo dbt/dlt — detected brownfield *or* a `--with-*` greenfield scaffold), init writes **no** `[components.*]` blocks — components are discovered by convention. A `[components.<name>]` block is written **only** for a component that lives elsewhere (`--dbt-path`/`--dbt-url`/`--dlt-path`/`--dlt-url`, i.e. separate-local / separate-remote). The old singular `[dbt]` / `[dlt]` / `[models]` blocks are **retired** (this reconciles spec 05 to spec 03; agent-model tiers are per-agent frontmatter in [extensibility](./extensibility.md) + the install default, not a `carve.toml` block).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-02 oss-packaging](./02-oss-packaging.md), [v0.1-03 flat-layout](./03-flat-layout.md)
-- **Soft depends on:** [v0.1-06 project-memory](./06-project-memory.md) — spec 05 scaffolds the memory files (writes empty templated `standards.md`/`decisions.md`, runs convention inference for `conventions.md`); spec 06 ships the runtime read/edit machinery that consumes them
-- **Blocks:** [v0.1-07 runtime](./07-runtime.md) (init must produce a working Postgres connection before `carve serve` runs), [v0.1-13 reference-docs](./13-reference-docs.md) (init writes `.env.example` which the reference docs cover)
+- **Depends on:** [state-store](./state-store.md), [packaging](./packaging.md), [layout](./layout.md)
+- **Soft depends on:** [memory](./memory.md) — spec 05 scaffolds the memory files (writes empty templated `standards.md`/`decisions.md`, runs convention inference for `conventions.md`); spec 06 ships the runtime read/edit machinery that consumes them
+- **Blocks:** [runtime](./runtime.md) (init must produce a working Postgres connection before `carve serve` runs), [reference-docs](./reference-docs.md) (init writes `.env.example` which the reference docs cover)
 
 ## Goal
 
@@ -324,7 +324,7 @@ predictable the agent's output will be.
 
 ### Backwards compat: `--migrate-from-targets`
 
-For users who started with the pre-positioning `targets/<target>/el/<artifact>/` layout (a small set of M1.1 / pre-Pillar-1.1 users), this flag triggers the migration described in [spec 03's *Migration from M1.1*](./03-flat-layout.md) section. Init creates a git commit "Pre-Carve-v0.1-layout-migration" first so the user can revert. The migration is one-shot — re-running is a no-op.
+For users who started with the pre-positioning `targets/<target>/el/<artifact>/` layout (a small set of M1.1 / pre-Pillar-1.1 users), this flag triggers the migration described in [spec 03's *Migration from M1.1*](./layout.md) section. Init creates a git commit "Pre-Carve-v0.1-layout-migration" first so the user can revert. The migration is one-shot — re-running is a no-op.
 
 ## Tests
 

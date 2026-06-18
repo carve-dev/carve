@@ -1,13 +1,13 @@
-# v0.1-06 — Project memory: standards, decisions, conventions, sidecars
+# Project memory: standards, decisions, conventions, sidecars
 
-> Ships the runtime read/edit/refresh machinery for the memory files that [`v0.1-05 init-rewrite`](./05-init-rewrite.md) scaffolds. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §5.4 pre-scoped context](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 6](../PROJECT_PLAN.md).
+> Ships the runtime read/edit/refresh machinery for the memory files that [`init`](./init.md) scaffolds. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §5.4 pre-scoped context](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 6](../PROJECT_PLAN.md).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-05 init-rewrite](./05-init-rewrite.md) (the file scaffolding + convention-inference engine)
-- **Blocks:** [v0.1-12 ask-verb](./12-ask-verb.md) (`carve ask "why did we do X?"` cites `decisions.md`)
-- **Coordinated with:** [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md), [v0.1-07 runtime](./07-runtime.md), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) — these all read memory files via the loader this spec ships
+- **Depends on:** [layout](./layout.md), [init](./init.md) (the file scaffolding + convention-inference engine)
+- **Blocks:** [ask](./ask.md) (`carve ask "why did we do X?"` cites `decisions.md`)
+- **Coordinated with:** [dlt-engineer](./dlt-engineer.md), [runtime](./runtime.md), [pipelines](./pipelines.md) — these all read memory files via the loader this spec ships
 
 ## Goal
 

@@ -1,13 +1,13 @@
-# v0.1-19 — Lineage: investigate dbt + dlt native lineage (no Carve store)
+# Lineage: investigate dbt + dlt native lineage (no Carve store)
 
 > **Decision: Carve maintains no lineage store.** There is no `lineage_nodes`/`lineage_edges` graph, no builder, no recompute/refresh machinery. Lineage is a capability the **explorer** (spec 12) *investigates on demand* — it reads the code and queries the lineage that **dbt** and **dlt** already produce: dbt's `manifest.json` (model-level DAG, sources, tests) and dlt's stored schema (resource → destination table). The one thing this spec ships is a thin **`dlt_schema` reader skill** so dlt's native lineage is as accessible as dbt's manifest already is via `dbt_manifest`. **This reverses the original ARCHITECTURE §6.2 "lineage is the one Carve-owned piece of retrieval" decision** — see *Design notes*. It is consistent with the AI-harness model ([`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md)): the agent investigates with tools, grounded in real tool output, rather than Carve maintaining derived state.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-12 ask-verb](./12-ask-verb.md) (the explorer that does the investigating + its citation model), [v0.1-16 extensibility](./16-extensibility.md) (the `@skill` registration pattern + the existing `dbt_manifest` reader this parallels), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md) (a dlt run produces the stored dlt schema the `dlt_schema` skill reads), [v0.1-03 flat-layout](./03-flat-layout.md) (component locator → where each dlt component lives), [v0.1-18 sql-layer](./18-sql-layer.md) (the `sql` tool the explorer uses for `INFORMATION_SCHEMA` checks). Reverses part of ARCHITECTURE **§6.2/§6.1/§9.6**.
-- **Blocks:** nothing structurally — it *completes* [v0.1-12](./12-ask-verb.md)'s `lineage` classification by adding the missing dlt-side reader. No other spec waits on it.
-- **Lineage:** net-new; supersedes the (never-built) ARCHITECTURE §6.2 lineage graph. Resolves the [v0.1-16](./16-extensibility.md) "lineage graph owner" open question by **deciding not to build a graph.**
+- **Depends on:** [ask](./ask.md) (the explorer that does the investigating + its citation model), [extensibility](./extensibility.md) (the `@skill` registration pattern + the existing `dbt_manifest` reader this parallels), [dlt-engineer](./dlt-engineer.md) (a dlt run produces the stored dlt schema the `dlt_schema` skill reads), [layout](./layout.md) (component locator → where each dlt component lives), [sql](./sql.md) (the `sql` tool the explorer uses for `INFORMATION_SCHEMA` checks). Reverses part of ARCHITECTURE **§6.2/§6.1/§9.6**.
+- **Blocks:** nothing structurally — it *completes* [ask](./ask.md)'s `lineage` classification by adding the missing dlt-side reader. No other spec waits on it.
+- **Lineage:** net-new; supersedes the (never-built) ARCHITECTURE §6.2 lineage graph. Resolves the [extensibility](./extensibility.md) "lineage graph owner" open question by **deciding not to build a graph.**
 
 ## Goal
 

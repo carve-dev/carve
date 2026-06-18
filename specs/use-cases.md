@@ -2,7 +2,7 @@
 
 > Living document. Captures end-to-end walkthroughs of how real users (analysts, analytics engineers, data engineers, ops) interact with Carve. Each walkthrough has been pressure-tested in design discussion and surfaces concrete decisions about CLI, REST, MCP, file layout, runtime, and operational model.
 >
-> **How to use this doc.** When changing a spec under `specs/v0.1/`, `specs/pillar-*/`, `PRD.md`, or `ARCHITECTURE.md`, validate the change against the walkthroughs below. If a change breaks a walkthrough, either revise the change or update the walkthrough explicitly (with rationale).
+> **How to use this doc.** When changing a spec under `specs/capabilities/`, `specs/pillar-*/`, `PRD.md`, or `ARCHITECTURE.md`, validate the change against the walkthroughs below. If a change breaks a walkthrough, either revise the change or update the walkthrough explicitly (with rationale).
 
 ## Template
 
@@ -88,7 +88,7 @@ Two operational shapes underlie every use case below:
 19. **Orchestrator:** Invokes `carve run salesforce --target dev`. Worker (local or in-process) shells out to `dlt pipeline run salesforce`. Rows land in `dev_db.raw_sfdc.{accounts, contacts, opportunities}`.
 20. **Analyst:** Inspects rows directly in Snowflake or via `carve runs show <run_id>` for log/metrics output.
 21. **Analyst:** "Ship it."
-22. **Orchestrator:** Invokes `carve deploy salesforce`. Creates a feature branch, commits the new files + `sources.yml` patch + `.env.example` update, pushes, opens a PR via the configured deploy `pr_command` (default mechanism per [v0.1-14](v0.1/14-deploy-pr.md); `handoff = pr`).
+22. **Orchestrator:** Invokes `carve deploy salesforce`. Creates a feature branch, commits the new files + `sources.yml` patch + `.env.example` update, pushes, opens a PR via the configured deploy `pr_command` (default mechanism per [deploy](capabilities/deploy.md); `handoff = pr`).
 23. **Human reviewer (could be analyst, could be data engineer):** Reviews PR. CI runs `dlt pipeline check`, `dbt parse`, lints. PR is merged to `main`.
 24. **CI workflow on merge to main:** Builds and deploys the new code to the central `carve serve` (e.g., `kubectl rollout restart`, `docker compose pull && up -d`, or `systemctl restart carve`). Recommended template ships with `carve init`.
 25. **Prod `carve serve`:** Boots with the updated code. On first registration of `pipelines/salesforce.toml`, the scheduler seeds a `schedules` row from the pipeline's optional `[seed_schedule]` block (default daily, or whatever the analyst seeded). Thereafter the live schedule is **data** — changed via `carve schedule`, not by re-deploying (see UC2).
@@ -105,7 +105,7 @@ Two operational shapes underlie every use case below:
 - **Hint style follows dlt's verified-sources defaults: mostly inference, with explicit hints on critical columns** (primary key, cursor column, anything the agent has a structural reason to pin). The DLT engineer can add hints during refinement when the analyst needs stricter contracts on specific columns; otherwise dlt's schema inference does the work.
 - Once a source is verified, the orchestrator can call source-specific introspection skills (`salesforce_list_objects`, etc.) to inform planning. These are exposed as part of each curated source.
 - No credentials ever pass through the LLM context. The flow is intentionally split between chat (instructions) and terminal (credential entry + verification).
-- `carve deploy` is a **configurable handoff** (`files` / `commit` / `push` / `pr`; default `pr`, per [v0.1-14](v0.1/14-deploy-pr.md)). In the default PR mode it opens a PR; it does **not** push code to the central server. CI on merge handles the rollout. When a component has graduated to its own repo, deploy coordinates a **linked PR** across the component repo and the control-plane composition (ingest-first ordering).
+- `carve deploy` is a **configurable handoff** (`files` / `commit` / `push` / `pr`; default `pr`, per [deploy](capabilities/deploy.md)). In the default PR mode it opens a PR; it does **not** push code to the central server. CI on merge handles the rollout. When a component has graduated to its own repo, deploy coordinates a **linked PR** across the component repo and the control-plane composition (ingest-first ordering).
 - `--target` defaults to `dev` for laptop-driven actions. Prod runs are always either scheduled or explicitly invoked against the central server (`CARVE_SERVER_URL=...`).
 - The analyst can view prod state from their laptop by pointing the CLI/MCP at the prod URL with their personal token.
 

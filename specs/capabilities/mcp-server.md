@@ -1,11 +1,11 @@
-# v0.1-10 — MCP server: auto-generated adapter over REST; stdio + WebSocket transports
+# MCP server: auto-generated adapter over REST; stdio + WebSocket transports
 
 > Ships Carve's MCP server as a thin adapter over the REST API from spec 09. Per [PRD §6.13 interfaces](../PRD.md), [ARCHITECTURE §8.3 MCP server](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 10](../PROJECT_PLAN.md). Implements the consumer side of [positioning #13 headless by default](../_strategy/2026-05-positioning.md) — every CLI action is reachable from Claude Desktop, Cursor, Claude Code, or any other MCP client.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-09 rest-api](./09-rest-api.md) (the REST surface this spec adapts)
+- **Depends on:** [rest-api](./rest-api.md) (the REST surface this spec adapts)
 - **Blocks:** nothing structurally; MCP is consumer-facing
 - **Soft depends on:** v0.1 user experience — once MCP lands, the user can drive Carve from chat tools, which closes the headless-by-default loop
 

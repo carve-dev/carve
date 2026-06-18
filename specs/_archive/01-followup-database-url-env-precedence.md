@@ -1,12 +1,12 @@
-# v0.1-01c — Native `DATABASE_URL` precedence in `resolve_state_store_url`
+# state-store — Native `DATABASE_URL` precedence in `resolve_state_store_url`
 
-> Small production-code followup to [`v0.1-01-followup-m1-test-sweep`](./01-followup-m1-test-sweep.md). Closes the production gap that forced the test sweep to ship a `cli_env` monkeypatch shim. When this lands, the shim collapses to a one-line dict.
+> Small production-code followup to [`state-store`](./01-followup-m1-test-sweep.md). Closes the production gap that forced the test sweep to ship a `cli_env` monkeypatch shim. When this lands, the shim collapses to a one-line dict.
 
 ## Status
 
 - **Status:** Landed (2026-05-20)
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) (modifies the resolver added there)
-- **Blocks:** nothing — but is a precondition for cleanly removing the `cli_env` monkeypatch in [`v0.1-01-followup-m1-test-sweep`](./01-followup-m1-test-sweep.md). With this landed, the parent spec's Caveat 1 is resolved (see callout in §Acceptance).
+- **Depends on:** [state-store](../capabilities/state-store.md) (modifies the resolver added there)
+- **Blocks:** nothing — but is a precondition for cleanly removing the `cli_env` monkeypatch in [`state-store`](./01-followup-m1-test-sweep.md). With this landed, the parent spec's Caveat 1 is resolved (see callout in §Acceptance).
 
 ## Goal
 
@@ -133,8 +133,8 @@ Verify the full pytest sweep stays green after the collapse: `uv run pytest test
 
 - **Why `os.environ.get` and not the generic `${VAR}` loader?** The loader interpolates TOML at parse time. `carve init`'s bootstrap Config is constructed in Python without ever loading TOML — so the loader's interpolation pass is bypassed entirely. The resolver is the right level to consult the env because it's the single chokepoint every state-store-touching code path runs through.
 - **Why does an explicit non-default `state_store.url` win over `DATABASE_URL`?** Because the user wrote it down. Env vars are convenient for "I don't have a config file yet" and for hosted-product control-plane injection. A committed `state_store.url` is intentional configuration — it should not be silently overridden by an env var.
-- **Why isn't this just baked into v0.1-01?** Because v0.1-01 was already large and shipping. The gap surfaced only when the test sweep tried to use the env-var path against `carve init`'s bootstrap. Fixing it here keeps each spec focused.
-- **Could we drop the legacy `server.state_store` step?** Not yet. v0.1-01's `01-followup-m1-test-sweep` still has `_make_config(state_db=...)` helpers in ~15 test files that construct `Config(server=ServerConfig(state_store=...))`. A separate v0.2 cleanup removes those helpers and the legacy alias together.
+- **Why isn't this just baked into state-store?** Because state-store was already large and shipping. The gap surfaced only when the test sweep tried to use the env-var path against `carve init`'s bootstrap. Fixing it here keeps each spec focused.
+- **Could we drop the legacy `server.state_store` step?** Not yet. state-store's `01-followup-m1-test-sweep` still has `_make_config(state_db=...)` helpers in ~15 test files that construct `Config(server=ServerConfig(state_store=...))`. A separate v0.2 cleanup removes those helpers and the legacy alias together.
 
 ## Open questions
 

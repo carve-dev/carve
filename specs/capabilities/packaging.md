@@ -1,12 +1,12 @@
-# v0.1-02 — OSS packaging: bundled docker-compose for Postgres + external-Postgres option
+# OSS packaging: bundled docker-compose for Postgres + external-Postgres option
 
 > Delivers the first-run UX implied by [positioning #12](../_strategy/2026-05-positioning.md), [ARCHITECTURE §5.7](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 2](../PROJECT_PLAN.md): one-command Postgres for self-hosters, with a clean override for users who already operate Postgres.
 
 ## Status
 
 - **Status:** Ready
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md) (the engine has to accept the connection string this spec produces)
-- **Blocks:** [v0.1-05 init-rewrite](./05-init-rewrite.md) (init scaffolds the compose file produced here)
+- **Depends on:** [state-store](./state-store.md) (the engine has to accept the connection string this spec produces)
+- **Blocks:** [init](./init.md) (init scaffolds the compose file produced here)
 
 ## Goal
 
@@ -23,7 +23,7 @@ The compose bundle is Postgres-only. Carve's API server, scheduler, and worker(s
 - Bringing up Carve itself in a container. Carve runs natively via `carve serve`. A user who wants to put Carve in their own container (e.g., systemd-managed or in a Kubernetes pod) can do so, but Carve doesn't ship its own image. (Note: the hosted product runs Carve in containers, but that's the hosted product's concern, not OSS packaging.)
 - Helm charts, Kustomize overlays, or K8s manifests. Per [ARCHITECTURE §15](../ARCHITECTURE.md), we don't ship a K8s-native abstraction.
 - Production-hardening the bundled Postgres (replication, backups, encrypted volumes, tuning). The bundle is for dev/test/single-team-self-host. Production users override with managed Postgres.
-- The actual `carve init` UX (interactive prompts, brownfield detection, dlt/dbt scaffolding) — that's [v0.1-05 init-rewrite](./05-init-rewrite.md). This spec only ships the compose template and the boundary in init code that says "drop this template in unless `--external-postgres` was passed."
+- The actual `carve init` UX (interactive prompts, brownfield detection, dlt/dbt scaffolding) — that's [init](./init.md). This spec only ships the compose template and the boundary in init code that says "drop this template in unless `--external-postgres` was passed."
 
 ## Files this spec produces
 
@@ -48,7 +48,7 @@ Carve is a Python package. Supported install paths:
 - `pipx install carve` (isolated, recommended for end users who don't manage Python envs themselves)
 - `uv tool install carve` (modern recommended path)
 
-The CLI entry point is `carve` (Typer-based; see [v0.1 spec set item 12 — ask](./12-ask-verb.md) and the rest of the surface for what's exposed).
+The CLI entry point is `carve` (Typer-based; see [v0.1 spec set item 12 — ask](./ask.md) and the rest of the surface for what's exposed).
 
 After install, the user has a `carve` binary on PATH. No additional setup is needed until they run `carve init` in a project.
 
@@ -110,7 +110,7 @@ Behavior:
 - **Validates** the connection string format (must start with `postgresql+psycopg://` or `postgresql://` — the latter gets a friendly note that we'll add `+psycopg` for clarity)
 - **Connects** to confirm Postgres is reachable and that the user has CREATE TABLE privileges (Carve needs to run Alembic migrations)
 - **Does not** scaffold `docker-compose.yml` (no compose file is written)
-- **Writes** `DATABASE_URL=<provided-string>` to the project's `.env.example` file (never a real `.env` — a password-bearing connection string is a secret, per [spec 05](./05-init-rewrite.md)'s "init never writes real secrets" rule), and prints a "copy this line into your `.env`" instruction
+- **Writes** `DATABASE_URL=<provided-string>` to the project's `.env.example` file (never a real `.env` — a password-bearing connection string is a secret, per [spec 05](./init.md)'s "init never writes real secrets" rule), and prints a "copy this line into your `.env`" instruction
 - **Prints** a note: "External Postgres detected; bundled docker-compose not generated. Carve will not manage your Postgres instance lifecycle — backups, upgrades, and tuning are your responsibility."
 
 If `--external-postgres` is omitted, the bundled path is taken (compose file rendered).
@@ -157,15 +157,15 @@ Carve doesn't wrap any of these — they're standard Docker Compose commands. Th
 
 - **Unit**: the compose template renders with expected placeholders substituted, given a project name and config
 - **Unit**: `carve init --external-postgres <url>` rejects malformed connection strings
-- **Integration**: `carve init` in a fresh tempdir produces a valid `docker-compose.yml`; `docker compose up -d` brings Postgres up; `pg_isready` succeeds; `carve init`'s state-store initialization (`initialize_database` → `alembic upgrade head`) connects to the bundled Postgres and brings the schema to head. *(The full `carve serve` runtime is exercised in [spec 07](./07-runtime.md), not here — `serve` is still a stub at this spec's build time.)*
+- **Integration**: `carve init` in a fresh tempdir produces a valid `docker-compose.yml`; `docker compose up -d` brings Postgres up; `pg_isready` succeeds; `carve init`'s state-store initialization (`initialize_database` → `alembic upgrade head`) connects to the bundled Postgres and brings the schema to head. *(The full `carve serve` runtime is exercised in [spec 07](./runtime.md), not here — `serve` is still a stub at this spec's build time.)*
 - **Integration**: `carve init --external-postgres <url>` against a testcontainers-provided Postgres skips compose scaffolding and successfully connects + migrates
 - **Integration**: re-running `carve init` in a project that already has `docker-compose.yml` leaves the file untouched and exits cleanly
 - **Integration**: two `carve init`s in two different parent directories produce two non-colliding Postgres containers (verifies `{project_slug}` substitution)
 
 ## Acceptance
 
-- A user who has Docker installed but no Postgres can run, in a fresh project directory, `carve init` → `docker compose up -d` in under 2 minutes total, and `carve init` brings the state-store schema to head against the bundled Postgres. (Bringing up the API/scheduler/worker via `carve serve` is verified in [spec 07](./07-runtime.md).)
-- A user who has managed Postgres (RDS, Cloud SQL, Supabase, local install) can run `carve init --external-postgres "postgresql+psycopg://..."`, and Carve validates + migrates the schema against it, skipping Docker entirely. (The `carve serve` runtime lands in [spec 07](./07-runtime.md).)
+- A user who has Docker installed but no Postgres can run, in a fresh project directory, `carve init` → `docker compose up -d` in under 2 minutes total, and `carve init` brings the state-store schema to head against the bundled Postgres. (Bringing up the API/scheduler/worker via `carve serve` is verified in [spec 07](./runtime.md).)
+- A user who has managed Postgres (RDS, Cloud SQL, Supabase, local install) can run `carve init --external-postgres "postgresql+psycopg://..."`, and Carve validates + migrates the schema against it, skipping Docker entirely. (The `carve serve` runtime lands in [spec 07](./runtime.md).)
 - The bundled Postgres is bound to `127.0.0.1` only (verifiable via `ss -tlnp` or `netstat`); never accessible from other machines on the network
 - Multiple Carve projects on the same machine don't collide on container or volume names
 - `docs/installation.md`, `docs/first-run-with-bundled-postgres.md`, and `docs/first-run-with-external-postgres.md` each walk a user through to a successful `carve plan` in under 15 minutes

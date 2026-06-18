@@ -1,6 +1,6 @@
 # 2026-06 — Specs define capability; a delivery plan defines what to build, when
 
-> **Status:** Decided 2026-06-17 (Nate). Foundational structure/process decision. Separates the **durable design corpus** (what Carve is and how it works) from the **temporal delivery plan** (what we build next, given what's already built). Refines how [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md) and the `v0.1/` spec set are organized.
+> **Status:** Decided 2026-06-17 (Nate). Foundational structure/process decision. Separates the **durable design corpus** (what Carve is and how it works) from the **temporal delivery plan** (what we build next, given what's already built). Refines how [`../PROJECT_PLAN.md`](../PROJECT_PLAN.md) and the `capabilities/` spec set are organized.
 
 ## The problem
 
@@ -10,7 +10,7 @@ Our specs do two jobs at once: they describe a **capability** (the durable desig
 - **Gaps between design and delivery.** CLI commands like `run --watch` / `auth login` are referenced in the design but have no "v0.1 spec body," so they fall into a no-man's-land — defined as capability, unowned as work.
 - **Same-truth drift.** The 05↔03 `carve.toml` contradiction happened because two specs encoding the same truth evolved at different phases. One living capability spec can't contradict itself.
 
-The `v0.1/` directory *is* the silo. Version identity baked into a spec's path/ID is the root cause.
+The `capabilities/` directory *is* the silo. Version identity baked into a spec's path/ID is the root cause.
 
 ## The decision
 
@@ -30,7 +30,7 @@ Tiers 1–2 answer **"what is Carve and how does it work."** Tier 3 answers **"w
 
 ## What a "spec" becomes
 
-A capability spec stops being a work order. The work-order parts we've been writing — **"Files this spec produces," per-increment "Tests"/"Acceptance"** — move into the delivery plan's increment items (where they can be delta-aware). The spec keeps the **durable design**: behavior, contracts, data model, interfaces, design decisions, and phasing annotations.
+A capability spec stops being a work order. The clearest work-order part — **"Files this spec produces"** (literally *what to build*) — moves into the delivery plan's increment items (where it can be delta-aware: "modify X, add Y"). The spec keeps the **durable design**: behavior, contracts, data model, interfaces, design decisions, phasing annotations — **and its Acceptance + Tests**, which are the durable definition of "correct" for the capability (the delivery increment points *at* them as the bar, rather than re-stating them).
 
 ## The `/build-spec` implication (decide deliberately)
 
@@ -50,15 +50,17 @@ specs/
 
 ## Migration — staged, not big-bang
 
-1. **This ADR** — capture the decision + target structure (done here).
-2. **Stand up `DELIVERY.md`** — port the current build order into dependency-ordered, delta-aware increments. Highest value; pays off before any spec moves. The increments reference the *current* `v0.1/NN` spec files as transitional capability slices.
-3. **Migrate specs** `v0.1/NN` → `capabilities/<area>` incrementally — merge any v0.1+v0.2 fragments of one capability, strip version identity, lift work-order sections into the delivery plan. Done capability-by-capability, not all at once.
+1. **This ADR** — capture the decision + target structure. ✅ Done.
+2. **Stand up `DELIVERY.md`** — port the build order into dependency-ordered, delta-aware increments. ✅ Done.
+3. **Migrate specs** `v0.1/NN` → `capabilities/<area>`, in two parts:
+   - **3a — structural.** ✅ Done (2026-06-17). All 19 specs moved to [`../capabilities/<area>.md`](../capabilities/); version identity stripped from filenames, titles, and cross-references corpus-wide; the build-order README replaced by a capability index; the landed M1/M1.1 follow-ups archived.
+   - **3b — content.** Remaining: lift each spec's **"Files this spec produces"** section into the delivery increment that builds it, and reframe any leftover version-as-scope language as phasing annotations. Capability-by-capability; non-structural polish. (Acceptance + Tests stay in the spec — see *What a "spec" becomes*.)
 
-Until step 3 completes, `v0.1/NN` IDs persist as stable identifiers; `DELIVERY.md` is the source of truth for sequencing and scope. [`PROJECT_PLAN.md`](../PROJECT_PLAN.md) is superseded as a build plan by `DELIVERY.md` (its durable "shape of Carve" framing folds into PRD/ARCHITECTURE).
+`DELIVERY.md` is the source of truth for sequencing and scope. [`PROJECT_PLAN.md`](../PROJECT_PLAN.md) is superseded as a build plan by `DELIVERY.md` (its durable "shape of Carve" framing folds into PRD/ARCHITECTURE).
 
 ## Impact
 
 - **`DELIVERY.md`** is created as the live delivery plan (step 2).
 - **`PROJECT_PLAN.md`** becomes a static precursor — its sequencing role moves to `DELIVERY.md`; keep until the migration settles, then retire/fold.
-- **`v0.1/README.md`** build-order table is superseded by `DELIVERY.md`'s increments.
-- **Capability specs** eventually lose their version prefix and their "Files produced / Tests / Acceptance" sections (those move to delivery increments). Deferred to step 3.
+- **`capabilities/README.md`** is now a capability index (the build-order table moved to `DELIVERY.md`'s increments).
+- **Capability specs** lost their version prefix (step 3a). Lifting the "Files this spec produces" sections into delivery increments is step 3b (remaining); Acceptance + Tests stay in the spec as the durable verification bar.

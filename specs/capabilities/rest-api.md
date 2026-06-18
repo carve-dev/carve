@@ -1,12 +1,12 @@
-# v0.1-09 — REST API: FastAPI app, middleware, routers, streaming, webhooks
+# REST API: FastAPI app, middleware, routers, streaming, webhooks
 
 > Consolidates the REST surface that earlier specs described endpoint-by-endpoint into a single FastAPI app with cross-cutting middleware (auth, errors, pagination, idempotency), streaming (WebSocket/SSE), and webhook delivery. Per [PRD §6.13 interfaces](../PRD.md), [PRD §6 intro on API parity](../PRD.md), [ARCHITECTURE §8.2 REST API](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 9](../PROJECT_PLAN.md).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md), [v0.1-06 project-memory](./06-project-memory.md), [v0.1-07 runtime](./07-runtime.md), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md). Each of those ships the *services* the routers call into; this spec wires the HTTP surface on top.
-- **Blocks:** [v0.1-10 mcp-server](./10-mcp-server.md) (auto-generates MCP tools from this REST surface), [v0.1-11 static-html-ui](./11-static-html-ui.md), [v0.1-12 ask-verb](./12-ask-verb.md) (adds `/api/v1/asks/*` to this app)
+- **Depends on:** [state-store](./state-store.md), [dlt-engineer](./dlt-engineer.md), [memory](./memory.md), [runtime](./runtime.md), [pipelines](./pipelines.md). Each of those ships the *services* the routers call into; this spec wires the HTTP surface on top.
+- **Blocks:** [mcp-server](./mcp-server.md) (auto-generates MCP tools from this REST surface), [ui](./ui.md), [ask](./ask.md) (adds `/api/v1/asks/*` to this app)
 
 ## Goal
 

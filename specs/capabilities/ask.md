@@ -1,4 +1,4 @@
-# v0.1-12 — `carve ask`: the explorer (read-only mode of the harness)
+# `carve ask`: the explorer (read-only mode of the harness)
 
 > **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): `ask` is the **explorer** — a declarative **subagent** (`builtin/explorer.md`) the orchestrator `delegate`s read-only questions to, run in the **`read_only` permission mode** (spec 15) with read-only **terminal-grade tools** (`read_file`/`grep`/`glob`/`web_fetch`) + the dialect-aware **`sql` tool on the read role** (spec 18) + lineage/manifest/memory skills. The former `NoWriteSkillsGuardrail` is **subsumed by the `read_only` mode**: the permission gate (not a separate ask-only mechanism) structurally enforces no-writes. The citation model (`cited_entities`), the Ask data model + persistence, investigative memory selection, and the CLI/REST/MCP surface are unchanged.
 
@@ -7,7 +7,7 @@
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (the explorer is a subagent run in the `read_only` permission mode, with the terminal tools + the `delegate` path), [v0.1-16 extensibility](./16-extensibility.md) (the explorer ships as a declarative agent — `builtin/explorer.md`), [v0.1-18 sql-layer](./18-sql-layer.md) (the explorer queries the warehouse via the `sql` tool on the **read role**), [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-06 project-memory](./06-project-memory.md) (asks cite `decisions.md` entries), [v0.1-09 rest-api](./09-rest-api.md) (this spec adds the asks router to the existing FastAPI app)
+- **Depends on:** [harness](./harness.md) (the explorer is a subagent run in the `read_only` permission mode, with the terminal tools + the `delegate` path), [extensibility](./extensibility.md) (the explorer ships as a declarative agent — `builtin/explorer.md`), [sql](./sql.md) (the explorer queries the warehouse via the `sql` tool on the **read role**), [state-store](./state-store.md), [memory](./memory.md) (asks cite `decisions.md` entries), [rest-api](./rest-api.md) (this spec adds the asks router to the existing FastAPI app)
 - **Soft depends on:** M1's reasoning loop (HISTORICAL, extended into the harness by spec 15); spec 07/08 for run/pipeline data the explorer reads when answering
 - **Blocks:** nothing structurally
 
@@ -27,7 +27,7 @@ After this spec lands, a user can ask "where do we calculate net revenue?" or "w
 
 ## Out of scope
 
-- **The harness core** — the subagent loop, the `delegate` tool, the terminal tools, the `read_only` permission gate, and role-scoped warehouse access all live in [v0.1-15](./15-agent-harness.md); the declarative agent format in [v0.1-16](./16-extensibility.md); the `sql` tool in [v0.1-18](./18-sql-layer.md). This spec **consumes** them and ships the explorer's agent definition, its system prompt, the Ask data model, and the citation builder.
+- **The harness core** — the subagent loop, the `delegate` tool, the terminal tools, the `read_only` permission gate, and role-scoped warehouse access all live in [harness](./harness.md); the declarative agent format in [extensibility](./extensibility.md); the `sql` tool in [sql](./sql.md). This spec **consumes** them and ships the explorer's agent definition, its system prompt, the Ask data model, and the citation builder.
 - Streaming the answer token-by-token (synchronous return in v0.1; the answer arrives as one chunk when the explorer finishes)
 - Asking *about* asks (e.g., "what have we been asking lately?") — handled by `carve asks list` rather than a meta-ask
 - Embedding-based semantic search over decisions/code (post-v0.1; v0.1 explorer uses the read tools + skills directly)

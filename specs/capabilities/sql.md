@@ -1,11 +1,11 @@
-# v0.1-18 — SQL: a dialect-aware tool layer + thin specialist
+# SQL: a dialect-aware tool layer + thin specialist
 
-> Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md): **SQL is a cross-cutting capability, not a silo.** A dialect-aware tool layer every subagent uses (the `sql` tool from [v0.1-15](./15-agent-harness.md)) — `sqlglot` for transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution — plus a thin **SQL specialist** for explain / write / modify. It also backs the `sql` step type (spec 08) and generalizes the shipped Snowflake-only `run_snowflake_query` + catalog skills.
+> Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md): **SQL is a cross-cutting capability, not a silo.** A dialect-aware tool layer every subagent uses (the `sql` tool from [harness](./harness.md)) — `sqlglot` for transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution — plus a thin **SQL specialist** for explain / write / modify. It also backs the `sql` step type (spec 08) and generalizes the shipped Snowflake-only `run_snowflake_query` + catalog skills.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (the `sql` tool + permission modes / role-scoped access), [v0.1-03 flat-layout](./03-flat-layout.md) (connections per target), M1 Snowflake connector (HISTORICAL — generalized here).
+- **Depends on:** [harness](./harness.md) (the `sql` tool + permission modes / role-scoped access), [layout](./layout.md) (connections per target), M1 Snowflake connector (HISTORICAL — generalized here).
 - **Blocks:** the agents that query/author SQL (04 DLT, 08 pipeline + the `sql` step, 12 explorer, 17 recovery). Generalizes the M1 catalog skills + `run_snowflake_query`.
 
 ## Goal

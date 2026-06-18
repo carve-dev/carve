@@ -29,38 +29,38 @@ Available on every command:
 
 | Command | Description | Spec |
 |---|---|---|
-| `carve init` | Bootstrap a Carve project | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `carve plan "<goal>"` | Produce a reviewable plan (no files written) | M1.1, [v0.1-04](../v0.1/04-el-agent-dlt.md) |
-| `carve build <plan_id>` | Materialize a plan into files | M1.1, [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve run <pipeline>` | Execute a pipeline on demand | M1.1, [v0.1-07](../v0.1/07-runtime.md) |
+| `carve init` | Bootstrap a Carve project | [init](../capabilities/init.md) |
+| `carve plan "<goal>"` | Produce a reviewable plan (no files written) | M1.1, [dlt-engineer](../capabilities/dlt-engineer.md) |
+| `carve build <plan_id>` | Materialize a plan into files | M1.1, [pipelines](../capabilities/pipelines.md) |
+| `carve run <pipeline>` | Execute a pipeline on demand | M1.1, [runtime](../capabilities/runtime.md) |
 | `carve runs` | List recent runs | M1.1 |
-| `carve logs <run_id>` | Print / stream run logs | M1.1, [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve deploy <pipeline>` | Promote via a configurable handoff (default: PR) | [v0.1-14](../v0.1/14-deploy-pr.md) |
-| `carve ask "<question>"` | Read-only investigative query (the explorer) | [v0.1-12](../v0.1/12-ask-verb.md) |
-| `carve serve` | Start the API + scheduler + reaper + archiver + workers | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve worker` | Run a standalone worker process | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve mcp-serve` | Start the MCP server (adapter over REST) | [v0.1-10](../v0.1/10-mcp-server.md) |
-| `carve schedule list/show/pause/resume/set-cron` | Live schedule controls (data, instant, audited) | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve schedule reseed <pipeline>` | Re-apply `[seed_schedule]` from code to the live row | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve pipelines list/show/validate/diff` | Pipeline definitions | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve component <name> --separate-remote/-local/--same-repo` | Graduate / relocate a component | [v0.1-08](../v0.1/08-multi-step-pipeline.md), [v0.1-03](../v0.1/03-flat-layout.md) |
-| `carve components show [<name>]` | List components (name, type, mode, resolved ref) | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve memory show/edit/append-decision/refresh` | Project memory | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve asks list/show` | Prior `ask` results | [v0.1-12](../v0.1/12-ask-verb.md) |
-| `carve investigations list/show/dismiss` | Recovery investigations | [v0.1-17](../v0.1/17-recovery-engineer.md) |
-| `carve agents list/show/create/edit/test` | Agent management (markdown definitions) | [v0.1-16](../v0.1/16-extensibility.md) |
-| `carve skills list/show/test` | Skill registry (built-ins, packs, MCP) | [v0.1-16](../v0.1/16-extensibility.md) |
-| `carve mcp-servers list/add/remove` | Register external MCP servers Carve consumes | [v0.1-16](../v0.1/16-extensibility.md) |
-| `carve docs serve/regen/open` | Local static HTML UI | [v0.1-11](../v0.1/11-static-html-ui.md) |
-| `carve workspaces list/clear` | Separate-remote workspace cache | [v0.1-03](../v0.1/03-flat-layout.md) |
-| `carve auth token rotate` | Mint/rotate the OSS API token | [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve metrics costs/runs/agents` | Aggregate metrics | [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve logs <run_id>` | Print / stream run logs | M1.1, [rest-api](../capabilities/rest-api.md) |
+| `carve deploy <pipeline>` | Promote via a configurable handoff (default: PR) | [deploy](../capabilities/deploy.md) |
+| `carve ask "<question>"` | Read-only investigative query (the explorer) | [ask](../capabilities/ask.md) |
+| `carve serve` | Start the API + scheduler + reaper + archiver + workers | [runtime](../capabilities/runtime.md) |
+| `carve worker` | Run a standalone worker process | [runtime](../capabilities/runtime.md) |
+| `carve mcp-serve` | Start the MCP server (adapter over REST) | [mcp-server](../capabilities/mcp-server.md) |
+| `carve schedule list/show/pause/resume/set-cron` | Live schedule controls (data, instant, audited) | [runtime](../capabilities/runtime.md) |
+| `carve schedule reseed <pipeline>` | Re-apply `[seed_schedule]` from code to the live row | [pipelines](../capabilities/pipelines.md) |
+| `carve pipelines list/show/validate/diff` | Pipeline definitions | [pipelines](../capabilities/pipelines.md) |
+| `carve component <name> --separate-remote/-local/--same-repo` | Graduate / relocate a component | [pipelines](../capabilities/pipelines.md), [layout](../capabilities/layout.md) |
+| `carve components show [<name>]` | List components (name, type, mode, resolved ref) | [pipelines](../capabilities/pipelines.md) |
+| `carve memory show/edit/append-decision/refresh` | Project memory | [memory](../capabilities/memory.md) |
+| `carve asks list/show` | Prior `ask` results | [ask](../capabilities/ask.md) |
+| `carve investigations list/show/dismiss` | Recovery investigations | [recovery](../capabilities/recovery.md) |
+| `carve agents list/show/create/edit/test` | Agent management (markdown definitions) | [extensibility](../capabilities/extensibility.md) |
+| `carve skills list/show/test` | Skill registry (built-ins, packs, MCP) | [extensibility](../capabilities/extensibility.md) |
+| `carve mcp-servers list/add/remove` | Register external MCP servers Carve consumes | [extensibility](../capabilities/extensibility.md) |
+| `carve docs serve/regen/open` | Local static HTML UI | [ui](../capabilities/ui.md) |
+| `carve workspaces list/clear` | Separate-remote workspace cache | [layout](../capabilities/layout.md) |
+| `carve auth token rotate` | Mint/rotate the OSS API token | [rest-api](../capabilities/rest-api.md) |
+| `carve metrics costs/runs/agents` | Aggregate metrics | [rest-api](../capabilities/rest-api.md) |
 
 ## Lifecycle verbs
 
 ### `carve init`
 
-Bootstrap a Carve project. Configures four independent axes — Postgres state store, dbt presence, dlt presence, and project memory — interactively or via flags ([v0.1-05](../v0.1/05-init-rewrite.md)).
+Bootstrap a Carve project. Configures four independent axes — Postgres state store, dbt presence, dlt presence, and project memory — interactively or via flags ([init](../capabilities/init.md)).
 
 ```
 carve init [--external-postgres URL] [--with-dbt] [--dbt-path PATH | --dbt-url URL]
@@ -82,7 +82,7 @@ carve build <plan_id> [--force]
 carve run <pipeline> [--plan <plan_id>]
 ```
 
-`plan` produces a reviewable design + a persisted Plan; it writes **no** files. `build` materializes a plan into files (dlt code, `pipelines/<name>.toml`) and emits the `post_build` hook ([v0.1-16](../v0.1/16-extensibility.md)). `run` executes an existing pipeline on demand.
+`plan` produces a reviewable design + a persisted Plan; it writes **no** files. `build` materializes a plan into files (dlt code, `pipelines/<name>.toml`) and emits the `post_build` hook ([extensibility](../capabilities/extensibility.md)). `run` executes an existing pipeline on demand.
 
 ```
 carve plan "ingest the Stripe charges API into raw_stripe, then build the staging models"
@@ -106,7 +106,7 @@ carve logs 4f6a... --follow
 
 ### `carve deploy`
 
-Promote built code to a target via a **configurable handoff** ([v0.1-14](../v0.1/14-deploy-pr.md)). Default handoff is `pr`; cross-repo graduated components produce coordinated linked PRs (ingest-first). Emits the `pre_deploy` hook. The old `carve el deploy --from/--to` DDL-apply path is **retired**.
+Promote built code to a target via a **configurable handoff** ([deploy](../capabilities/deploy.md)). Default handoff is `pr`; cross-repo graduated components produce coordinated linked PRs (ingest-first). Emits the `pre_deploy` hook. The old `carve el deploy --from/--to` DDL-apply path is **retired**.
 
 ```
 carve deploy <pipeline> [--target <name>] [--handoff files|commit|push|pr] [--amend] [--draft] [--yes]
@@ -122,7 +122,7 @@ Pre-flight drift detection exits `4` if the target's deployed state diverges fro
 
 ### `carve ask`
 
-Run the **explorer** — a read-only subagent that investigates the project (code, dbt manifest, dlt schema, `sql` introspection) and returns a cited answer. Changes nothing ([v0.1-12](../v0.1/12-ask-verb.md)). Lineage questions are answered by investigation, not a stored graph ([v0.1-19](../v0.1/19-lineage.md)).
+Run the **explorer** — a read-only subagent that investigates the project (code, dbt manifest, dlt schema, `sql` introspection) and returns a cited answer. Changes nothing ([ask](../capabilities/ask.md)). Lineage questions are answered by investigation, not a stored graph ([lineage](../capabilities/lineage.md)).
 
 ```
 carve ask "<question>" [--pipeline <name>] [--target <name>] [--output text|json] [--watch]
@@ -141,7 +141,7 @@ carve serve [--port N] [--host H] [--workers N] [--no-scheduler] [--no-reaper] [
 carve worker [--workers N]
 ```
 
-`carve serve` runs the FastAPI app (spec 09) plus the scheduler, reaper, archiver, and an in-process worker pool ([v0.1-07](../v0.1/07-runtime.md)). `carve worker` runs standalone workers that claim jobs from the queue (optimistic `FOR UPDATE SKIP LOCKED`).
+`carve serve` runs the FastAPI app (spec 09) plus the scheduler, reaper, archiver, and an in-process worker pool ([runtime](../capabilities/runtime.md)). `carve worker` runs standalone workers that claim jobs from the queue (optimistic `FOR UPDATE SKIP LOCKED`).
 
 ### `carve mcp-serve`
 
@@ -149,11 +149,11 @@ carve worker [--workers N]
 carve mcp-serve [--transport stdio|ws] [--port N] [--host H] [--server-url URL] [--token T]
 ```
 
-Starts the MCP server, which adapts the REST surface to MCP tools ([v0.1-10](../v0.1/10-mcp-server.md)). For *consuming* external MCP servers, see `carve mcp-servers`.
+Starts the MCP server, which adapts the REST surface to MCP tools ([mcp-server](../capabilities/mcp-server.md)). For *consuming* external MCP servers, see `carve mcp-servers`.
 
 ## `carve schedule ...`
 
-The live schedule is **data** — these commands mutate the `schedules` table instantly (effective on the next scheduler tick, ≤ the loop interval), each audited in `schedule_changes`. No deploy, no PR ([v0.1-07](../v0.1/07-runtime.md)).
+The live schedule is **data** — these commands mutate the `schedules` table instantly (effective on the next scheduler tick, ≤ the loop interval), each audited in `schedule_changes`. No deploy, no PR ([runtime](../capabilities/runtime.md)).
 
 ```
 carve schedule list
@@ -180,11 +180,11 @@ carve pipelines validate [<name>]
 carve pipelines diff <name> --against <build_id>
 ```
 
-`validate` checks the TOML schema + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names). Pipelines are authored via `carve plan` / `carve build`, not hand-scaffolded ([v0.1-08](../v0.1/08-multi-step-pipeline.md)).
+`validate` checks the TOML schema + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names). Pipelines are authored via `carve plan` / `carve build`, not hand-scaffolded ([pipelines](../capabilities/pipelines.md)).
 
 ## `carve component` / `carve components`
 
-Components are referenced by name; these commands manage where a component's code lives and how it's pinned ([v0.1-08](../v0.1/08-multi-step-pipeline.md), [v0.1-03](../v0.1/03-flat-layout.md)).
+Components are referenced by name; these commands manage where a component's code lives and how it's pinned ([pipelines](../capabilities/pipelines.md), [layout](../capabilities/layout.md)).
 
 ```
 carve component <name> --separate-remote <url> [--ref <pin> | --branch <name>]
@@ -200,7 +200,7 @@ carve components show           # name, type, mode, resolved ref/path, referenci
 
 ## `carve memory ...`
 
-Project memory: conventions (inferred), standards (authored), and the decision log ([v0.1-06](../v0.1/06-project-memory.md)).
+Project memory: conventions (inferred), standards (authored), and the decision log ([memory](../capabilities/memory.md)).
 
 ```
 carve memory show [<file>] [--pipeline <name>]
@@ -225,11 +225,11 @@ carve investigations show <id> [--all-runs]
 carve investigations dismiss <id> --reason "<text>"
 ```
 
-Investigations are produced by the recovery engineer on retries-exhausted failures ([v0.1-17](../v0.1/17-recovery-engineer.md)); they carry a diagnosis + a proposed Plan that flows through the normal build/deploy path.
+Investigations are produced by the recovery engineer on retries-exhausted failures ([recovery](../capabilities/recovery.md)); they carry a diagnosis + a proposed Plan that flows through the normal build/deploy path.
 
 ## Extensibility: `carve agents` / `carve skills` / `carve mcp-servers`
 
-Agents are **markdown files with YAML frontmatter** (`carve/agents/<name>.md`); a user file overrides a built-in of the same name ([v0.1-16](../v0.1/16-extensibility.md)). See [config-schema](./config-schema.md) for the frontmatter fields.
+Agents are **markdown files with YAML frontmatter** (`carve/agents/<name>.md`); a user file overrides a built-in of the same name ([extensibility](../capabilities/extensibility.md)). See [config-schema](./config-schema.md) for the frontmatter fields.
 
 ```
 carve agents list
@@ -263,7 +263,7 @@ carve docs regen [--page <name>]
 carve docs open
 ```
 
-Serves the minimal local UI (run history, per-run detail + logs, pipelines) on loopback, regenerated on run events ([v0.1-11](../v0.1/11-static-html-ui.md)). No lineage view in v0.1.
+Serves the minimal local UI (run history, per-run detail + logs, pipelines) on loopback, regenerated on run events ([ui](../capabilities/ui.md)). No lineage view in v0.1.
 
 ## Auth & metrics
 
@@ -283,7 +283,7 @@ carve metrics costs --since 30d
 
 - `carve target verify` — a small follow-up spec; the deploy pre-flight (spec 14) is the v0.1 readiness check.
 - `carve el deploy`, `carve doctor`, `carve config`, `carve scaffold`, `carve dbt <passthrough>`, the old `carve mcp` group — **removed/retired**; superseded as noted above.
-- Backfills, `carve run --step/--from/--backfill` — out of scope ([v0.1-08](../v0.1/08-multi-step-pipeline.md)).
+- Backfills, `carve run --step/--from/--backfill` — out of scope ([pipelines](../capabilities/pipelines.md)).
 
 ## Environment variables
 
@@ -294,7 +294,7 @@ carve metrics costs --since 30d
 
 ## Cross-references
 
-- REST API: the OpenAPI schema at `/api/openapi.json` + `docs/api-reference.md` ([v0.1-09](../v0.1/09-rest-api.md))
-- MCP tools: `docs/mcp-server.md` ([v0.1-10](../v0.1/10-mcp-server.md))
+- REST API: the OpenAPI schema at `/api/openapi.json` + `docs/api-reference.md` ([rest-api](../capabilities/rest-api.md))
+- MCP tools: `docs/mcp-server.md` ([mcp-server](../capabilities/mcp-server.md))
 - Config files: [config-schema.md](./config-schema.md)
 - Vocabulary: [glossary.md](./glossary.md)

@@ -11,7 +11,7 @@ The corpus splits into **durable design** (version-independent — what Carve is
 **Durable design:**
 - [`PRD.md`](./PRD.md) — the master product requirements document. The single source of truth for what Carve is, who it's for, and what it does.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the technical architecture deep-dive: components, data flow, extension points, the dev/prod target model, and the boundary between OSS and SaaS.
-- Capability specs in [`v0.1/`](./v0.1/) — the lowest level of *design* detail, one per capability area.
+- Capability specs in [`capabilities/`](./capabilities/) — the lowest level of *design* detail, one per capability area.
 
 **Delivery:**
 - [`DELIVERY.md`](./DELIVERY.md) — the live, dependency-aware, **delta-aware** delivery plan, organized into foundation-first increments. **The source of truth for sequencing and scope.**
@@ -19,7 +19,7 @@ The corpus splits into **durable design** (version-independent — what Carve is
 
 ### Carve's four product pillars
 
-**Carve is a control plane plus an AI harness, over independently-versioned dlt/dbt/sql components — not a project that contains them** ([`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md), [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md)). The value proposition: **build, schedule, and monitor pipelines — all with AI.** The work is organized as four pillars (delivery shape in [`PROJECT_PLAN.md`](./PROJECT_PLAN.md)); the current spec set is in [`v0.1/`](./v0.1/).
+**Carve is a control plane plus an AI harness, over independently-versioned dlt/dbt/sql components — not a project that contains them** ([`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md), [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md)). The value proposition: **build, schedule, and monitor pipelines — all with AI.** The work is organized as four pillars (sequenced into increments in [`DELIVERY.md`](./DELIVERY.md)); the capability specs are in [`capabilities/`](./capabilities/).
 
 | Pillar | Theme | Ships |
 |---|---|---|
@@ -32,9 +32,9 @@ Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine
 
 **Adoption is incremental.** A brownfield dbt shop can use Carve in **orchestration-only mode** (bring your own dlt/dbt; Carve composes, schedules, monitors). A team that wants AI to build ingestion adopts the DLT engineer + control plane. A team that wants the whole lifecycle adopts all four pillars.
 
-### The v0.1 spec set
+### The capability specs
 
-The current, authoritative spec set is [`v0.1/`](./v0.1/) — **19 specs**, drafted/revised to the control-plane + AI-harness model. See [`v0.1/README.md`](./v0.1/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
+The durable design lives in [`capabilities/`](./capabilities/) — **19 capability specs**, drafted/revised to the control-plane + AI-harness model. See [`capabilities/README.md`](./capabilities/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
 
 ### Foundation (M1, M1.1) — already shipped
 
@@ -61,16 +61,16 @@ If you're picking this project up cold:
 1. Read [`PRD.md`](./PRD.md) end to end. It's the most important document — everything else is implementation detail.
 2. Read [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) to understand the four-pillar delivery shape.
 3. Skim [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the technical model.
-4. Open [`v0.1/`](./v0.1/) and start building — read [`v0.1/README.md`](./v0.1/README.md) first (specs 15/16 are the AI-harness foundation everything runs on). M1 + M1.1 are already shipped.
+4. Open [`capabilities/`](./capabilities/) and start building — read [`capabilities/README.md`](./capabilities/README.md) first (specs 15/16 are the AI-harness foundation everything runs on). M1 + M1.1 are already shipped.
 
 If you're contributing to a specific area:
 
-1. Find the relevant spec in [`v0.1/`](./v0.1/).
+1. Find the relevant spec in [`capabilities/`](./capabilities/).
 2. Each spec is self-contained — it lists its dependencies on other specs at the top, plus a `Lineage` field naming any M1 / M1.1 / archived M2 / archived M3 ancestors.
 3. Specs include scope, interfaces, file paths, acceptance criteria, tests, and estimated effort.
 
 ## Status
 
 - **M1 and M1.1 are shipped.** Code is in `src/`. ~300 tests passing; spec 01 (state store → Postgres) landed.
-- **The v0.1 spec set (19 specs) is drafted/revised** to the control-plane + AI-harness model ([`v0.1/`](./v0.1/)); the foundation harness specs (15/16) have been adversarially reviewed and hardened. Implementing the v0.1 set is the active phase.
+- **The 19 capability specs are drafted/revised** to the control-plane + AI-harness model ([`capabilities/`](./capabilities/)); the foundation harness specs (15/16) have been adversarially reviewed and hardened. The build sequence is in [`DELIVERY.md`](./DELIVERY.md); implementing it is the active phase.
 - **The two foundational decisions** are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md).

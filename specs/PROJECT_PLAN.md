@@ -82,7 +82,7 @@ The `/build-spec` skill (built-in to this repo) is the primary implementation me
 
 **Spec status.** The v0.1 spec set is drafted and revised to the control-plane + AI-harness model; the original Pillar 1/1.1 specs were archived and their content carried forward. The foundation harness specs (15 agent-harness, 16 extensibility) have been adversarially reviewed and hardened.
 
-**Spec set** (full list + per-spec status in [`v0.1/README.md`](./v0.1/README.md) — 19 specs), grouped:
+**Spec set** (full list + per-spec status in [`capabilities/README.md`](./capabilities/README.md) — 19 specs), grouped:
 
 - **Foundation:** 01 state-store (Postgres-only), 02 OSS packaging, 03 control-plane layout (`carve.toml` + `[components.<name>]`), 15 agent-harness, 16 extensibility.
 - **Components + composition:** 04 DLT engineer, 08 multi-step pipeline composition, 18 SQL tool layer.
@@ -91,7 +91,7 @@ The `/build-spec` skill (built-in to this repo) is the primary implementation me
 - **Deploy + recovery:** 14 deploy (configurable handoff + linked-PR), 17 recovery engineer.
 - **Docs:** 13 reference-doc rewrites.
 
-The two foundational decisions are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md); the now-historical pre-control-plane audit is in [`spec-audit.md`](./spec-audit.md).
+The two foundational decisions are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md); the now-historical pre-control-plane audit is in [`spec-audit.md`](./_strategy/spec-audit.md).
 
 **Pace.** Elapsed time is gated by spec rigor and review pace, not engineer-weeks (see *Implementation approach* above). Each spec lands via one `/build-spec` iteration plus Nate's PR review; total v0.1 is roughly "however long Nate takes to write the specs and review the PRs," with Claude Code's build time as a smaller component.
 

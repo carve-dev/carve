@@ -74,7 +74,7 @@ The heart of Carve. Carve is a **control plane** that references independently-v
 - **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables include `pipelines`, `schedules`, `schedule_changes`, `tokens`, `plans`, `builds`, `deploys`, `jobs`, `runs`, `step_runs`, `logs`, `workers`, `events`, `workspaces` (full schema in §9). Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7). The store holds the **control plane's** running state — it references components by name (§10.1); it never contains their code.
 - **Event bus** — In-process publish-subscribe in OSS; replaceable by Redis Streams in the hosted product without changing subscribers. Events: `run.queued`, `run.started`, `step.*`, `run.completed`, `agent.invoked`, `skill.called`.
 - **Skills registry** — Catalog of built-in skills (`src/carve/skills/`) plus MCP-imported skills (namespaced `mcp:server:tool`). Each skill declares typed inputs/outputs and a description. Skills receive a `SkillContext` for connections, logging, and event emission.
-- **Conventions + lineage** — Convention inference reads existing dbt projects and writes `carve/conventions.md`. **Lineage is investigated, not stored:** the explorer queries dbt's manifest + dlt's schema + the code on demand ([v0.1-19](v0.1/19-lineage.md)); Carve maintains no lineage graph.
+- **Conventions + lineage** — Convention inference reads existing dbt projects and writes `carve/conventions.md`. **Lineage is investigated, not stored:** the explorer queries dbt's manifest + dlt's schema + the code on demand ([lineage](capabilities/lineage.md)); Carve maintains no lineage graph.
 
 ### 2.3 Runtime
 
@@ -341,7 +341,7 @@ Failure mode is per-step in the pipeline TOML; the runtime enforces it uniformly
 
 ## 5. The agent layer in detail
 
-> **Reconciled to the AI-harness model** ([_strategy/2026-06-ai-harness.md](_strategy/2026-06-ai-harness.md); specs [15 harness](v0.1/15-agent-harness.md) / [16 extensibility](v0.1/16-extensibility.md) / [18 sql](v0.1/18-sql-layer.md)). The orchestrator is the **main loop** that **delegates to subagents** (the `delegate` tool); specialists are subagents — a fresh loop with their own context, tools, and prompt, returning a *summary*. Agents are **declarative** (markdown + frontmatter), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web`) + skills, run behind **permission modes**, and **verify by execution**. Subagent **context-isolation** supersedes the old "pre-scoped context" pattern. §5.x is updated accordingly.
+> **Reconciled to the AI-harness model** ([_strategy/2026-06-ai-harness.md](_strategy/2026-06-ai-harness.md); specs [15 harness](capabilities/harness.md) / [16 extensibility](capabilities/extensibility.md) / [18 sql](capabilities/sql.md)). The orchestrator is the **main loop** that **delegates to subagents** (the `delegate` tool); specialists are subagents — a fresh loop with their own context, tools, and prompt, returning a *summary*. Agents are **declarative** (markdown + frontmatter), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web`) + skills, run behind **permission modes**, and **verify by execution**. Subagent **context-isolation** supersedes the old "pre-scoped context" pattern. §5.x is updated accordingly.
 
 ### 5.1 Agents and specialization
 
@@ -354,16 +354,16 @@ Carve has one orchestration agent (the main loop) and a set of specialist **suba
 - **Explorer** — the read-only investigative agent (the `ask` verb).
 - **dbt engineer (v0.2)** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
 
-Per the **engineer + review-subagent** pattern (the `/build-spec` fan-out brought to users' pipelines), each domain has an *engineer* (architect + build) plus *qa/security review* subagents. **SQL is a cross-cutting tool layer** ([spec 18](v0.1/18-sql-layer.md)), used by every agent, not an agent itself.
+Per the **engineer + review-subagent** pattern (the `/build-spec` fan-out brought to users' pipelines), each domain has an *engineer* (architect + build) plus *qa/security review* subagents. **SQL is a cross-cutting tool layer** ([spec 18](capabilities/sql.md)), used by every agent, not an agent itself.
 
-Agents are **declarative** ([spec 16](v0.1/16-extensibility.md)): a markdown file with frontmatter (`name`/`description`/`model`/`tools`/`allowed_paths`/`classifications`) — built-ins at `src/carve/core/agents/builtin/*.md`, user agents at `carve/agents/*.md` (which override built-ins by name; hot-reloaded). The old per-agent `[guardrails]` block is subsumed by the harness **permission gate** (`allowed_paths` + the active mode's allowlist).
+Agents are **declarative** ([spec 16](capabilities/extensibility.md)): a markdown file with frontmatter (`name`/`description`/`model`/`tools`/`allowed_paths`/`classifications`) — built-ins at `src/carve/core/agents/builtin/*.md`, user agents at `carve/agents/*.md` (which override built-ins by name; hot-reloaded). The old per-agent `[guardrails]` block is subsumed by the harness **permission gate** (`allowed_paths` + the active mode's allowlist).
 
 ### 5.2 The orchestration agent's job
 
 Given a user goal, the orchestrator:
 
 1. **Classifies the goal** — new pipeline, modification, config change, schedule change, etc. Classification determines which skills to call.
-2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage investigation (dbt manifest + dlt schema, [v0.1-19](v0.1/19-lineage.md)).
+2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage investigation (dbt manifest + dlt schema, [lineage](capabilities/lineage.md)).
 3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ dbt engineer in v0.2).
 4. **Hands each a starting bundle** — the goal slice, relevant file contents, conventions, impacted dependencies; the subagent gathers anything else within its own isolated context.
 5. **Generates a structured Plan** — JSON-schema-validated, with task graph, file diffs, cost estimate.
@@ -468,7 +468,7 @@ This shape forces the orchestrator to produce something deterministic that build
 
 ### 5.6 Hot reload
 
-Declarative agent files can be edited while `carve serve` is running. The next invocation re-reads `carve/agents/*.md` + the built-ins ([spec 16](v0.1/16-extensibility.md)). No separate "reload" command. Agent prompt iteration via `carve agents test` is fast: edit, test, edit, test, no restart in the loop.
+Declarative agent files can be edited while `carve serve` is running. The next invocation re-reads `carve/agents/*.md` + the built-ins ([spec 16](capabilities/extensibility.md)). No separate "reload" command. Agent prompt iteration via `carve agents test` is fast: edit, test, edit, test, no restart in the loop.
 
 ### 5.7 User-provided agents and skills
 
@@ -476,7 +476,7 @@ Declarative agent files can be edited while `carve serve` is running. The next i
 
 - `carve agents create <name>` scaffolds a new `carve/agents/<name>.md` (markdown + frontmatter) with minimal config
 - `carve agents create <name> --template <existing>` clones an existing agent (often `dlt-engineer` or `pipeline-engineer` as the starting point)
-- Each agent file's frontmatter declares `name`, `description`, `model`, `tools`, `allowed_paths`, and `classifications` — the last tells the orchestrator which goal classifications this agent handles ([spec 16](v0.1/16-extensibility.md))
+- Each agent file's frontmatter declares `name`, `description`, `model`, `tools`, `allowed_paths`, and `classifications` — the last tells the orchestrator which goal classifications this agent handles ([spec 16](capabilities/extensibility.md))
 - Beyond agents, users bring **skill packs** (`carve/skills/<name>/SKILL.md`) and **hooks** (`carve/hooks.toml`, pre/post-tool + on-event) — same declarative, hot-reloaded model
 - The orchestrator's specialist-picking step considers custom agents alongside built-ins; when a custom agent's `specialization` matches the classified goal, the orchestrator routes work to it
 - Custom agents can also be invoked directly via `carve agents test <name> "<prompt>"` for one-shot use bypassing the orchestrator
@@ -497,7 +497,7 @@ Post-v0.1, an in-process Python skill SDK may ship if real demand emerges. The M
 
 ### 5.8 The curated dlt source library: copy on use
 
-> Under the harness this is the **skill library** ([spec 16](v0.1/16-extensibility.md)): each `src/carve/sources/<name>/` ships as a `SKILL.md` capability pack, so "copy a curated source" = apply the pack. The copy-on-use properties below are unchanged.
+> Under the harness this is the **skill library** ([spec 16](capabilities/extensibility.md)): each `src/carve/sources/<name>/` ships as a `SKILL.md` capability pack, so "copy a curated source" = apply the pack. The copy-on-use properties below are unchanged.
 
 When the DLT engineer's task includes a curated-source match (`dlt_library_match: "<source_name>"`), it **copies** the curated source code from `src/carve/sources/<source_name>/` into the user's project directory (e.g., `el/<pipeline_name>/`) and customizes it for the user's specific config (endpoint selection, target schema, credentials, write disposition).
 
@@ -517,21 +517,21 @@ In Carve's "brownfield dlt" mode (PRD §6.2 mode 2: orchestration only), the cur
 
 The agent layer never reads the full warehouse catalog or the full dbt manifest into its context. Instead, agents call typed skills that hit specific layers of a retrieval stack. Each layer has different cost, latency, and freshness characteristics.
 
-> **Harness note** ([spec 15](v0.1/15-agent-harness.md) / [18 sql](v0.1/18-sql-layer.md)): these retrieval skills sit alongside the terminal-grade base tools — `grep`/`glob` for file search, and the dialect-aware **`sql` tool** for catalog/`INFORMATION_SCHEMA` introspection on the **read role**. A subagent gathers within its own isolated context and handles its own results/pagination, so the "specialists never see truncated results" rule (§6.4) is superseded.
+> **Harness note** ([spec 15](capabilities/harness.md) / [18 sql](capabilities/sql.md)): these retrieval skills sit alongside the terminal-grade base tools — `grep`/`glob` for file search, and the dialect-aware **`sql` tool** for catalog/`INFORMATION_SCHEMA` introspection on the **read role**. A subagent gathers within its own isolated context and handles its own results/pagination, so the "specialists never see truncated results" rule (§6.4) is superseded.
 
 ### 6.1 The five layers
 
 1. **Catalog queries (`INFORMATION_SCHEMA`)** — Cheap, deterministic, exact. Skills like `list_schemas`, `list_tables`, `describe_table`, `table_exists` map to destination `INFORMATION_SCHEMA` queries. Results are facts at query time, cached briefly (default TTL 60s).
 2. **dbt manifest queries** — The dbt project's `target/manifest.json` is the source of truth for dbt structure. Skills like `list_models`, `model_columns`, `model_dependencies`, `tests_on_model` load the manifest (cached by mtime) and answer structured questions.
 3. **File grep** — When an agent needs "where is column `customer_id` referenced," a ripgrep-backed skill (`grep_dbt_models`, `grep_dlt_code`) scans the project tree. Bounded by max match count (default 50) and per-match truncation.
-4. **Lineage investigation** — Carve maintains *no* lineage graph (§6.2). The explorer investigates dbt's manifest (model DAG) + dlt's schema (resource→table, via the `dlt_schema` skill) + the code on demand ([v0.1-19](v0.1/19-lineage.md)), correlating dlt tables to dbt sources by relation name in-context. Results are entity pointers into the native artifacts, not full content.
+4. **Lineage investigation** — Carve maintains *no* lineage graph (§6.2). The explorer investigates dbt's manifest (model DAG) + dlt's schema (resource→table, via the `dlt_schema` skill) + the code on demand ([lineage](capabilities/lineage.md)), correlating dlt tables to dbt sources by relation name in-context. Results are entity pointers into the native artifacts, not full content.
 5. **Embedding search (post-v0.1)** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
 
 The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. The orchestrator's classification step decides which skills to call.
 
 ### 6.2 Lineage: investigated, not stored
 
-Carve maintains **no** lineage graph. dbt's `manifest.json` already *is* model-level lineage (the model/source DAG + tests), and dlt's stored schema already maps each resource to the destination table it writes. The explorer ([v0.1-12](v0.1/12-ask-verb.md)) answers lineage questions — "where does this come from," "what reads this," "what breaks if I change this" — by **investigating those native artifacts on demand** ([v0.1-19](v0.1/19-lineage.md)):
+Carve maintains **no** lineage graph. dbt's `manifest.json` already *is* model-level lineage (the model/source DAG + tests), and dlt's stored schema already maps each resource to the destination table it writes. The explorer ([ask](capabilities/ask.md)) answers lineage questions — "where does this come from," "what reads this," "what breaks if I change this" — by **investigating those native artifacts on demand** ([lineage](capabilities/lineage.md)):
 
 - **dbt side** — the `dbt_manifest` skill (model dependencies, sources, tests). dbt owns and maintains this DAG.
 - **dlt side** — the `dlt_schema` skill surfaces dlt's own resource → destination-table schema.
@@ -639,7 +639,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 ### 7.5 Deploy
 
-> Reconciled to [v0.1-14 deploy](v0.1/14-deploy-pr.md) (control-plane model). Deploy promotes **components** + the control-plane repo via a configurable **handoff**; the cross-repo **linked-PR** flow ships in v0.1.
+> Reconciled to [deploy deploy](capabilities/deploy.md) (control-plane model). Deploy promotes **components** + the control-plane repo via a configurable **handoff**; the cross-repo **linked-PR** flow ships in v0.1.
 
 **Inputs**: `carve deploy <pipeline>`, `--target`, `--handoff files|commit|push|pr` (default `pr`), `--amend`, `--draft`, `--reconcile-pins`. (Replaces the pre-positioning `--mode pr|direct`; hosted's direct-to-prod is part of its managed merge/rollout layer.)
 
@@ -744,8 +744,8 @@ Tables grouped by domain. Postgres features used: partial unique indexes (§4.2)
 ### 9.1 Project state
 
 - `pipelines(name PK, current_build_id, default_target, created_at, updated_at)`
-- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, paused_by NULL, pause_reason NULL, timezone, last_fired_at, next_fires_at)` — **the schedule is DATA**, created + owned by [v0.1-07](v0.1/07-runtime.md): the definition reconciler ([v0.1-08](v0.1/08-multi-step-pipeline.md)) seeds the row once from a pipeline's optional `[seed_schedule]` block at first registration; thereafter the scheduler reads it as the source of truth and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it live. `paused` is the boolean gate the scheduler skips on (`WHERE paused`); `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin** so the recovery engine auto-resumes only what *it* paused — a `paused_by = 'user'` pause is never auto-resumed by a resolving deploy ([v0.1-17](v0.1/17-recovery-engineer.md)). There is **no `paused-by-code`**: `[seed_schedule]` cannot seed a pause ([v0.1-08](v0.1/08-multi-step-pipeline.md) rejects `paused`/`enabled` keys), so a pipeline is either seeded with a live cron or registered unscheduled. The `id` PK matches the scheduler loop's `schedule.id` usage; the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 (droppable if multi-schedule `[[schedule]]` ever lands — deferred, use-cases UC2).
-- `schedule_changes(id BIGSERIAL PK, pipeline, change_kind, before JSONB, after JSONB, actor_token_id NULL, source, reason NULL, changed_at, tenant_id)` — audit log for every schedule mutation ([v0.1-07](v0.1/07-runtime.md)); under the control-plane model this **replaces git history for schedule edits** (the schedule is data, not code). `source ∈ {cli, api, mcp, ui, seed, reseed, recovery}` (`recovery` = an automatic auto-pause/auto-resume; `actor_token_id` is NULL for those and for the code seed).
+- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, paused_by NULL, pause_reason NULL, timezone, last_fired_at, next_fires_at)` — **the schedule is DATA**, created + owned by [runtime](capabilities/runtime.md): the definition reconciler ([pipelines](capabilities/pipelines.md)) seeds the row once from a pipeline's optional `[seed_schedule]` block at first registration; thereafter the scheduler reads it as the source of truth and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it live. `paused` is the boolean gate the scheduler skips on (`WHERE paused`); `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin** so the recovery engine auto-resumes only what *it* paused — a `paused_by = 'user'` pause is never auto-resumed by a resolving deploy ([recovery](capabilities/recovery.md)). There is **no `paused-by-code`**: `[seed_schedule]` cannot seed a pause ([pipelines](capabilities/pipelines.md) rejects `paused`/`enabled` keys), so a pipeline is either seeded with a live cron or registered unscheduled. The `id` PK matches the scheduler loop's `schedule.id` usage; the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 (droppable if multi-schedule `[[schedule]]` ever lands — deferred, use-cases UC2).
+- `schedule_changes(id BIGSERIAL PK, pipeline, change_kind, before JSONB, after JSONB, actor_token_id NULL, source, reason NULL, changed_at, tenant_id)` — audit log for every schedule mutation ([runtime](capabilities/runtime.md)); under the control-plane model this **replaces git history for schedule edits** (the schedule is data, not code). `source ∈ {cli, api, mcp, ui, seed, reseed, recovery}` (`recovery` = an automatic auto-pause/auto-resume; `actor_token_id` is NULL for those and for the code seed).
 - `tokens(id PK, name, hashed_token, scopes, created_by, created_at, last_used_at)`
 
 ### 9.2 Plans, builds, asks
@@ -773,7 +773,7 @@ Active + archive pattern from §4.2:
 
 - `deploys(id PK UUID, build_id FK, pipeline FK, target, component NULL, handoff_reached, status, branch NULL, commit_sha NULL, pr_url NULL, ref_bumped NULL, merge_order INT NULL, file_diffs JSONB, config_hash, linked_deploy_id FK NULL, triggered_by_token_id NULL, investigation_id NULL, tenant_id BIGINT NOT NULL DEFAULT 1, created_at)`
 
-Per [v0.1-14](v0.1/14-deploy-pr.md): **one row per touched repo.** `component` = the separate-remote component this leg promotes (NULL = the control-plane repo). `linked_deploy_id` joins the per-repo legs of one cross-repo deploy (→ the control-plane lead row); NULL for a single-repo deploy. `status ∈ {succeeded, degraded, failed}` (no PR merge-tracking). `handoff_reached` records where the leg stopped; `ref_bumped` is the pin a control-plane PR moves a pinned component to; `merge_order` is the advisory ingest-first sequence. `triggered_by_token_id`/`investigation_id` are forward-declared (FKs added when `tokens`/`Investigation` land). Supersedes the pre-positioning `mode`/`opened_at`/`merged_at` shape.
+Per [deploy](capabilities/deploy.md): **one row per touched repo.** `component` = the separate-remote component this leg promotes (NULL = the control-plane repo). `linked_deploy_id` joins the per-repo legs of one cross-repo deploy (→ the control-plane lead row); NULL for a single-repo deploy. `status ∈ {succeeded, degraded, failed}` (no PR merge-tracking). `handoff_reached` records where the leg stopped; `ref_bumped` is the pin a control-plane PR moves a pinned component to; `merge_order` is the advisory ingest-first sequence. `triggered_by_token_id`/`investigation_id` are forward-declared (FKs added when `tokens`/`Investigation` land). Supersedes the pre-positioning `mode`/`opened_at`/`merged_at` shape.
 
 ### 9.5 Agent telemetry
 
@@ -783,7 +783,7 @@ Per [v0.1-14](v0.1/14-deploy-pr.md): **one row per touched repo.** `component` =
 
 ### 9.6 Lineage
 
-**No tables.** Lineage is **investigated on demand, not stored** ([v0.1-19](v0.1/19-lineage.md)): the explorer reads dbt's manifest + dlt's schema (via the `dlt_schema` skill) + the code. Carve maintains no `lineage_nodes`/`lineage_edges` graph.
+**No tables.** Lineage is **investigated on demand, not stored** ([lineage](capabilities/lineage.md)): the explorer reads dbt's manifest + dlt's schema (via the `dlt_schema` skill) + the code. Carve maintains no `lineage_nodes`/`lineage_edges` graph.
 
 ### 9.7 Events and webhooks
 
@@ -807,7 +807,7 @@ Mirrors PRD §6.2 from the technical side. Both backends are treated symmetrical
 
 ### 10.1 Repo topology resolution
 
-`carve.toml` is the control-plane config; it references each component as a named, typed `[components.<name>]` block (per [v0.1-03](v0.1/03-flat-layout.md)). Omitting all blocks is the convention-based simple mode.
+`carve.toml` is the control-plane config; it references each component as a named, typed `[components.<name>]` block (per [layout](capabilities/layout.md)). Omitting all blocks is the convention-based simple mode.
 
 ```toml
 [components.analytics]
@@ -860,7 +860,7 @@ For orchestration-only mode, no model generation occurs. The dbt step executes a
 └── <derived-name>/     # cloned separate-remote component (dlt or dbt), per its [components.<name>] block
 ```
 
-Sync semantics (per [v0.1-03](v0.1/03-flat-layout.md)):
+Sync semantics (per [layout](capabilities/layout.md)):
 
 - On `carve serve` startup: `git fetch` + checkout the pinned `ref` (or branch HEAD) for each cached component
 - Before each pipeline run: hard-sync to the pinned `ref`/branch (configurable; can be disabled for offline operation)
@@ -897,7 +897,7 @@ When the EL agent generates a dlt pipeline whose output should feed an existing 
 2. If match exists: the DLT engineer's context bundle includes the source's table conventions; the generated dlt code targets the same schema/table
 3. If no match: the DLT engineer generates a stub `sources.yml` entry alongside the dlt pipeline
 
-In separate-remote mode, the `sources.yml` addition lands in the dbt component's repo as one of the **linked PRs** `carve deploy` opens (per §7.5 / [v0.1-14](v0.1/14-deploy-pr.md)) — cross-linked with the control-plane PR and ordered ingest-first, so reviewers see both halves and the safe merge order.
+In separate-remote mode, the `sources.yml` addition lands in the dbt component's repo as one of the **linked PRs** `carve deploy` opens (per §7.5 / [deploy](capabilities/deploy.md)) — cross-linked with the control-plane PR and ordered ingest-first, so reviewers see both halves and the safe merge order.
 
 ### 10.7 Version management
 

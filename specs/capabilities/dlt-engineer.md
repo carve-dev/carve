@@ -1,16 +1,16 @@
-# v0.1-04 — DLT engineer subagent: authors and runs dlt code
+# DLT engineer subagent: authors and runs dlt code
 
 > **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): the EL specialist becomes the **DLT engineer subagent** — a *declarative* agent (built-in at `src/carve/core/agents/builtin/dlt-engineer.md`, the spec-16 frontmatter format) that the orchestrator `delegate`s to (spec 15), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web_fetch`) + dlt skills + the `sql` tool (spec 18), running in **`build`** permission mode, that **closes the loop** by running `dlt pipeline run` via `bash` and self-correcting on the parsed result (the verification primitive, spec 15). Its diff then passes through **dlt-qa** and **dlt-security** review subagents (the `/build-spec` engineer→reviewers→fix pattern, brought to users' pipelines). The hardcoded `extract_load` agent class is retired in favor of this declarative agent on the harness.
 
 > **Still revised for the control-plane model** (see [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): the DLT engineer authors *into a named `dlt` component* — its `el/<name>/` directory in simple mode, or its own repo in separate mode — not a privileged fused `el/`. Dependency hints are emitted by component name. The four authoring strategies, provenance header, skills, the component-authoring model, and CDC scope note are all preserved; this revision layers the harness model on top of them.
 
-> The wedge of v0.1. The DLT engineer takes a goal slice from the orchestrator (via `delegate`) and produces working, **verified** dlt code in the target `dlt` component (the `el/<component_name>/` directory in simple mode), picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper) and then running it to green. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Runs on the harness ([v0.1-15](./15-agent-harness.md)) as a declarative agent ([v0.1-16](./16-extensibility.md)). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
+> The wedge of v0.1. The DLT engineer takes a goal slice from the orchestrator (via `delegate`) and produces working, **verified** dlt code in the target `dlt` component (the `el/<component_name>/` directory in simple mode), picking among four authoring strategies (native dlt source, REST API generic config, curated library copy, Singer/Airbyte wrapper) and then running it to green. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §2.2 agent layer](../ARCHITECTURE.md), [ARCHITECTURE §5.1–5.4](../ARCHITECTURE.md), [ARCHITECTURE §5.8 curated library](../ARCHITECTURE.md), [ARCHITECTURE §10.2 dlt invocation](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 4](../PROJECT_PLAN.md). Runs on the harness ([harness](./harness.md)) as a declarative agent ([extensibility](./extensibility.md)). Replaces the archived [P1-04 extract-load agent](../_archive/pillar-1-extract-load/04-extract-load-agent.md), whose premise (agent authors bespoke Python with `executemany`/`MERGE`) was broken by the dlt-backend positioning.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-15 agent-harness](./15-agent-harness.md) (subagent delegation, terminal tools, permission modes, the verification loop), [v0.1-16 extensibility](./16-extensibility.md) (the declarative agent format this agent ships in), [v0.1-18 sql-layer](./18-sql-layer.md) (the `sql` tool the agent uses for schema checks).
-- **Blocks:** [v0.1-05 init-rewrite](./05-init-rewrite.md), [v0.1-07 runtime](./07-runtime.md) (the `dlt` step type executes what this agent produces), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md), [v0.1-17 recovery-engineer](./17-recovery-engineer.md) (recovery `delegate`s dlt fixes to this agent).
+- **Depends on:** [state-store](./state-store.md), [layout](./layout.md), [harness](./harness.md) (subagent delegation, terminal tools, permission modes, the verification loop), [extensibility](./extensibility.md) (the declarative agent format this agent ships in), [sql](./sql.md) (the `sql` tool the agent uses for schema checks).
+- **Blocks:** [init](./init.md), [runtime](./runtime.md) (the `dlt` step type executes what this agent produces), [pipelines](./pipelines.md), [recovery](./recovery.md) (recovery `delegate`s dlt fixes to this agent).
 - **Built on:** the orchestration agent and reasoning loop from M1 (HISTORICAL — preserved, not rewritten, and evolved into the harness orchestrator/main loop per spec 15). This spec defines the DLT engineer as a declarative subagent on that harness.
 
 ## Goal
@@ -19,8 +19,8 @@ Ship the **DLT engineer** as a declarative subagent on the harness, armed to aut
 
 - Is `delegate`d a task by the orchestrator (spec 15): a goal slice + a context bundle (the target `dlt` component name, destination, existing sources, memory files, optional curated-library match, optional brownfield component references). It runs in its own isolated context and returns a **summary**, not its transcript.
 - Picks one of four authoring strategies based on the goal and context
-- Authors dlt files into the target component using the `edit` tool (read-before-edit, string-replace) — in simple mode its `el/<component_name>/` directory, resolved by name per [v0.1-03](./03-flat-layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries. Writes are confined to `allowed_paths` by the permission gate (spec 15).
-- Records provenance headers per [v0.1-03](./03-flat-layout.md)
+- Authors dlt files into the target component using the `edit` tool (read-before-edit, string-replace) — in simple mode its `el/<component_name>/` directory, resolved by name per [layout](./layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries. Writes are confined to `allowed_paths` by the permission gate (spec 15).
+- Records provenance headers per [layout](./layout.md)
 - **Closes the loop:** runs `dlt pipeline run` (and `dlt pipeline check`) via `bash`, reads the harness-parsed `CheckResult` (spec 15's verification primitive, which parses dlt `state.json`), and **self-corrects** until green — using the `sql` tool (spec 18) to confirm the real destination schema rather than guessing it.
 - Hands its diff to the **dlt-qa** and **dlt-security** review subagents (below); the **orchestrator** routes the diff through them (sequentially in v0.1) and feeds findings back to the engineer before the change is surfaced
 - Returns a structured summary to the orchestrator: files written, their hashes, the verification result, expected outputs, dependencies on dbt sources (keyed by component name)
@@ -30,14 +30,14 @@ This spec ships the **declarative agent definition** (the built-in markdown agen
 
 ## Out of scope
 
-- **The harness mechanics** — subagent delegation (the `delegate` tool), the terminal tools (`edit`/`bash`/`grep`/`web_fetch`/`web_search`), permission modes/allowlists/sandbox, and the verification-loop primitive (`run_check`) — are [v0.1-15](./15-agent-harness.md). This spec *consumes* them; it does not define them.
-- **The declarative agent/skill format + registry** (frontmatter schema, hot-reload, name override, skill packs, the connector→skill library loader) — [v0.1-16](./16-extensibility.md). This spec ships *a* built-in agent file in that format and *a* set of skill packs; it does not define the format.
-- **The `sql` tool layer** (dialect-aware introspection/validation/run, role-scoping) — [v0.1-18](./18-sql-layer.md). The DLT engineer *uses* the `sql` tool for schema checks; it doesn't define it.
+- **The harness mechanics** — subagent delegation (the `delegate` tool), the terminal tools (`edit`/`bash`/`grep`/`web_fetch`/`web_search`), permission modes/allowlists/sandbox, and the verification-loop primitive (`run_check`) — are [harness](./harness.md). This spec *consumes* them; it does not define them.
+- **The declarative agent/skill format + registry** (frontmatter schema, hot-reload, name override, skill packs, the connector→skill library loader) — [extensibility](./extensibility.md). This spec ships *a* built-in agent file in that format and *a* set of skill packs; it does not define the format.
+- **The `sql` tool layer** (dialect-aware introspection/validation/run, role-scoping) — [sql](./sql.md). The DLT engineer *uses* the `sql` tool for schema checks; it doesn't define it.
 - The orchestrator's classification + delegation logic — that's the harness main loop (spec 15) matching a goal's classification against each agent's `classifications` (spec 16). This spec produces a DLT engineer the orchestrator `delegate`s to; it doesn't change the orchestrator.
 - The dbt engineer subagent — that's v0.2 (Pillar 3).
-- The pipeline composition step (`pipelines/<name>.toml`, whose steps reference components by name via `component = "<name>"`) — written by the **pipeline engineer** (the runtime specialist, [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md)). The DLT engineer emits a structured "this pipeline needs to be composed with these dependencies" hint, keyed by the component name it authored into; the orchestrator then `delegate`s the composition to the pipeline engineer.
+- The pipeline composition step (`pipelines/<name>.toml`, whose steps reference components by name via `component = "<name>"`) — written by the **pipeline engineer** (the runtime specialist, [pipelines](./pipelines.md)). The DLT engineer emits a structured "this pipeline needs to be composed with these dependencies" hint, keyed by the component name it authored into; the orchestrator then `delegate`s the composition to the pipeline engineer.
 - The actual contents of the curated source library beyond a small reference example (e.g., a "Hacker News API" sample). Curating the top-30 Airbyte ports is a separate workstream after v0.1.
-- The CLI/REST/MCP surface for invoking the agent directly. The `carve agents list/show/create/test` surface lives in [v0.1-16](./16-extensibility.md); the REST/MCP surface in [v0.1-09 rest-api](./09-rest-api.md) and [v0.1-10 mcp-server](./10-mcp-server.md).
+- The CLI/REST/MCP surface for invoking the agent directly. The `carve agents list/show/create/test` surface lives in [extensibility](./extensibility.md); the REST/MCP surface in [rest-api](./rest-api.md) and [mcp-server](./mcp-server.md).
 - Orchestration-only mode (PRD §6.2 mode 2). When the user has an existing `dlt` component (in this repo or a separate-remote one), the orchestrator does NOT `delegate` to the DLT engineer for that pipeline — it `delegate`s to the pipeline engineer to compose the existing component by name. This spec handles modes 1 (authoring) and 3 (mix); mode 2 is a no-op for this agent.
 
 ## Files this spec produces
@@ -312,7 +312,7 @@ This skill is the agent's eyes for unfamiliar REST APIs (complementing `web_fetc
 
 ### Skill: `dbt_source_lookup`
 
-Reads the user's dbt project's `sources.yml` files (per the [`integrations/dbt/locator.py`](./03-flat-layout.md) resolution from spec 03). Exposes:
+Reads the user's dbt project's `sources.yml` files (per the [`integrations/dbt/locator.py`](./layout.md) resolution from spec 03). Exposes:
 
 - `dbt_sources_list()` → all source declarations in the project
 - `dbt_source_match(schema: str, table: str)` → does a source declaration exist for this schema+table? Returns the source's full config if so.
@@ -348,7 +348,7 @@ Strategy-specific guidance lives in **skill packs** (`src/carve/core/skills/buil
 
 ### Provenance header (recap from spec 03)
 
-Every Carve-generated dlt file carries the header from [v0.1-03](./03-flat-layout.md). The DLT engineer uses `src/carve/integrations/dlt/code_emitter.py` to ensure every file it writes is properly headered. The build step verifies headers are present in all expected files before the Build row transitions to `succeeded`; the dlt-qa reviewer flags a missing header as a finding.
+Every Carve-generated dlt file carries the header from [layout](./layout.md). The DLT engineer uses `src/carve/integrations/dlt/code_emitter.py` to ensure every file it writes is properly headered. The build step verifies headers are present in all expected files before the Build row transitions to `succeeded`; the dlt-qa reviewer flags a missing header as a finding.
 
 ## Tests
 

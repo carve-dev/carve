@@ -1,4 +1,4 @@
-# v0.1-13 — Reference doc rewrites: CLI reference, config schema, glossary, governance
+# Reference doc rewrites: CLI reference, config schema, glossary, governance
 
 > Rewrites the four reference docs in `specs/reference/` to match the v0.1 positioning. Per the spec audit's tags (cli-reference REWRITE, config-schema REWRITE, glossary REVISE, governance REVISE) and [PROJECT_PLAN spec set item 13](../PROJECT_PLAN.md).
 
@@ -55,42 +55,42 @@ A complete, authoritative reference for the `carve` CLI surface. Structure:
 
 | Command | Description | Spec |
 |---|---|---|
-| `carve init`                          | Bootstrap a Carve project           | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `carve plan "<goal>"`                 | Generate a reviewable plan          | [v0.1-04](../v0.1/04-el-agent-dlt.md), M1.1 |
+| `carve init`                          | Bootstrap a Carve project           | [init](../capabilities/init.md) |
+| `carve plan "<goal>"`                 | Generate a reviewable plan          | [dlt-engineer](../capabilities/dlt-engineer.md), M1.1 |
 | `carve plan --refine <plan_id>`       | Refine a plan                       | M1.1 |
 | `carve plan --pipeline <name>`        | Plan against an existing pipeline   | M1.1 |
-| `carve ask "<question>"`              | Read-only investigative query       | [v0.1-12](../v0.1/12-ask-verb.md) |
+| `carve ask "<question>"`              | Read-only investigative query       | [ask](../capabilities/ask.md) |
 | `carve build <plan_id>`               | Materialize a plan into files       | M1.1 |
-| `carve run <pipeline>`                | Execute a pipeline on demand        | M1.1, [v0.1-07/08](../v0.1/07-runtime.md) |
-| `carve run --watch <pipeline>`        | Run + stream logs until completion  | [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve run --resume <run_id>`         | Resume failed steps from a prior run| [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve deploy <pipeline>`             | Promote via a configurable handoff (default: PR) | [v0.1-14](../v0.1/14-deploy-pr.md) |
-| `carve serve`                         | Start the API + scheduler + worker(s) | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve worker`                        | Run a standalone worker process     | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve mcp-serve`                     | Start the MCP server                | [v0.1-10](../v0.1/10-mcp-server.md) |
-| `carve docs serve`                    | Serve the local static HTML UI      | [v0.1-11](../v0.1/11-static-html-ui.md) |
-| `carve pipelines list`                | List pipelines                      | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve pipelines show <name>`         | Show one pipeline                   | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve pipelines validate [name]`     | Schema + DAG check                  | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve pipelines diff <name>`         | Diff against an older build         | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `carve runs list`                     | Recent run history                  | M1.1, [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve run <pipeline>`                | Execute a pipeline on demand        | M1.1, [runtime/08](../capabilities/runtime.md) |
+| `carve run --watch <pipeline>`        | Run + stream logs until completion  | [rest-api](../capabilities/rest-api.md) |
+| `carve run --resume <run_id>`         | Resume failed steps from a prior run| [pipelines](../capabilities/pipelines.md) |
+| `carve deploy <pipeline>`             | Promote via a configurable handoff (default: PR) | [deploy](../capabilities/deploy.md) |
+| `carve serve`                         | Start the API + scheduler + worker(s) | [runtime](../capabilities/runtime.md) |
+| `carve worker`                        | Run a standalone worker process     | [runtime](../capabilities/runtime.md) |
+| `carve mcp-serve`                     | Start the MCP server                | [mcp-server](../capabilities/mcp-server.md) |
+| `carve docs serve`                    | Serve the local static HTML UI      | [ui](../capabilities/ui.md) |
+| `carve pipelines list`                | List pipelines                      | [pipelines](../capabilities/pipelines.md) |
+| `carve pipelines show <name>`         | Show one pipeline                   | [pipelines](../capabilities/pipelines.md) |
+| `carve pipelines validate [name]`     | Schema + DAG check                  | [pipelines](../capabilities/pipelines.md) |
+| `carve pipelines diff <name>`         | Diff against an older build         | [pipelines](../capabilities/pipelines.md) |
+| `carve runs list`                     | Recent run history                  | M1.1, [rest-api](../capabilities/rest-api.md) |
 | `carve runs show <run_id>`            | Show one run                        | M1.1 |
-| `carve runs tail <run_id>`            | Stream logs from a run              | [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve runs tail <run_id>`            | Stream logs from a run              | [rest-api](../capabilities/rest-api.md) |
 | `carve logs <run_id>`                 | Print logs                          | M1.1 |
-| `carve logs --follow <run_id>`        | Stream logs                         | [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve schedule list`                 | Scheduled pipelines                 | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve schedule show <pipeline>`      | One schedule detail                 | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve schedule pause/resume <pipeline>` | Schedule controls                | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve schedule next-fires`           | Upcoming fires                      | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve agents list/show/create/edit/remove/test` | Agent management         | [v0.1-04](../v0.1/04-el-agent-dlt.md), M1 |
-| `carve skills list/show/test`         | Skill registry                      | M1, [v0.1-04](../v0.1/04-el-agent-dlt.md) |
-| `carve mcp-servers list/add/remove`   | External MCP server registration    | [v0.1-04](../v0.1/04-el-agent-dlt.md) |
-| `carve memory show/edit/append-decision/refresh` | Project memory                | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve metrics costs/runs/agents`     | Aggregate metrics                   | [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve workspaces list/clear`         | Workspace cache for separate-remote | [v0.1-03](../v0.1/03-flat-layout.md) |
+| `carve logs --follow <run_id>`        | Stream logs                         | [rest-api](../capabilities/rest-api.md) |
+| `carve schedule list`                 | Scheduled pipelines                 | [runtime](../capabilities/runtime.md) |
+| `carve schedule show <pipeline>`      | One schedule detail                 | [runtime](../capabilities/runtime.md) |
+| `carve schedule pause/resume <pipeline>` | Schedule controls                | [runtime](../capabilities/runtime.md) |
+| `carve schedule next-fires`           | Upcoming fires                      | [runtime](../capabilities/runtime.md) |
+| `carve agents list/show/create/edit/remove/test` | Agent management         | [dlt-engineer](../capabilities/dlt-engineer.md), M1 |
+| `carve skills list/show/test`         | Skill registry                      | M1, [dlt-engineer](../capabilities/dlt-engineer.md) |
+| `carve mcp-servers list/add/remove`   | External MCP server registration    | [dlt-engineer](../capabilities/dlt-engineer.md) |
+| `carve memory show/edit/append-decision/refresh` | Project memory                | [memory](../capabilities/memory.md) |
+| `carve metrics costs/runs/agents`     | Aggregate metrics                   | [rest-api](../capabilities/rest-api.md) |
+| `carve workspaces list/clear`         | Workspace cache for separate-remote | [layout](../capabilities/layout.md) |
 | `carve auth login`                    | OAuth login to Claude subscription  | M1.1 |
-| `carve auth token mint/rotate/revoke` | API token management                | [v0.1-09](../v0.1/09-rest-api.md) |
-| `carve docs open/regen/serve`         | Static HTML UI commands             | [v0.1-11](../v0.1/11-static-html-ui.md) |
+| `carve auth token mint/rotate/revoke` | API token management                | [rest-api](../capabilities/rest-api.md) |
+| `carve docs open/regen/serve`         | Static HTML UI commands             | [ui](../capabilities/ui.md) |
 
 ## Global flags
 
@@ -134,30 +134,30 @@ The authoritative reference for every config file Carve reads or writes. Structu
 
 | File | Purpose | Owner | Spec |
 |---|---|---|---|
-| `carve.toml` | Project metadata, default target, dbt+dlt topology | Carve (templated by init) + user-editable | [v0.1-03](../v0.1/03-flat-layout.md), [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `carve/connections.toml` | Target definitions + credential references | User-editable | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `carve/runtime.toml` | Scheduler / worker / archive / webhook config | User-editable | [v0.1-07](../v0.1/07-runtime.md) |
-| `carve/conventions.md` | Inferred conventions | Carve-generated (refreshable) | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve/standards.md` | Team standards (user-authored) | User-editable | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve/decisions.md` | Append-only decision log | User-authored | [v0.1-06](../v0.1/06-project-memory.md) |
-| `carve/agents/*.md` | Agent definitions (markdown + YAML frontmatter; built-in overrides + custom) | User-editable | [v0.1-16](../v0.1/16-extensibility.md) |
-| `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [v0.1-08](../v0.1/08-multi-step-pipeline.md) |
-| `pipelines/<name>.md` | Per-pipeline notes (optional) | User-authored | [v0.1-06](../v0.1/06-project-memory.md) |
-| `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below provenance header) | [v0.1-04](../v0.1/04-el-agent-dlt.md) |
-| `el/<name>/requirements.txt` | dlt deps | Carve-generated | [v0.1-04](../v0.1/04-el-agent-dlt.md) |
-| `el/<name>/NOTES.md` | EL artifact notes (optional) | User-authored | [v0.1-06](../v0.1/06-project-memory.md) |
-| `.dlt/config.toml` | dlt's per-destination config | User-editable | [v0.1-03](../v0.1/03-flat-layout.md), dlt convention |
-| `.dlt/secrets.toml` | dlt's credentials | User-editable (gitignored) | [v0.1-03](../v0.1/03-flat-layout.md), dlt convention |
-| `dbt_project.yml` | dbt project config (same-repo only) | User (existing or scaffolded by `--with-dbt`) | dbt convention, [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `docker-compose.yml` | Bundled Postgres | Carve-templated (user-editable after init) | [v0.1-02](../v0.1/02-oss-packaging.md) |
-| `.env.example` | Env var template | Carve-templated | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `.env` | Env vars (gitignored) | User | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `.gitignore` | Carve adds entries | Mixed | [v0.1-05](../v0.1/05-init-rewrite.md) |
-| `.carve/token` | OSS API token (gitignored, mode 0600) | Carve-generated | [v0.1-09](../v0.1/09-rest-api.md) |
+| `carve.toml` | Project metadata, default target, dbt+dlt topology | Carve (templated by init) + user-editable | [layout](../capabilities/layout.md), [init](../capabilities/init.md) |
+| `carve/connections.toml` | Target definitions + credential references | User-editable | [init](../capabilities/init.md) |
+| `carve/runtime.toml` | Scheduler / worker / archive / webhook config | User-editable | [runtime](../capabilities/runtime.md) |
+| `carve/conventions.md` | Inferred conventions | Carve-generated (refreshable) | [memory](../capabilities/memory.md) |
+| `carve/standards.md` | Team standards (user-authored) | User-editable | [memory](../capabilities/memory.md) |
+| `carve/decisions.md` | Append-only decision log | User-authored | [memory](../capabilities/memory.md) |
+| `carve/agents/*.md` | Agent definitions (markdown + YAML frontmatter; built-in overrides + custom) | User-editable | [extensibility](../capabilities/extensibility.md) |
+| `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [pipelines](../capabilities/pipelines.md) |
+| `pipelines/<name>.md` | Per-pipeline notes (optional) | User-authored | [memory](../capabilities/memory.md) |
+| `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below provenance header) | [dlt-engineer](../capabilities/dlt-engineer.md) |
+| `el/<name>/requirements.txt` | dlt deps | Carve-generated | [dlt-engineer](../capabilities/dlt-engineer.md) |
+| `el/<name>/NOTES.md` | EL artifact notes (optional) | User-authored | [memory](../capabilities/memory.md) |
+| `.dlt/config.toml` | dlt's per-destination config | User-editable | [layout](../capabilities/layout.md), dlt convention |
+| `.dlt/secrets.toml` | dlt's credentials | User-editable (gitignored) | [layout](../capabilities/layout.md), dlt convention |
+| `dbt_project.yml` | dbt project config (same-repo only) | User (existing or scaffolded by `--with-dbt`) | dbt convention, [init](../capabilities/init.md) |
+| `docker-compose.yml` | Bundled Postgres | Carve-templated (user-editable after init) | [packaging](../capabilities/packaging.md) |
+| `.env.example` | Env var template | Carve-templated | [init](../capabilities/init.md) |
+| `.env` | Env vars (gitignored) | User | [init](../capabilities/init.md) |
+| `.gitignore` | Carve adds entries | Mixed | [init](../capabilities/init.md) |
+| `.carve/token` | OSS API token (gitignored, mode 0600) | Carve-generated | [rest-api](../capabilities/rest-api.md) |
 | `.carve/plans/<id>.json` | Plan files (gitignored) | Carve-generated | M1.1 |
-| `.carve/asks/<id>.json` | Ask answers (gitignored) | Carve-generated | [v0.1-12](../v0.1/12-ask-verb.md) |
-| `.carve/workspaces/<name>/` | Remote-repo workspace cache (gitignored) | Carve-managed | [v0.1-03](../v0.1/03-flat-layout.md) |
-| `.carve/ui/` | Rendered static HTML (gitignored) | Carve-generated | [v0.1-11](../v0.1/11-static-html-ui.md) |
+| `.carve/asks/<id>.json` | Ask answers (gitignored) | Carve-generated | [ask](../capabilities/ask.md) |
+| `.carve/workspaces/<name>/` | Remote-repo workspace cache (gitignored) | Carve-managed | [layout](../capabilities/layout.md) |
+| `.carve/ui/` | Rendered static HTML (gitignored) | Carve-generated | [ui](../capabilities/ui.md) |
 
 ## Per-file schema
 
@@ -178,23 +178,23 @@ Alphabetical terms with one-paragraph definitions. Revise from the existing vers
 
 **New entries to add** (per spec audit):
 
-- **Ask** — A read-only investigative query through Carve's orchestration agent. See [v0.1-12](../v0.1/12-ask-verb.md).
+- **Ask** — A read-only investigative query through Carve's orchestration agent. See [ask](../capabilities/ask.md).
 - **Backend** — In Carve terminology, "backend" refers to dlt or dbt (the external tools Carve invokes). NOT a database or service-side application.
 - **dlt** — Python library for the extract-load phase. Carve generates dlt code; dlt executes it. See [dlthub.com](https://dlthub.com).
 - **dlt source** — A dlt construct: a logical connector (e.g., Stripe). Contains one or more resources.
 - **dlt resource** — A dlt construct: one endpoint or table inside a source.
 - **Hosted product** — Carve's commercial offering. Multi-tenant, managed, polished cloud UI. Per [positioning #13](../_strategy/2026-05-positioning.md).
-- **Job (runtime)** — A row in the `jobs` table representing one queued or executing pipeline invocation. See [v0.1-07](../v0.1/07-runtime.md).
-- **Memory (project)** — User-editable + agent-readable markdown files in the project that capture conventions, standards, decisions, and per-artifact notes. See [v0.1-06](../v0.1/06-project-memory.md).
-- **Optimistic claim** — The job-queue pattern Carve uses: `UPDATE ... WHERE status='queued' ... FOR UPDATE SKIP LOCKED`. See [v0.1-07](../v0.1/07-runtime.md).
+- **Job (runtime)** — A row in the `jobs` table representing one queued or executing pipeline invocation. See [runtime](../capabilities/runtime.md).
+- **Memory (project)** — User-editable + agent-readable markdown files in the project that capture conventions, standards, decisions, and per-artifact notes. See [memory](../capabilities/memory.md).
+- **Optimistic claim** — The job-queue pattern Carve uses: `UPDATE ... WHERE status='queued' ... FOR UPDATE SKIP LOCKED`. See [runtime](../capabilities/runtime.md).
 - **OSS edition** — The open-source Carve, this repo. Apache 2.0. Feature-complete for single-team self-hosters.
-- **Provenance header** — The comment block in Carve-generated dlt code recording what generated it and from what. See [v0.1-03](../v0.1/03-flat-layout.md).
-- **Reaper** — The runtime loop that reclaims jobs from crashed workers via stale-heartbeat detection. See [v0.1-07](../v0.1/07-runtime.md).
+- **Provenance header** — The comment block in Carve-generated dlt code recording what generated it and from what. See [layout](../capabilities/layout.md).
+- **Reaper** — The runtime loop that reclaims jobs from crashed workers via stale-heartbeat detection. See [runtime](../capabilities/runtime.md).
 - **Repo topology** — Same-repo vs separate-local vs separate-remote configuration of dbt and dlt projects. Per-backend, independent.
-- **Runtime** — Carve's scheduler + job queue + worker pool. The deliberately-narrow execution layer. See [v0.1-07](../v0.1/07-runtime.md).
-- **Subagent** — A specialist the orchestrator delegates a scoped task to, running in its own isolated context and returning a summary (e.g., the DLT engineer, pipeline engineer, recovery engineer, explorer). See [v0.1-15](../v0.1/15-agent-harness.md). (Built-in agents now ship as markdown definitions, [v0.1-16](../v0.1/16-extensibility.md) — the old "Specialist agent (TOML)" framing is retired.)
-- **Static HTML UI** — Carve's minimal local web UI: pages regenerated per event, served by `carve docs serve`. See [v0.1-11](../v0.1/11-static-html-ui.md).
-- **Worker** — A process that claims jobs from the queue and executes them. See [v0.1-07](../v0.1/07-runtime.md).
+- **Runtime** — Carve's scheduler + job queue + worker pool. The deliberately-narrow execution layer. See [runtime](../capabilities/runtime.md).
+- **Subagent** — A specialist the orchestrator delegates a scoped task to, running in its own isolated context and returning a summary (e.g., the DLT engineer, pipeline engineer, recovery engineer, explorer). See [harness](../capabilities/harness.md). (Built-in agents now ship as markdown definitions, [extensibility](../capabilities/extensibility.md) — the old "Specialist agent (TOML)" framing is retired.)
+- **Static HTML UI** — Carve's minimal local web UI: pages regenerated per event, served by `carve docs serve`. See [ui](../capabilities/ui.md).
+- **Worker** — A process that claims jobs from the queue and executes them. See [runtime](../capabilities/runtime.md).
 
 **Entries to remove or rework** (out-of-date):
 
@@ -286,7 +286,7 @@ Both tests fail CI if a new CLI command or config file ships without a correspon
 - `test_cli_reference_completeness.py` (described above)
 - `test_config_schema_completeness.py` (described above)
 - Manual review: a `/build-spec` reviewer reads each reference doc end-to-end and confirms it matches the v0.1 surface (this is a docs-quality check, not a unit test)
-- Cross-link integrity: every `(../v0.1/XX-...)` link resolves to an existing file (verified via a simple grep + filesystem check during CI)
+- Cross-link integrity: every `(../capabilities/<area>)` link resolves to an existing file (verified via a simple grep + filesystem check during CI)
 
 ## Acceptance
 

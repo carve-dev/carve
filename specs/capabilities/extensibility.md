@@ -1,13 +1,13 @@
-# v0.1-16 — Extensibility: declarative agents, skill packs, hooks, MCP
+# Extensibility: declarative agents, skill packs, hooks, MCP
 
 > **Foundation spec** — the "bring your own agents, skills, MCPs, CLIs, hooks" model that makes the harness extensible. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Resolves the built-vs-spec agent drift: agents/skills become **declarative + discoverable**.
 >
-> **Hardened per the 15/16 adversarial review (2026-06-16):** grant validation is **runtime attenuation** (the [spec 15](./15-agent-harness.md) gate is the boundary, not load-time); MCP/load defaults are **fail-closed**; the hook event set has named **emission points** (incl. `pre_deploy`/`post_build`, per the v0.1-advanced-primitives decision).
+> **Hardened per the 15/16 adversarial review (2026-06-16):** grant validation is **runtime attenuation** (the [spec 15](./harness.md) gate is the boundary, not load-time); MCP/load defaults are **fail-closed**; the hook event set has named **emission points** (incl. `pre_deploy`/`post_build`, per the v0.1-advanced-primitives decision).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (the gate/hook fire-points, the runtime grant rule, the tool set), [v0.1-06 project-memory](./06-project-memory.md) (the mtime-cache discovery pattern), [v0.1-07 runtime](./07-runtime.md) (the `run.failed` event the `on_run_failed` hook subscribes to).
+- **Depends on:** [harness](./harness.md) (the gate/hook fire-points, the runtime grant rule, the tool set), [memory](./memory.md) (the mtime-cache discovery pattern), [runtime](./runtime.md) (the `run.failed` event the `on_run_failed` hook subscribes to).
 - **Blocks:** the domain agent specs (04/08/12/recovery/SQL) — each ships as a **declarative agent** loaded by this registry.
 
 ## Goal
@@ -21,8 +21,8 @@ Users (and Carve's built-ins) define agents, skills, hooks, and MCP imports **de
 
 ## Out of scope
 
-- The **harness core** (loop, gate, subagents, tools) — [v0.1-15](./15-agent-harness.md). This spec defines the *format + loaders* + the hook *config*; spec 15 owns the gate, the tool-set intersection, and the hook fire-points.
-- **Carve-exposes-MCP** (server) — [v0.1-10](./10-mcp-server.md).
+- The **harness core** (loop, gate, subagents, tools) — [harness](./harness.md). This spec defines the *format + loaders* + the hook *config*; spec 15 owns the gate, the tool-set intersection, and the hook fire-points.
+- **Carve-exposes-MCP** (server) — [mcp-server](./mcp-server.md).
 - **In-process custom-skill SDK** (`@skill`-decorated Python from users) + **custom step-type SDK** — post-v0.1.
 
 ## Files this spec produces
@@ -87,7 +87,7 @@ expects_env: [STRIPE_API_KEY]
 
 - A **SkillPack** is a folder: `SKILL.md` (frontmatter + instructions) + optional `scripts/`/`resources/` (e.g. the dlt source code). It surfaces as **description-matched content injected into the agent's context** (the shipped `lookup_skill` progressive-disclosure pattern) — **not** as a callable tool — keeping context small and avoiding the loop's flat tool/skill namespace.
 - **The connector library is a skill library:** `src/carve/sources/<name>/` ships as skill packs; "copy a curated source" = apply the pack. *(The real `_reference_hackernews` is created by spec 04; this spec's discovery test uses a self-contained `tests/fixtures/skill_packs/_example/` pack so it's verifiable at 16's build time.)*
-- **Built-in callable skills** stay first-class `@skill` functions registered in `skills/builtin/__init__.py`: the shipped catalog skills + the readers the explorer needs — `dbt_manifest` (manifest queries), `dlt_schema` (dlt's stored resource→table schema, [v0.1-19](./19-lineage.md)), and `memory_read` (the spec-06 loader). *(There is no lineage graph or `upstream_of`/`downstream_of` skill family — lineage is investigated on demand via `dbt_manifest` + `dlt_schema` + `grep`; see [v0.1-19](./19-lineage.md).)*
+- **Built-in callable skills** stay first-class `@skill` functions registered in `skills/builtin/__init__.py`: the shipped catalog skills + the readers the explorer needs — `dbt_manifest` (manifest queries), `dlt_schema` (dlt's stored resource→table schema, [lineage](./lineage.md)), and `memory_read` (the spec-06 loader). *(There is no lineage graph or `upstream_of`/`downstream_of` skill family — lineage is investigated on demand via `dbt_manifest` + `dlt_schema` + `grep`; see [lineage](./lineage.md).)*
 - **Namespace:** callable tools (base tools + `@skill` functions + `mcp:<server>:<tool>`) share the one namespace the loop guards (`loop.py` raises on collision). MCP names are namespaced (`mcp:`) so they can't collide; SkillPacks are content (not in the tool namespace); a user agent granting a name that's both a base tool and a pack resolves to the base tool (logged).
 - **`carve skills list/show/test`** surfaces the catalog (built-ins + packs + MCP), with the provider of each.
 
@@ -106,9 +106,9 @@ on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that v
 ```
 
 - **Events + emission points:**
-  - `pre_tool` / `post_tool` — fire at the loop's tool-execution seam ([spec 15](./15-agent-harness.md)), **after** the permission gate admits the call (so a `pre_tool` hook can only further-restrict, never enable a denied call).
-  - `pre_deploy` — emitted by `carve deploy` ([spec 14](./14-deploy-pr.md)) before promotion.
-  - `post_build` — emitted by `carve build` ([spec 08](./08-multi-step-pipeline.md)) after materialization.
+  - `pre_tool` / `post_tool` — fire at the loop's tool-execution seam ([spec 15](./harness.md)), **after** the permission gate admits the call (so a `pre_tool` hook can only further-restrict, never enable a denied call).
+  - `pre_deploy` — emitted by `carve deploy` ([spec 14](./deploy.md)) before promotion.
+  - `post_build` — emitted by `carve build` ([spec 08](./pipelines.md)) after materialization.
   - `on_run_failed` — a **subscriber on spec 07's `run.failed` event** (reconciles the naming; the runtime fires `run.failed` from the async worker, the hook runner subscribes via the events table).
 - **Hook execution is itself gated + clamped:** a hook command runs via the **same `bash` gate** (no bypass — same metachar-deny/allowlist/scrubbed-env/sandbox) and is **mode-clamped** (no network/git in `read_only`). A `pre_*` hook does **not** re-enter the `pre_tool` pipeline (no recursion). A hook that errors/times out is **fail-closed** (blocks the action), matching the gate.
 
@@ -143,6 +143,6 @@ on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that v
 
 ## Open questions
 
-- **Lineage graph owner.** *Resolved — no graph.* Carve maintains no `lineage_nodes`/`lineage_edges` store (the original ARCHITECTURE §6.2 graph is retired). [v0.1-19](./19-lineage.md) reframes lineage as **investigation**: the explorer reads dbt's manifest + dlt's schema (the new `dlt_schema` skill) + the code on demand. Column-level lineage is a v0.2 concern.
+- **Lineage graph owner.** *Resolved — no graph.* Carve maintains no `lineage_nodes`/`lineage_edges` store (the original ARCHITECTURE §6.2 graph is retired). [lineage](./lineage.md) reframes lineage as **investigation**: the explorer reads dbt's manifest + dlt's schema (the new `dlt_schema` skill) + the code on demand. Column-level lineage is a v0.2 concern.
 - **Skill-pack discovery at scale.** *Implementation default.* Description-match for tens of packs; an embedding index is post-v0.1.
 - **Org/team agent namespacing.** *Implementation default.* User-overrides-builtin by name in v0.1; richer namespacing post-v0.1.

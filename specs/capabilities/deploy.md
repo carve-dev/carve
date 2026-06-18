@@ -1,16 +1,16 @@
-# v0.1-14 — `carve deploy`: component git-promotion via a configurable handoff (files → commit → push → PR), with cross-repo linked PRs
+# `carve deploy`: component git-promotion via a configurable handoff (files → commit → push → PR), with cross-repo linked PRs
 
 > Delivers PROJECT_PLAN acceptance step 7 and the deploy steps in use-cases UC1/UC2/UC4. `carve deploy` promotes the code a build wrote — for one or more **components** plus the control-plane composition — into version control, by default as reviewable PR(s), via a **configurable handoff**. Decision recorded 2026-06-12 (default handoff `pr`; `gh` PR mechanism).
 >
-> **Revised 2026-06-16 for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)): deploy promotes **named components** (resolved per [v0.1-03](./03-flat-layout.md)) + the control-plane repo, and the **cross-repo linked-PR flow ships in v0.1** (ADR resolved #4) — no longer deferred. The target DDL-readiness axis shrinks to a thin `carve target verify` (no table DDL — dlt owns that); the old `carve el deploy --from/--to` retires.
+> **Revised 2026-06-16 for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)): deploy promotes **named components** (resolved per [layout](./layout.md)) + the control-plane repo, and the **cross-repo linked-PR flow ships in v0.1** (ADR resolved #4) — no longer deferred. The target DDL-readiness axis shrinks to a thin `carve target verify` (no table DDL — dlt owns that); the old `carve el deploy --from/--to` retires.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [M1.1 `carve build`](../milestone-1.1-followups/) (writes the files this verb promotes, and the `manifest_json.files` list it stages), [v0.1-03 flat-layout](./03-flat-layout.md) (the `[components.<name>]` model + name→repo resolver + workspace cache this verb promotes through), [v0.1-04 EL agent](./04-el-agent-dlt.md), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) (the pipeline DAG that orders cross-repo merges ingest-first; per-component `ref` pins).
-- **Soft-depends on:** [v0.1-09 REST/auth](./09-rest-api.md) — creates the `tokens` table this spec attributes deploys to. The git-promotion core builds and runs **without** v0.1-09; only the auth gate and the `triggered_by_token_id` FK require it (forward-declared nullable until then).
-- **Blocks:** the deploy steps in use-cases UC1/UC2/UC4 (they assume PR-opening). (`cli-reference.md` in [v0.1-13](./13-reference-docs.md) already cites this spec.)
-- **Relates to:** [v0.1-09 REST](./09-rest-api.md) / [v0.1-10 MCP](./10-mcp-server.md) (expose `deploy` at parity), [v0.1-07 runtime](./07-runtime.md) (the optional event bus deploy emits onto).
+- **Depends on:** [M1.1 `carve build`](../milestone-1.1-followups/) (writes the files this verb promotes, and the `manifest_json.files` list it stages), [layout](./layout.md) (the `[components.<name>]` model + name→repo resolver + workspace cache this verb promotes through), [dlt-engineer EL agent](./dlt-engineer.md), [pipelines](./pipelines.md) (the pipeline DAG that orders cross-repo merges ingest-first; per-component `ref` pins).
+- **Soft-depends on:** [rest-api REST/auth](./rest-api.md) — creates the `tokens` table this spec attributes deploys to. The git-promotion core builds and runs **without** rest-api; only the auth gate and the `triggered_by_token_id` FK require it (forward-declared nullable until then).
+- **Blocks:** the deploy steps in use-cases UC1/UC2/UC4 (they assume PR-opening). (`cli-reference.md` in [reference-docs](./reference-docs.md) already cites this spec.)
+- **Relates to:** [rest-api REST](./rest-api.md) / [mcp-server MCP](./mcp-server.md) (expose `deploy` at parity), [runtime](./runtime.md) (the optional event bus deploy emits onto).
 
 ## Goal
 
@@ -182,7 +182,7 @@ deploys(
   file_diffs JSONB,
   config_hash,
   linked_deploy_id FK NULL,         -- joins the per-repo legs of one cross-repo deploy (points at the control-plane lead row); NULL for a single-repo deploy
-  triggered_by_token_id NULL,       -- forward-declared; FK to tokens when v0.1-09 lands
+  triggered_by_token_id NULL,       -- forward-declared; FK to tokens when rest-api lands
   investigation_id NULL,            -- forward-declared; FK when the Investigation entity lands
   tenant_id BIGINT NOT NULL DEFAULT 1,
   created_at
@@ -192,7 +192,7 @@ deploys(
 - A **single-repo** deploy is one row (`component=NULL`, `linked_deploy_id=NULL`). A **cross-repo** deploy is N rows: one control-plane lead (`component=NULL`) + one per touched component (`component=<name>`, `linked_deploy_id` → the lead). `merge_order` carries the advisory ingest-first sequence.
 - `triggered_by_token_id` / `investigation_id` are **nullable, forward-declared** (FKs added when `tokens`/`Investigation` land); the migration omits those FK constraints until then. `tenant_id` follows the `BIGINT NOT NULL DEFAULT 1` convention (07/09/12), indexed leading.
 - `Build.{commit_sha, pr_url, deployed_at}` (legacy `carve el deploy` columns) are left as-is and not double-written; the `deploys` rows are authoritative for `carve deploy`.
-- Emits `deploy.committed` / `deploy.pushed` / `deploy.pr_opened` / `deploy.degraded` / `deploy.linked` (cross-repo set opened) onto the event bus when present ([v0.1-07](./07-runtime.md)); the `deploys` rows are the source of truth, so deploy works before the bus lands.
+- Emits `deploy.committed` / `deploy.pushed` / `deploy.pr_opened` / `deploy.degraded` / `deploy.linked` (cross-repo set opened) onto the event bus when present ([runtime](./runtime.md)); the `deploys` rows are the source of truth, so deploy works before the bus lands.
 
 ### Re-deploying: amend vs. new PR
 
@@ -200,7 +200,7 @@ Default: each deploy opens **new** branch(es) + PR(s). `--amend` (or `[deploy] r
 
 ### Permissions
 
-Triggering a deploy requires **repo write** on each touched remote (independent of Carve auth). When v0.1-09 is present, deploy also requires a token whose `scopes` include `deploy` (or `*`); the OSS default token carries `["*"]`. The `member`/`read-only` use-cases language maps to "has/lacks the `deploy` scope" — there is no `role` column. Absent auth, the deploy attributes to the OSS single-user default and `triggered_by_token_id` is `NULL`.
+Triggering a deploy requires **repo write** on each touched remote (independent of Carve auth). When rest-api is present, deploy also requires a token whose `scopes` include `deploy` (or `*`); the OSS default token carries `["*"]`. The `member`/`read-only` use-cases language maps to "has/lacks the `deploy` scope" — there is no `role` column. Absent auth, the deploy attributes to the OSS single-user default and `triggered_by_token_id` is `NULL`.
 
 ### Config-hash drift
 
@@ -214,7 +214,7 @@ Per ARCHITECTURE §7.6, deploy computes the build's `config_hash` and **refuses 
 - **Integration** (`test_deploy_git_promote.py`): single-repo `carve build` → `--handoff push` produces the expected branch on a bare remote; `--handoff pr` with a fake `gh` opens the PR with the right base/head/title/body-file; git calls `cwd`-pinned + timed out.
 - **Integration** (`test_deploy_cross_repo.py`): a build touching a `separate-remote` component repo + the control-plane repo opens **two linked PRs** (component + control-plane); the control-plane PR **bumps a pinned component's `ref`** to the component PR head; both PR bodies cross-link and carry the ingest-first `merge_order`; `deploys` rows are linked via `linked_deploy_id`. A **branch-tracking** component opens its PR with **no** pin bump. A failed PR step on the component leg degrades that leg while the control-plane PR still opens. `--reconcile-pins` re-bumps to current branch-HEAD.
 - **State**: rows persist correct `handoff_reached`/`status`/`pr_url`/`config_hash`/`component`/`merge_order`/`linked_deploy_id`; `pr_command` stdout absent from rows; `config_hash` drift → exit 4; `investigation_id` recorded (UC4/UC5).
-- **Auth (conditional on v0.1-09):** a token lacking `deploy` scope is refused; default `["*"]` succeeds; `triggered_by_token_id` recorded. Skipped (attributes to default identity) when 09 absent.
+- **Auth (conditional on rest-api):** a token lacking `deploy` scope is refused; default `["*"]` succeeds; `triggered_by_token_id` recorded. Skipped (attributes to default identity) when 09 absent.
 
 ## Acceptance
 
@@ -243,7 +243,7 @@ Per ARCHITECTURE §7.6, deploy computes the build's `config_hash` and **refuses 
 
 - **Pin-to-merged-commit under squash-merge.** *Implementation default, with a known edge.* A pinned bump targets the component PR head; squash-merge rewrites the SHA so the pin won't match. v0.1: recommend SHA-preserving merge for linked component PRs **and** ship `carve deploy --reconcile-pins`. Branch-tracking components avoid the issue entirely (no pin). Revisit a tag-based or merge-webhook reconcile post-v0.1 if squash shops hit friction.
 - **Per-leg handoff override.** *Implementation default.* v0.1 applies one `handoff` to all legs. A future `[components.<name>] deploy_handoff` could let a component repo with its own CD use `push` while the control-plane repo uses `pr`. Defer until asked.
-- **Auth model: scopes, not roles.** *Resolved, pending confirm.* Gate on a `deploy` scope (v0.1-09), not the use-cases `member`/`read-only` narrative; `triggered_by_token_id` forward-declared.
+- **Auth model: scopes, not roles.** *Resolved, pending confirm.* Gate on a `deploy` scope (rest-api), not the use-cases `member`/`read-only` narrative; `triggered_by_token_id` forward-declared.
 - **`pr_command` injection surface.** *Implementation default.* `shlex.split` once, `shell=False`, leading-`-` values refused, `--flag=value` form. Locked in tests.
 - **CI rollout template — ship or docs-only.** *Implementation default.* A documented `.github/workflows/carve-rollout.yml` in `docs/deploy.md`, not a generated artifact.
 - **`carve target verify` scope.** *Follow-up.* This spec declares the `carve el deploy` retirement + the verify direction (role/grants/connectivity/smoke, no table DDL); the actual `carve target verify` command is a small separate spec.

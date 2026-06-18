@@ -1,11 +1,11 @@
-# v0.1-17 — Recovery engineer: diagnose-then-delegate failure recovery
+# Recovery engineer: diagnose-then-delegate failure recovery
 
 > The control-plane-era recovery agent. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md): recovery is a **meta-agent that diagnoses a failure (grounded), then delegates the fix** to the DLT / DBT / SQL engineer. Resolves the **orphaned recovery POC** (the AI-map finding): the shipped `recovery/agent.py` targets the now-retired `carve el deploy` DDL flow — this spec retargets it to `run.failed` + delegation and drops the dead deploy invocation contexts.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-15 agent-harness](./15-agent-harness.md) (subagent + delegation + grounded tools), [v0.1-16 extensibility](./16-extensibility.md) (declarative agent), [v0.1-07 runtime](./07-runtime.md) (the `run.failed` event, retries, auto-pause), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md) / [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) (the engineers it delegates fixes to), [v0.1-14 deploy-pr](./14-deploy-pr.md) (`resolved_by_deploy_id`).
+- **Depends on:** [harness](./harness.md) (subagent + delegation + grounded tools), [extensibility](./extensibility.md) (declarative agent), [runtime](./runtime.md) (the `run.failed` event, retries, auto-pause), [dlt-engineer](./dlt-engineer.md) / [pipelines](./pipelines.md) (the engineers it delegates fixes to), [deploy](./deploy.md) (`resolved_by_deploy_id`).
 - **Blocks:** nothing (a leaf capability). Reconciles the shipped `src/carve/core/agents/recovery/`.
 
 ## Goal

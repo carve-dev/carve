@@ -1,14 +1,14 @@
-# v0.1-15 — Agent harness: subagent delegation, terminal-grade tools, permissions, verification
+# Agent harness: subagent delegation, terminal-grade tools, permissions, verification
 
-> **Foundation spec** — the Claude-Code-style agentic engine the domain agents (04 DLT, 08 pipeline, 12 explorer, recovery, SQL) run on. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Read after [v0.1-01](./01-state-store-postgres.md); it underpins 04/08/12 (numbered after them only for bookkeeping — placement reorg is a noted follow-up).
+> **Foundation spec** — the Claude-Code-style agentic engine the domain agents (04 DLT, 08 pipeline, 12 explorer, recovery, SQL) run on. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Read after [state-store](./state-store.md); it underpins 04/08/12 (numbered after them only for bookkeeping — placement reorg is a noted follow-up).
 >
 > **Hardened per the 15/16 adversarial review (2026-06-16).** Decisions: **(1) v0.1 execution is sequential + sync** — `loop.py` stays synchronous (invoked from the async `carve serve` via a threadpool); `delegate` is sync; subagents and review run sequentially; concurrent fan-out is post-v0.1. **(2) The advanced Claude-Code primitives ship in v0.1** — interrupt/cancel, a TODO list, context compaction, and `pre_deploy`/`post_build` hooks.
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** M1 agent loop (`src/carve/core/agents/loop.py` — preserved + extended, HISTORICAL; stays sync), [v0.1-03 flat-layout](./03-flat-layout.md) (the component locator subagents resolve against), the M1 subprocess runner (`src/carve/core/runners/local_venv.py` — its env-scrub + cwd-pin + timeout + capture pattern is the `bash`-sandbox floor).
-- **Blocks:** [v0.1-16 extensibility](./16-extensibility.md), and the agent revisions/new agents (04, 08, 12, recovery, SQL).
+- **Depends on:** M1 agent loop (`src/carve/core/agents/loop.py` — preserved + extended, HISTORICAL; stays sync), [layout](./layout.md) (the component locator subagents resolve against), the M1 subprocess runner (`src/carve/core/runners/local_venv.py` — its env-scrub + cwd-pin + timeout + capture pattern is the `bash`-sandbox floor).
+- **Blocks:** [extensibility](./extensibility.md), and the agent revisions/new agents (04, 08, 12, recovery, SQL).
 
 ## Goal
 
@@ -20,11 +20,11 @@ Evolve Carve's agent loop into a **Claude-Code-style harness**: a main loop that
 4. **Verification loop** — bounded generate → run → read → fix.
 5. **Interrupt/cancel, a TODO list, and context compaction.**
 
-This spec ships the harness mechanics. The declarative agent/skill *format* is [v0.1-16](./16-extensibility.md); the domain agents are their own specs.
+This spec ships the harness mechanics. The declarative agent/skill *format* is [extensibility](./extensibility.md); the domain agents are their own specs.
 
 ## Out of scope
 
-- The **declarative agent/skill format**, hooks config, MCP import — [v0.1-16](./16-extensibility.md). (This spec defines the gate/hook *fire-points* and the runtime grant rule; 16 defines the file format.)
+- The **declarative agent/skill format**, hooks config, MCP import — [extensibility](./extensibility.md). (This spec defines the gate/hook *fire-points* and the runtime grant rule; 16 defines the file format.)
 - The **specific domain agents** — their own specs.
 - **Hosted sandboxing** (gVisor/Firecracker/per-tenant) — hosted; v0.1 ships the OS-level/allowlist floor below.
 - **Concurrent subagent execution** — post-v0.1 (v0.1 is sequential).
@@ -85,7 +85,7 @@ class SubagentError(AgentError): ...    # subclass of the shipped AgentError
 |---|---|
 | `edit` | **Re-reads the file at apply time** and verifies `old_string` still matches the on-disk bytes before writing (closes the read-at-turn-2/edit-at-turn-20 TOCTOU). Resolves symlinks; enforces project-root containment + the agent's `allowed_paths` (reusing the shipped write-tool guards). Exact string replace; non-unique match fails unless `replace_all` (which reports the count). |
 | `create_file` | Creates a **new** file (edit cannot string-replace into a nonexistent file). Same path-scoping/allowed_paths as `edit`. (Replaces raw `write_file` for agents.) |
-| `bash` | Runs a shell command **only if the gate allows it** (below). **Scrubbed env** (strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + provider tokens — the shipped `local_venv._STRIPPED_ENV_VARS` set; **warehouse creds are never in the bash env** — agents reach the warehouse via the role-scoped `sql` tool, [spec 18](./18-sql-layer.md)). cwd-pinned, bounded timeout, **captured + capped** stdout/stderr (capped before it enters the transcript/telemetry). |
+| `bash` | Runs a shell command **only if the gate allows it** (below). **Scrubbed env** (strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + provider tokens — the shipped `local_venv._STRIPPED_ENV_VARS` set; **warehouse creds are never in the bash env** — agents reach the warehouse via the role-scoped `sql` tool, [spec 18](./sql.md)). cwd-pinned, bounded timeout, **captured + capped** stdout/stderr (capped before it enters the transcript/telemetry). |
 | `glob`/`grep` | File search, bounded counts; **secret paths deny-listed** (`.env`, `.env.*`, `**/secrets.toml`, `*.pem`, `~/.dlt/secrets.toml`) — returns a tool_error in **all** modes. |
 | `read_file` | (shipped, MODIFY) same secret-path deny-list. |
 | `web_fetch`/`web_search` | Bounded; for reading dlt/dbt/source-API docs. |
@@ -98,7 +98,7 @@ A single **pre-execution gate** (`permissions.py`) runs in the loop's `_execute_
 - **Modes** (a lattice `read_only < plan < build < deploy`). Set by the verb (`ask`→`read_only`, `plan`→`plan`, `build`→`build`, `deploy`→`deploy`) or a chat session.
 - **Config:** per-mode policy ships as **hardcoded Python defaults** (the authoritative floor); an optional `[permissions]` block in `runtime.toml` can *tighten* (never widen) bash allow/prompt/deny + tool sets; per-agent `allowed_paths` (spec 16 frontmatter) further narrows writes. Precedence: effective = mode-default ∩ config ∩ agent.
 - **Grants are attenuation, not escalation.** An agent's `tools:` grant is intersected with the mode's permitted set: **runtime tool set = grant ∩ mode-permitted**. The runtime gate is the authoritative boundary — write tools (`edit`/`create_file`/`bash`-writes/warehouse-writes) are denied in `read_only`/`plan` **regardless of grant**. A user agent file that overrides a built-in **cannot raise the effective mode or escape `allowed_paths`** (those are clamped by the verb + gate, not the file). Spec 16's load-time grant check is an **advisory lint**, not the boundary.
-- **Delegation clamp:** `delegate` carries `parent_mode`; the child runs at `min(parent_mode, agent_capability)` and **never wider**. (So a `read_only` `ask` delegating to a build-capable engineer runs the child `read_only` — no write during an ask, satisfying [spec 12](./12-ask-verb.md).)
+- **Delegation clamp:** `delegate` carries `parent_mode`; the child runs at `min(parent_mode, agent_capability)` and **never wider**. (So a `read_only` `ask` delegating to a build-capable engineer runs the child `read_only` — no write during an ask, satisfying [spec 12](./ask.md).)
 - **The bash gate** (the load-bearing surface): a command is `shlex`-parsed; any command containing sub-execution metacharacters — `$()`, backtick, `;`, `&&`, `||`, `|`, `>`/`>>`, `&`, newline — is **denied** (not prompted) unless the whole command matches a structured allow-entry; otherwise the parsed `argv[0]` (+ subcommand for `git`/`dbt`/`dlt`/`gh`) is matched against the mode's allow/prompt/deny lists. **v0.1 sandbox floor:** argv-allowlist + metacharacter-deny + the shipped `local_venv` restricted-env subprocess (scrubbed env, cwd-pinned, timeout, process-group kill) + filesystem read-write only under the project root + the tool caches (`~/.dlt`, `~/.dbt`); read-only elsewhere. *(This resolves the ADR's bash-sandbox open question to a concrete floor.)*
 - **Role-scoped warehouse:** read queries on the **read role**; writes/DDL only on the **deploy/runtime role** (extends the shipped deploy-vs-runtime role model). The `sql` tool selects the role from the mode.
 - **Non-interactive = fail-closed:** any invocation without an attached interactive approver (`carve serve`, REST, MCP, CI) resolves **every `prompt`-tier outcome to DENY**, returning a `needs_user_input` status (surfaced on the Plan), never auto-allow. The prompt tier requires a registered approver callback; absent one, prompt == deny.

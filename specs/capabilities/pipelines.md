@@ -1,4 +1,4 @@
-# v0.1-08 — Multi-step pipeline composition: TOML schema, step DAG, dlt/dbt/sql step types
+# Multi-step pipeline composition: TOML schema, step DAG, dlt/dbt/sql step types
 
 > **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). This spec is the **binding contract**: pipeline steps reference components **by name** (`component = "<name>"`), name-based indirection resolves a name to a local path (simple mode) or a remote repo @ pinned ref (multi mode), the `[schedule]` block becomes a `[seed_schedule]` *seed* (the live schedule is data, owned by the runtime per spec 07), and the spec gains the `carve component` / `carve components show` / `carve schedule reseed` surfaces.
 
@@ -9,9 +9,9 @@
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-03 flat-layout](./03-flat-layout.md), [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md), [v0.1-07 runtime](./07-runtime.md), [v0.1-15 agent-harness](./15-agent-harness.md) (the pipeline engineer is a subagent on this harness — `delegate`, terminal tools, permission modes, the verification loop), [v0.1-16 extensibility](./16-extensibility.md) (the declarative agent format `builtin/pipeline-engineer.md` loads through)
-- **Blocks:** [v0.1-09 rest-api](./09-rest-api.md) (REST surface for pipelines), [v0.1-11 static-html-ui](./11-static-html-ui.md) (UI renders pipeline definitions and step status)
-- **Soft depends on:** [v0.1-06 project-memory](./06-project-memory.md) (the pipeline engineer reads memory files via the spec-06 loader), [v0.1-18 sql-layer](./18-sql-layer.md) (the `sql` tool layer the `sql` step type and the engineer's schema checks ride on)
+- **Depends on:** [layout](./layout.md), [dlt-engineer](./dlt-engineer.md), [runtime](./runtime.md), [harness](./harness.md) (the pipeline engineer is a subagent on this harness — `delegate`, terminal tools, permission modes, the verification loop), [extensibility](./extensibility.md) (the declarative agent format `builtin/pipeline-engineer.md` loads through)
+- **Blocks:** [rest-api](./rest-api.md) (REST surface for pipelines), [ui](./ui.md) (UI renders pipeline definitions and step status)
+- **Soft depends on:** [memory](./memory.md) (the pipeline engineer reads memory files via the spec-06 loader), [sql](./sql.md) (the `sql` tool layer the `sql` step type and the engineer's schema checks ride on)
 
 ## Goal
 
@@ -33,9 +33,9 @@ After this spec lands, a user can describe a multi-step pipeline ("ingest Stripe
 - First-class backfills (out per same; manual `carve run --target prod --param ...` is the workaround)
 - The REST/MCP surface for pipelines (lives in spec 09)
 - The static UI's pipeline-detail view (lives in spec 11)
-- **The `[components.<name>]` schema, `carve.toml` control-plane reframe, and the topology/locator resolution itself** — those live in [v0.1-03 flat-layout](./03-flat-layout.md). This spec *consumes* the resolver and references components by name; it does not define the `[components.*]` block or the simple-mode discovery convention.
-- **The schedule as live data** (`schedules` table, `carve schedule list/show/pause/resume`, the scheduler that reads it) — that lives in [v0.1-07 runtime](./07-runtime.md). This spec ships only the `[seed_schedule]` *seed* applied at first registration and the `carve schedule reseed` command that re-applies it.
-- **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [v0.1-14 deploy-pr](./14-deploy-pr.md). Graduation (`carve component <name> --separate-remote …`) writes the component block and validates it (this spec); promoting that component's repo through an environment is a deploy concern (spec 14).
+- **The `[components.<name>]` schema, `carve.toml` control-plane reframe, and the topology/locator resolution itself** — those live in [layout](./layout.md). This spec *consumes* the resolver and references components by name; it does not define the `[components.*]` block or the simple-mode discovery convention.
+- **The schedule as live data** (`schedules` table, `carve schedule list/show/pause/resume`, the scheduler that reads it) — that lives in [runtime](./runtime.md). This spec ships only the `[seed_schedule]` *seed* applied at first registration and the `carve schedule reseed` command that re-applies it.
+- **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [deploy](./deploy.md). Graduation (`carve component <name> --separate-remote …`) writes the component block and validates it (this spec); promoting that component's repo through an environment is a deploy concern (spec 14).
 
 ## Files this spec produces
 
@@ -487,7 +487,7 @@ carve components show <name>                # one component's full resolution de
 
 `carve component <name> --separate-remote …` performs the graduation flow described under *Component graduation* above (write the `[components.<name>]` block, clone+validate the workspace, backfill omitted dbt-step names). `carve components show` is the always-on inspection surface that makes the otherwise-hidden simple-mode convention legible (it lists convention-discovered components too, even when `carve.toml` has no `[components.*]` blocks).
 
-> The `[components.<name>]` block schema and the locator/sync that back these commands are defined in [v0.1-03 flat-layout](./03-flat-layout.md); this spec ships the `carve component` / `carve components show` CLI surface on top of that resolver. Deploying a graduated component's repo through an environment is [v0.1-14 deploy-pr](./14-deploy-pr.md) (Wave 2), out of scope here.
+> The `[components.<name>]` block schema and the locator/sync that back these commands are defined in [layout](./layout.md); this spec ships the `carve component` / `carve components show` CLI surface on top of that resolver. Deploying a graduated component's repo through an environment is [deploy](./deploy.md) (Wave 2), out of scope here.
 
 ### CLI: `carve schedule reseed`
 

@@ -1,11 +1,11 @@
-# v0.1-11 — Static HTML UI: regenerated-per-run, modeled on `dbt docs`
+# Static HTML UI: regenerated-per-run, modeled on `dbt docs`
 
 > Ships the minimal local web UI for OSS self-hosters. Deliberately limited so the upgrade hook to the polished cloud UI stays clear. Per [PRD §6.13 interfaces](../PRD.md), [PRD design decision 5.10 OSS feature-complete; hosted operationally distinct](../PRD.md), [ARCHITECTURE §8.4 local static HTML UI](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 11](../PROJECT_PLAN.md).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** [v0.1-01 state-store-postgres](./01-state-store-postgres.md), [v0.1-07 runtime](./07-runtime.md), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md), [v0.1-09 rest-api](./09-rest-api.md)
+- **Depends on:** [state-store](./state-store.md), [runtime](./runtime.md), [pipelines](./pipelines.md), [rest-api](./rest-api.md)
 - **Blocks:** nothing structurally; UI is consumer-facing
 
 ## Goal
@@ -25,7 +25,7 @@ After this spec lands, a user can `open http://127.0.0.1:8766` (or `carve docs o
 
 - Live updates (no WebSocket, no SSE in the rendered page; the user reloads to see new state)
 - Authentication beyond loopback-only binding (deliberately no login UI; this is local-machine OSS)
-- Lineage view rendering (deferred — lineage is investigated on demand via [v0.1-19](./19-lineage.md), not stored; there is no Carve graph to render, and the static UI stays run-history + logs until post-v0.1)
+- Lineage view rendering (deferred — lineage is investigated on demand via [lineage](./lineage.md), not stored; there is no Carve graph to render, and the static UI stays run-history + logs until post-v0.1)
 - Cost / token usage dashboards (basic metrics surfaced via `/metrics/*` REST endpoints; cloud UI gets the polished version)
 - Pipeline / step authoring UI (users author via `carve plan` / `carve build`)
 - Anything fancy (the cloud UI in hosted has the polish; this exists to be honestly minimal)

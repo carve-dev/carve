@@ -1,4 +1,4 @@
-# v0.1-03 — Control-plane layout: `carve.toml` config + `[components.<name>]` topology; convention-based simple mode
+# Control-plane layout: `carve.toml` config + `[components.<name>]` topology; convention-based simple mode
 
 > **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). This is the **foundation** spec: it reframes `carve.toml` as the *control-plane config* (project metadata + connections + **component references**), generalizes the old singular `[dbt]` / `[dlt]` topology blocks into N named, typed `[components.<name>]` blocks (each with a `type`, a `mode`, mode-specific `url`/`branch`/`path`, and an optional per-component `ref` pin), and defines the convention-based **simple mode** that hides all of this until a component is split out. `[el]` is no longer special — EL artifacts are just `type = "dlt"` components, symmetric with dbt.
 
@@ -8,7 +8,7 @@
 
 - **Status:** Drafting
 - **Depends on:** None directly (purely structural)
-- **Blocks:** [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md) (the agent writes files into this layout), [v0.1-05 init-rewrite](./05-init-rewrite.md) (init creates this layout), [v0.1-07 runtime](./07-runtime.md) (workers resolve paths via this layout), [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md) (`dlt`/`dbt` step types resolve targets via this layout)
+- **Blocks:** [dlt-engineer](./dlt-engineer.md) (the agent writes files into this layout), [init](./init.md) (init creates this layout), [runtime](./runtime.md) (workers resolve paths via this layout), [pipelines](./pipelines.md) (`dlt`/`dbt` step types resolve targets via this layout)
 
 ## Goal
 
@@ -21,16 +21,16 @@ Define and lock:
 5. The provenance convention for Carve-generated dlt files (so users and agents can tell what came from where)
 6. The workspace cache for `separate-remote` components (`.carve/workspaces/<name>/` with git sync semantics) — generalized to any separate-remote component (dlt or dbt), not just dbt
 
-After this spec lands, every other v0.1 spec assumes this control-plane config + layout. Init scaffolds it (spec 05), the EL agent writes into the resolved component (spec 04), the runtime resolves component names through it (specs 07, 08). Pipeline steps reference components **by name** (`component = "<name>"`) and the graduation/inspection commands (`carve component`, `carve components show`, `carve schedule reseed`) are specified in [v0.1-08](./08-multi-step-pipeline.md), which *consumes* the resolver this spec defines.
+After this spec lands, every other v0.1 spec assumes this control-plane config + layout. Init scaffolds it (spec 05), the EL agent writes into the resolved component (spec 04), the runtime resolves component names through it (specs 07, 08). Pipeline steps reference components **by name** (`component = "<name>"`) and the graduation/inspection commands (`carve component`, `carve components show`, `carve schedule reseed`) are specified in [pipelines](./pipelines.md), which *consumes* the resolver this spec defines.
 
 ## Out of scope
 
-- The contents of generated dlt files (sources, resources, `pipeline.run()` calls) — that's [v0.1-04 el-agent-dlt](./04-el-agent-dlt.md).
-- The `pipelines/<name>.toml` schema itself (steps, `depends_on`, failure modes, the `[seed_schedule]` block, the `component = "<name>"` step field) — that's [v0.1-08 multi-step-pipeline](./08-multi-step-pipeline.md). This spec defines the `[components.<name>]` blocks in `carve.toml` and the name→code resolver; spec 08 *consumes* that resolver from the pipeline steps.
-- **Component graduation + the `carve component` / `carve components show` / `carve schedule reseed` command implementations** — those CLI commands ship in [v0.1-08](./08-multi-step-pipeline.md). This spec defines the `[components.<name>]` block they write/read, the resolution they rely on, and the *behavior* of `carve components show` (what resolved references it must surface); spec 08 wires up the Typer commands.
-- Per-pipeline memory sidecars (`pipelines/<name>.md`, `el/<name>/NOTES.md`) — that's [v0.1-06 project-memory](./06-project-memory.md). This spec carves out the *locations* but doesn't ship the read/write code.
-- The `carve init` UX that creates the layout — that's [v0.1-05 init-rewrite](./05-init-rewrite.md). This spec defines what gets created; init wires up the user-facing flow.
-- **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [v0.1-14 deploy-pr](./14-deploy-pr.md). Where this spec touches sync-before-deploy and the separate-remote authoring-via-PR guardrail, that behavior is left as-is and noted as pending the Wave 2 deploy revision.
+- The contents of generated dlt files (sources, resources, `pipeline.run()` calls) — that's [dlt-engineer](./dlt-engineer.md).
+- The `pipelines/<name>.toml` schema itself (steps, `depends_on`, failure modes, the `[seed_schedule]` block, the `component = "<name>"` step field) — that's [pipelines](./pipelines.md). This spec defines the `[components.<name>]` blocks in `carve.toml` and the name→code resolver; spec 08 *consumes* that resolver from the pipeline steps.
+- **Component graduation + the `carve component` / `carve components show` / `carve schedule reseed` command implementations** — those CLI commands ship in [pipelines](./pipelines.md). This spec defines the `[components.<name>]` block they write/read, the resolution they rely on, and the *behavior* of `carve components show` (what resolved references it must surface); spec 08 wires up the Typer commands.
+- Per-pipeline memory sidecars (`pipelines/<name>.md`, `el/<name>/NOTES.md`) — that's [memory](./memory.md). This spec carves out the *locations* but doesn't ship the read/write code.
+- The `carve init` UX that creates the layout — that's [init](./init.md). This spec defines what gets created; init wires up the user-facing flow.
+- **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [deploy](./deploy.md). Where this spec touches sync-before-deploy and the separate-remote authoring-via-PR guardrail, that behavior is left as-is and noted as pending the Wave 2 deploy revision.
 
 ## Files this spec produces
 

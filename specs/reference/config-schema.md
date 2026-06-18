@@ -1,6 +1,6 @@
 # Reference — Configuration schema
 
-The canonical reference for every file Carve reads or writes in v0.1. The executable source of truth is the Pydantic models in `src/carve/`; this document is the human-readable companion. For the control-plane model behind `carve.toml`, see [v0.1-03](../v0.1/03-flat-layout.md) and [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md).
+The canonical reference for every file Carve reads or writes in v0.1. The executable source of truth is the Pydantic models in `src/carve/`; this document is the human-readable companion. For the control-plane model behind `carve.toml`, see [layout](../capabilities/layout.md) and [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md).
 
 ## File layout
 
@@ -47,34 +47,34 @@ The canonical reference for every file Carve reads or writes in v0.1. The execut
 
 | File | Purpose | Owner | Spec |
 |---|---|---|---|
-| `carve.toml` | Control-plane config: project meta, `default_target`, `[state_store]`, `[components.<name>]` | Carve (init) + user | [03](../v0.1/03-flat-layout.md), [05](../v0.1/05-init-rewrite.md), [01](../v0.1/01-state-store-postgres.md) |
-| `carve/connections.toml` | Target/connection definitions + dialect + credential references | User | [05](../v0.1/05-init-rewrite.md), [18](../v0.1/18-sql-layer.md) |
-| `carve/runtime.toml` | Scheduler/worker/reaper/archive/recovery/permissions/CORS | User | [07](../v0.1/07-runtime.md), [15](../v0.1/15-agent-harness.md), [17](../v0.1/17-recovery-engineer.md) |
-| `carve/hooks.toml` | Pre/post-tool + lifecycle hooks | User | [16](../v0.1/16-extensibility.md) |
-| `carve/mcp.toml` | External MCP server registrations | User (`carve mcp-servers add`) | [16](../v0.1/16-extensibility.md) |
-| `carve/conventions.md` | Inferred project conventions | Carve-generated (refreshable) | [05](../v0.1/05-init-rewrite.md), [06](../v0.1/06-project-memory.md) |
-| `carve/standards.md` | Team standards (override conventions) | User-authored | [06](../v0.1/06-project-memory.md) |
-| `carve/decisions.md` | Append-only dated decision log | User (append-only) | [06](../v0.1/06-project-memory.md) |
-| `carve/agents/<name>.md` | Agent definitions — **markdown + YAML frontmatter** | User (override built-ins) | [16](../v0.1/16-extensibility.md) |
-| `carve/skills/<name>/SKILL.md` | Skill packs (content, not callable tools) | User | [16](../v0.1/16-extensibility.md) |
-| `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [08](../v0.1/08-multi-step-pipeline.md) |
-| `pipelines/<name>.md` | Per-pipeline memory sidecar | User-authored | [06](../v0.1/06-project-memory.md) |
-| `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below header) | [04](../v0.1/04-el-agent-dlt.md), [03](../v0.1/03-flat-layout.md) |
-| `el/<name>/requirements.txt` | Pinned dlt deps | Carve-generated | [04](../v0.1/04-el-agent-dlt.md) |
-| `.dlt/config.toml` / `.dlt/secrets.toml` | dlt's own config / credentials | User (secrets gitignored) | [03](../v0.1/03-flat-layout.md), dlt convention |
-| `dbt_project.yml` | dbt project config (same-repo mode) | User (or `--with-dbt`) | dbt convention, [05](../v0.1/05-init-rewrite.md) |
-| `docker-compose.yml` | Bundled Postgres | Carve-templated | [02](../v0.1/02-oss-packaging.md) |
-| `.env` / `.env.example` | Env vars (`DATABASE_URL`, etc.) | User / Carve-templated | [05](../v0.1/05-init-rewrite.md) |
-| `.carve/token` | OSS API token (mode 0600) | Carve-generated | [09](../v0.1/09-rest-api.md) |
-| `.carve/plans/<id>.json` / `asks/<id>.json` | Plan / ask artifacts | Carve-generated | M1.1, [12](../v0.1/12-ask-verb.md) |
-| `.carve/workspaces/<derived>/` | Separate-remote component cache | Carve-managed | [03](../v0.1/03-flat-layout.md) |
-| `.carve/ui/` | Rendered static HTML | Carve-generated | [11](../v0.1/11-static-html-ui.md) |
+| `carve.toml` | Control-plane config: project meta, `default_target`, `[state_store]`, `[components.<name>]` | Carve (init) + user | [03](../capabilities/layout.md), [05](../capabilities/init.md), [01](../capabilities/state-store.md) |
+| `carve/connections.toml` | Target/connection definitions + dialect + credential references | User | [05](../capabilities/init.md), [18](../capabilities/sql.md) |
+| `carve/runtime.toml` | Scheduler/worker/reaper/archive/recovery/permissions/CORS | User | [07](../capabilities/runtime.md), [15](../capabilities/harness.md), [17](../capabilities/recovery.md) |
+| `carve/hooks.toml` | Pre/post-tool + lifecycle hooks | User | [16](../capabilities/extensibility.md) |
+| `carve/mcp.toml` | External MCP server registrations | User (`carve mcp-servers add`) | [16](../capabilities/extensibility.md) |
+| `carve/conventions.md` | Inferred project conventions | Carve-generated (refreshable) | [05](../capabilities/init.md), [06](../capabilities/memory.md) |
+| `carve/standards.md` | Team standards (override conventions) | User-authored | [06](../capabilities/memory.md) |
+| `carve/decisions.md` | Append-only dated decision log | User (append-only) | [06](../capabilities/memory.md) |
+| `carve/agents/<name>.md` | Agent definitions — **markdown + YAML frontmatter** | User (override built-ins) | [16](../capabilities/extensibility.md) |
+| `carve/skills/<name>/SKILL.md` | Skill packs (content, not callable tools) | User | [16](../capabilities/extensibility.md) |
+| `pipelines/<name>.toml` | Pipeline composition | Carve-generated (refinable) | [08](../capabilities/pipelines.md) |
+| `pipelines/<name>.md` | Per-pipeline memory sidecar | User-authored | [06](../capabilities/memory.md) |
+| `el/<name>/__init__.py` | Generated dlt source | Carve-generated (refinable below header) | [04](../capabilities/dlt-engineer.md), [03](../capabilities/layout.md) |
+| `el/<name>/requirements.txt` | Pinned dlt deps | Carve-generated | [04](../capabilities/dlt-engineer.md) |
+| `.dlt/config.toml` / `.dlt/secrets.toml` | dlt's own config / credentials | User (secrets gitignored) | [03](../capabilities/layout.md), dlt convention |
+| `dbt_project.yml` | dbt project config (same-repo mode) | User (or `--with-dbt`) | dbt convention, [05](../capabilities/init.md) |
+| `docker-compose.yml` | Bundled Postgres | Carve-templated | [02](../capabilities/packaging.md) |
+| `.env` / `.env.example` | Env vars (`DATABASE_URL`, etc.) | User / Carve-templated | [05](../capabilities/init.md) |
+| `.carve/token` | OSS API token (mode 0600) | Carve-generated | [09](../capabilities/rest-api.md) |
+| `.carve/plans/<id>.json` / `asks/<id>.json` | Plan / ask artifacts | Carve-generated | M1.1, [12](../capabilities/ask.md) |
+| `.carve/workspaces/<derived>/` | Separate-remote component cache | Carve-managed | [03](../capabilities/layout.md) |
+| `.carve/ui/` | Rendered static HTML | Carve-generated | [11](../capabilities/ui.md) |
 
-> Investigations (recovery diagnoses) are **not** files — they are rows in the Postgres `investigations` table, surfaced via `carve investigations` ([17](../v0.1/17-recovery-engineer.md)).
+> Investigations (recovery diagnoses) are **not** files — they are rows in the Postgres `investigations` table, surfaced via `carve investigations` ([17](../capabilities/recovery.md)).
 
 ## `carve.toml` — the control-plane config
 
-The project root config. It references independently-versioned dlt/dbt components **by name** rather than containing them ([03](../v0.1/03-flat-layout.md)).
+The project root config. It references independently-versioned dlt/dbt components **by name** rather than containing them ([03](../capabilities/layout.md)).
 
 ```toml
 [project]
@@ -120,7 +120,7 @@ path = "/path/to/ingest-stripe"  # required when mode == "separate-local"
 
 ## `carve/connections.toml`
 
-Named targets (connections). Each carries a **dialect** (Snowflake + DuckDB first-class in v0.1; Postgres/BigQuery/Databricks/SQL Server via `sqlglot`, introspection hardened post-v0.1, [18](../v0.1/18-sql-layer.md)) and is role-scoped (read vs write/deploy). Credentials are referenced, never inlined.
+Named targets (connections). Each carries a **dialect** (Snowflake + DuckDB first-class in v0.1; Postgres/BigQuery/Databricks/SQL Server via `sqlglot`, introspection hardened post-v0.1, [18](../capabilities/sql.md)) and is role-scoped (read vs write/deploy). Credentials are referenced, never inlined.
 
 ```toml
 [targets.dev]
@@ -140,7 +140,7 @@ database = "ANALYTICS"
 schema = "DBT"
 ```
 
-Credential indirection: `${ENV_VAR}` (environment) or `{ file = "/path" }` (Docker/K8s secrets). Carve never stores secrets in the state store ([15](../v0.1/15-agent-harness.md)).
+Credential indirection: `${ENV_VAR}` (environment) or `{ file = "/path" }` (Docker/K8s secrets). Carve never stores secrets in the state store ([15](../capabilities/harness.md)).
 
 ## `carve/runtime.toml`
 
@@ -176,7 +176,7 @@ allowed_origins = ["http://127.0.0.1:*"]   # OSS default: loopback for the stati
 
 ## `carve/agents/<name>.md` — markdown + YAML frontmatter
 
-Agents are **markdown files**, not TOML. Built-ins live at `src/carve/core/agents/builtin/<name>.md`; a user file at `carve/agents/<name>.md` **overrides a built-in of the same name** ([16](../v0.1/16-extensibility.md)).
+Agents are **markdown files**, not TOML. Built-ins live at `src/carve/core/agents/builtin/<name>.md`; a user file at `carve/agents/<name>.md` **overrides a built-in of the same name** ([16](../capabilities/extensibility.md)).
 
 ```markdown
 ---
@@ -207,7 +207,7 @@ parsed result before returning a proposed Plan…
 
 ## `carve/skills/<name>/SKILL.md`
 
-A skill **pack** is a folder: `SKILL.md` (frontmatter + instructions) plus optional `scripts/` / `resources/` (e.g., a curated dlt source). A pack surfaces as **description-matched content injected into context** — not a callable tool ([16](../v0.1/16-extensibility.md)). The curated connector library ships as skill packs.
+A skill **pack** is a folder: `SKILL.md` (frontmatter + instructions) plus optional `scripts/` / `resources/` (e.g., a curated dlt source). A pack surfaces as **description-matched content injected into context** — not a callable tool ([16](../capabilities/extensibility.md)). The curated connector library ships as skill packs.
 
 ```markdown
 ---
@@ -222,7 +222,7 @@ Built-in *callable* skills (`@skill` functions — catalog introspection, `dbt_m
 
 ## `carve/hooks.toml`
 
-User-defined hooks at tool and lifecycle seams ([16](../v0.1/16-extensibility.md)).
+User-defined hooks at tool and lifecycle seams ([16](../capabilities/extensibility.md)).
 
 ```toml
 [[hook]]
@@ -239,7 +239,7 @@ Hooks run through the **same `bash` gate** (no bypass), are mode-clamped, never 
 
 ## `carve/mcp.toml`
 
-External MCP servers Carve consumes (managed via `carve mcp-servers`). Tools import namespaced (`mcp:<server>:<tool>`) and **effects-tagged**; missing effect metadata fails closed (treated as writing) ([16](../v0.1/16-extensibility.md)).
+External MCP servers Carve consumes (managed via `carve mcp-servers`). Tools import namespaced (`mcp:<server>:<tool>`) and **effects-tagged**; missing effect metadata fails closed (treated as writing) ([16](../capabilities/extensibility.md)).
 
 ```toml
 [servers.jira]
@@ -256,7 +256,7 @@ enabled = true
 
 ## `pipelines/<name>.toml`
 
-A pipeline composes components **by name** into a step DAG ([08](../v0.1/08-multi-step-pipeline.md)). The schedule lives in a `[seed_schedule]` block — a one-time **seed**, not the live source of truth (the live schedule is data in the `schedules` table).
+A pipeline composes components **by name** into a step DAG ([08](../capabilities/pipelines.md)). The schedule lives in a `[seed_schedule]` block — a one-time **seed**, not the live source of truth (the live schedule is data in the `schedules` table).
 
 ```toml
 [pipeline]
@@ -303,11 +303,11 @@ mode = "warn"
 
 ## Project memory
 
-`carve/conventions.md` (Carve-generated by inference, refreshable via `carve memory refresh`), `carve/standards.md` (user-authored, overrides conventions), and `carve/decisions.md` (append-only dated log via `carve memory append-decision`). Optional per-scope sidecars: `pipelines/<name>.md`, `el/<name>/NOTES.md`. All are read into agent context ([06](../v0.1/06-project-memory.md)).
+`carve/conventions.md` (Carve-generated by inference, refreshable via `carve memory refresh`), `carve/standards.md` (user-authored, overrides conventions), and `carve/decisions.md` (append-only dated log via `carve memory append-decision`). Optional per-scope sidecars: `pipelines/<name>.md`, `el/<name>/NOTES.md`. All are read into agent context ([06](../capabilities/memory.md)).
 
 ## `el/<name>/` — a dlt component
 
-`__init__.py` carries a **provenance header** recording what generated it and from where; Carve regenerates below the header and preserves user edits, and never touches a file lacking the header (treated as user-authored). `requirements.txt` pins dlt deps. The DLT engineer writes `.dlt/config.toml.template` / `.dlt/secrets.toml.template` — never the live `.dlt/secrets.toml` ([03](../v0.1/03-flat-layout.md), [04](../v0.1/04-el-agent-dlt.md)).
+`__init__.py` carries a **provenance header** recording what generated it and from where; Carve regenerates below the header and preserves user edits, and never touches a file lacking the header (treated as user-authored). `requirements.txt` pins dlt deps. The DLT engineer writes `.dlt/config.toml.template` / `.dlt/secrets.toml.template` — never the live `.dlt/secrets.toml` ([03](../capabilities/layout.md), [04](../capabilities/dlt-engineer.md)).
 
 ## `.carve/` — generated runtime state (gitignored)
 
@@ -315,10 +315,10 @@ Postgres holds run history, plans, builds, schedules, investigations, etc. — *
 
 ## Validation
 
-Configs are validated against Pydantic models at load time, with file + line context. `carve pipelines validate [<name>]` checks pipeline TOML + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names) ([08](../v0.1/08-multi-step-pipeline.md)). The Pydantic models in `src/carve/` are the executable source of truth; this doc is the human companion.
+Configs are validated against Pydantic models at load time, with file + line context. `carve pipelines validate [<name>]` checks pipeline TOML + the step DAG (unique ids, valid `depends_on`, no cycles, resolvable `component` names) ([08](../capabilities/pipelines.md)). The Pydantic models in `src/carve/` are the executable source of truth; this doc is the human companion.
 
 ## Cross-references
 
-- The control-plane model: [v0.1-03](../v0.1/03-flat-layout.md), [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md)
+- The control-plane model: [layout](../capabilities/layout.md), [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md)
 - CLI that reads/writes these: [cli-reference.md](./cli-reference.md)
 - Vocabulary: [glossary.md](./glossary.md)

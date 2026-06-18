@@ -1,10 +1,10 @@
 # Carve — Delivery plan
 
-**What to build, in what order, given what's already built.** This is the temporal layer ([`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)): it sequences work into dependency-ordered, foundation-first increments and carries the version/phase identity. The durable design lives elsewhere and is **not** organized by phase — [`PRD.md`](./PRD.md) (what/why/who), [`ARCHITECTURE.md`](./ARCHITECTURE.md) (the technical model), and the capability specs (today under [`v0.1/`](./v0.1/); they describe *how a capability works*, version-independently).
+**What to build, in what order, given what's already built.** This is the temporal layer ([`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)): it sequences work into dependency-ordered, foundation-first increments and carries the version/phase identity. The durable design lives elsewhere and is **not** organized by phase — [`PRD.md`](./PRD.md) (what/why/who), [`ARCHITECTURE.md`](./ARCHITECTURE.md) (the technical model), and the capability specs (today under [`capabilities/`](./capabilities/); they describe *how a capability works*, version-independently).
 
 This is a **living, delta-aware** document. It plans *changes and additions* to the current codebase, not greenfield builds. As increments land, update the *Current state* section and check off exit criteria; as priorities shift, re-sequence increments here — without touching the capability specs.
 
-> **Transitional note.** Until specs migrate from `v0.1/NN` to `capabilities/<area>` (ADR step 3), increments below reference the current `v0.1/NN` files as capability slices, and the spec IDs persist as stable identifiers. `DELIVERY.md` — not `v0.1/README.md` or `PROJECT_PLAN.md` — is the source of truth for sequencing and scope.
+> **Note.** Specs now live in [`capabilities/<area>`](./capabilities/) — the structural migration (ADR step 3a) is done; increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` or `PROJECT_PLAN.md` — is the source of truth for sequencing and scope. (Remaining: lifting the per-spec "Files this spec produces" work-order sections into increments — ADR step 3b.)
 
 ---
 
@@ -39,11 +39,11 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** The structural + AI substrate everything runs on: a control-plane `carve.toml` that references components by name, and the Claude-Code-style harness (subagents, terminal tools, permission gate, verify-by-execution) with declarative extensibility.
 
 **In scope**
-- Finish/confirm Postgres state store — [v0.1-01](./v0.1/01-state-store-postgres.md) *(largely landed)*
-- OSS packaging: bundled docker-compose Postgres + external-Postgres option — [v0.1-02](./v0.1/02-oss-packaging.md)
-- Control-plane flat layout: `carve.toml` `[components.<name>]`, the component locator, repo topology, simple-mode convention discovery, the workspace cache — [v0.1-03](./v0.1/03-flat-layout.md)
-- **The agent harness** — subagent `delegate`, terminal tools (edit/bash/grep/web), the permission gate (modes + `allowed_paths` + bash sandbox + secret-deny), verify-by-execution, interrupt/TODO/compaction — [v0.1-15](./v0.1/15-agent-harness.md)
-- **Extensibility** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks (`hooks.toml`), MCP both directions, runtime grant attenuation — [v0.1-16](./v0.1/16-extensibility.md)
+- Finish/confirm Postgres state store — [state-store](./capabilities/state-store.md) *(largely landed)*
+- OSS packaging: bundled docker-compose Postgres + external-Postgres option — [packaging](./capabilities/packaging.md)
+- Control-plane flat layout: `carve.toml` `[components.<name>]`, the component locator, repo topology, simple-mode convention discovery, the workspace cache — [layout](./capabilities/layout.md)
+- **The agent harness** — subagent `delegate`, terminal tools (edit/bash/grep/web), the permission gate (modes + `allowed_paths` + bash sandbox + secret-deny), verify-by-execution, interrupt/TODO/compaction — [harness](./capabilities/harness.md)
+- **Extensibility** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks (`hooks.toml`), MCP both directions, runtime grant attenuation — [extensibility](./capabilities/extensibility.md)
 
 **Depends on.** M1/M1.1 (the agent loop the harness wraps; the CLI/config it extends).
 
@@ -58,9 +58,9 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** AI authors and runs a dlt component, and composes components by name into a runnable pipeline DAG.
 
 **In scope**
-- The dialect-aware **SQL tool layer** (sqlglot validate/transpile, per-dialect introspection, role-gated exec; Snowflake + DuckDB first-class) + thin SQL specialist — [v0.1-18](./v0.1/18-sql-layer.md)
-- The **DLT engineer** subagent (authors/runs dlt; native/REST/curated-library/MCP paths) + the dlt-qa / dlt-security review subagents — [v0.1-04](./v0.1/04-el-agent-dlt.md)
-- **Multi-step pipeline** composition: `pipelines/<name>.toml`, the step DAG executor (dlt/dbt/sql), `[seed_schedule]`, component-by-name, the definition reconciler, the **pipeline engineer** subagent, `carve component(s)` graduation — [v0.1-08](./v0.1/08-multi-step-pipeline.md)
+- The dialect-aware **SQL tool layer** (sqlglot validate/transpile, per-dialect introspection, role-gated exec; Snowflake + DuckDB first-class) + thin SQL specialist — [sql](./capabilities/sql.md)
+- The **DLT engineer** subagent (authors/runs dlt; native/REST/curated-library/MCP paths) + the dlt-qa / dlt-security review subagents — [dlt-engineer](./capabilities/dlt-engineer.md)
+- **Multi-step pipeline** composition: `pipelines/<name>.toml`, the step DAG executor (dlt/dbt/sql), `[seed_schedule]`, component-by-name, the definition reconciler, the **pipeline engineer** subagent, `carve component(s)` graduation — [pipelines](./capabilities/pipelines.md)
 
 **Depends on.** Increment 1 (harness, extensibility, control-plane layout). 04 needs the harness + SQL tool; 08 needs 04 + the locator.
 
@@ -75,9 +75,9 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** A real project you can scaffold and run on a schedule end-to-end.
 
 **In scope**
-- The **runtime** — scheduler (reads the `schedules` table), Postgres job queue (optimistic claim), worker pool, heartbeats, reaper, archiver; the live `schedules` table + `carve schedule` mutation surface + `schedule_changes` audit — [v0.1-07](./v0.1/07-runtime.md)
-- **`carve init`** — greenfield/brownfield across the Postgres × dbt × dlt × memory axes; renders the control-plane `carve.toml`; convention inference — [v0.1-05](./v0.1/05-init-rewrite.md)
-- **Project memory** — `conventions.md` / `standards.md` / `decisions.md`, sidecars, `carve memory` surface — [v0.1-06](./v0.1/06-project-memory.md)
+- The **runtime** — scheduler (reads the `schedules` table), Postgres job queue (optimistic claim), worker pool, heartbeats, reaper, archiver; the live `schedules` table + `carve schedule` mutation surface + `schedule_changes` audit — [runtime](./capabilities/runtime.md)
+- **`carve init`** — greenfield/brownfield across the Postgres × dbt × dlt × memory axes; renders the control-plane `carve.toml`; convention inference — [init](./capabilities/init.md)
+- **Project memory** — `conventions.md` / `standards.md` / `decisions.md`, sidecars, `carve memory` surface — [memory](./capabilities/memory.md)
 
 **Depends on.** Increment 2 (08's pipeline definitions + reconciler that 07's scheduler reads; 05 renders configs the runtime serves). 05 also needs 01/02/03.
 
@@ -92,11 +92,11 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** Drive Carve programmatically and investigate the project read-only.
 
 **In scope**
-- **REST API** — full CLI-surface coverage, auth, errors, pagination, streaming, webhooks — [v0.1-09](./v0.1/09-rest-api.md)
-- **MCP server** — auto-generated from REST; stdio + WebSocket — [v0.1-10](./v0.1/10-mcp-server.md)
-- **Static HTML UI** — regenerated per run; `carve docs serve` — [v0.1-11](./v0.1/11-static-html-ui.md)
-- **The explorer (`ask`)** — read-only investigative subagent; citations — [v0.1-12](./v0.1/12-ask-verb.md)
-- **Lineage by investigation** — the `dlt_schema` reader skill; the explorer answers lineage via dbt manifest + dlt schema + code (no Carve store) — [v0.1-19](./v0.1/19-lineage.md)
+- **REST API** — full CLI-surface coverage, auth, errors, pagination, streaming, webhooks — [rest-api](./capabilities/rest-api.md)
+- **MCP server** — auto-generated from REST; stdio + WebSocket — [mcp-server](./capabilities/mcp-server.md)
+- **Static HTML UI** — regenerated per run; `carve docs serve` — [ui](./capabilities/ui.md)
+- **The explorer (`ask`)** — read-only investigative subagent; citations — [ask](./capabilities/ask.md)
+- **Lineage by investigation** — the `dlt_schema` reader skill; the explorer answers lineage via dbt manifest + dlt schema + code (no Carve store) — [lineage](./capabilities/lineage.md)
 
 **Depends on.** Increment 3 (07/08 surfaces to expose). 12/19 need the harness (incr 1) + SQL tool (incr 2); 10/11 need 09.
 
@@ -111,8 +111,8 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** Promote built code to prod, and auto-diagnose failures.
 
 **In scope**
-- **Deploy** — `carve deploy <pipeline>` configurable handoff (files/commit/push/pr, default pr); cross-repo linked PRs; pre-flight drift — [v0.1-14](./v0.1/14-deploy-pr.md)
-- **Recovery engineer** — diagnose-then-delegate on retries-exhausted `run.failed`; the `Investigation` entity; auto-pause/resume gated by pause origin — [v0.1-17](./v0.1/17-recovery-engineer.md)
+- **Deploy** — `carve deploy <pipeline>` configurable handoff (files/commit/push/pr, default pr); cross-repo linked PRs; pre-flight drift — [deploy](./capabilities/deploy.md)
+- **Recovery engineer** — diagnose-then-delegate on retries-exhausted `run.failed`; the `Investigation` entity; auto-pause/resume gated by pause origin — [recovery](./capabilities/recovery.md)
 
 **Depends on.** Increment 2 (08 deploy targets) + increment 3 (07 `run.failed`, schedules auto-pause). 17 needs the harness/delegation (incr 1) + the engineers it delegates to (incr 2) + deploy (14, this increment, for the resolving-deploy → auto-resume link).
 
@@ -127,7 +127,7 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 **Goal.** Correct reference docs and the `v0.1.0` tag.
 
 **In scope**
-- **Reference docs** — cli-reference / config-schema / glossary / governance kept in lock-step via completeness tests — [v0.1-13](./v0.1/13-reference-docs.md) *(content rewritten 2026-06; this increment adds the completeness tests against built code)*
+- **Reference docs** — cli-reference / config-schema / glossary / governance kept in lock-step via completeness tests — [reference-docs](./capabilities/reference-docs.md) *(content rewritten 2026-06; this increment adds the completeness tests against built code)*
 - **Release** — tag `v0.1.0`.
 
 **Depends on.** Everything (reference derives from the built surface).
@@ -158,7 +158,7 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
 Tracked here so they aren't lost, deliberately unsequenced until v0.1 lands:
 
 - **v0.2 — the dbt engineer:** AI authoring of dbt models/tests/sources (v0.1 *runs* dbt; doesn't write it). dbt-aware authoring skills; greenfield dbt scaffolding; cross-backend source coupling.
-- **Lineage depth:** column-level lineage; `sql`-step producer tracking ([v0.1-19](./v0.1/19-lineage.md) *Out of scope*).
+- **Lineage depth:** column-level lineage; `sql`-step producer tracking ([lineage](./capabilities/lineage.md) *Out of scope*).
 - **Retrieval:** embedding/semantic search (ARCHITECTURE §6.1 layer 5).
 - **Concurrency:** concurrent subagent fan-out (v0.1 is sequential/sync).
 - **The planned CLI commands** if not pinned in increment 6.
