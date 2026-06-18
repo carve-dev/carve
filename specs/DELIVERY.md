@@ -157,8 +157,8 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
 
 Tracked here so they aren't lost, deliberately unsequenced until v0.1 lands:
 
-- **v0.2 — the dbt engineer:** AI authoring of dbt models/tests/sources (v0.1 *runs* dbt; doesn't write it). dbt-aware authoring skills; greenfield dbt scaffolding; cross-backend source coupling.
-- **Lineage depth:** column-level lineage; `sql`-step producer tracking ([lineage](./capabilities/lineage.md) *Out of scope*).
+- **dbt capabilities** (now specced; awaiting increment placement — the next sequencing decision): [`dbt-execution`](./capabilities/dbt-execution.md) — run dbt as a step across backends (local bundled/external + managed snowflake-native / dbt-cloud / remote); needed *before* authoring, since orchestration-only shops run dbt without writing it. [`dbt-engineer`](./capabilities/dbt-engineer.md) — AI authoring of models/tests/sources (+ dbt-qa). [`connect`](./capabilities/connect.md) — on-demand provisioning (engine install + pin, warehouse/source connect).
+- **Lineage depth:** `sql`-step producer tracking ([lineage](./capabilities/lineage.md) *Out of scope*). (Column-level lineage may arrive *via the Fusion dbt engine* rather than Carve — see [dbt-execution](./capabilities/dbt-execution.md).)
 - **Retrieval:** embedding/semantic search (ARCHITECTURE §6.1 layer 5).
 - **Concurrency:** concurrent subagent fan-out (v0.1 is sequential/sync).
 - **The planned CLI commands** if not pinned in increment 6.

@@ -317,6 +317,10 @@ async def worker_loop(worker_id: str, state_store: StateStore, *, poll_interval_
 
 For users who want cross-machine scaling: separate `carve worker` processes (next section) coordinate via the same Postgres queue. The architecture is identical whether workers live in one process or many — the queue is the only coordination point.
 
+### Worker placement & labeling
+
+By default any worker claims any job (the flat `FOR UPDATE SKIP LOCKED` pool). But some steps must run **in a specific place** — e.g. a `dbt` step whose [execution backend](./dbt-execution.md) is `local` and must run on the team's own dbt server (its VPC reach + pinned dbt env), or a `dlt` step that must run next to a locked-down source. For these, a worker **advertises labels** (`carve worker --label onprem-dbt`) and a component/step can **require** one (`worker_label = "onprem-dbt"`). The claim query filters by label, so a labeled job is only picked up by a matching worker; unlabeled jobs run anywhere. This is the standard self-hosted-runner pattern (GitHub runner labels, k8s node-selectors) — it's how "run dbt on our own server" (the co-located-worker case) and any near-the-data execution is expressed, and it's **general** (serves `dlt`/`sql` too), not dbt-specific.
+
 ### Heartbeats
 
 `src/carve/runtime/heartbeat.py`:

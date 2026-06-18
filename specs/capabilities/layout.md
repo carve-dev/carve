@@ -93,10 +93,13 @@ Separate-repo and separate-remote modes shift the dbt and/or dlt sections out of
 
 [components.analytics]
 type = "dbt"
-mode = "separate-remote"    # one of: "same-repo", "separate-local", "separate-remote"
+mode = "separate-remote"    # WHERE the code lives (repo topology): same-repo | separate-local | separate-remote
 url  = "git@github.com:myorg/analytics.git"
 ref  = "9f3a1c7"            # optional pin (commit or tag); see ref-vs-branch precedence below
 # branch = "main"           # track a branch's HEAD instead of pinning
+# dbt_backend = "snowflake-native"   # HOW dbt runs — an ORTHOGONAL axis to `mode`: local | snowflake-native | dbt-cloud | remote
+#                                    # local-only: dbt_engine/dbt_version (pinned on first resolve), dbt_env, worker_label.
+#                                    # Full per-backend config + the engine default (Fusion/dbt-core) in capabilities/dbt-execution.md.
 
 [components.stripe_charges]
 type = "dlt"

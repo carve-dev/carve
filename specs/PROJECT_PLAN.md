@@ -152,7 +152,7 @@ If a pillar slips, the slip cuts scope rather than time — defer pieces to a fo
 - **Custom step type SDK.** Built-in step types (`dlt`, `dbt`, `sql`) only in v0.1. Extension SDK lands once the three built-ins have stabilized.
 - **Visual pipeline editor.** TOML authoring via agents is the primary path; CLI is the escape hatch. A visual editor would be post-hosted-launch, if at all.
 - **K8s operator.** OSS users running in K8s use Helm or raw manifests; we don't ship a Carve-specific CRD.
-- **dbt Cloud as a step backend.** Possibly later; stays out of v0.x.
+- **dbt execution is a pluggable backend** ([capabilities/dbt-execution.md](./capabilities/dbt-execution.md)): `local` (Carve runs it — bundled Fusion/dbt-core, or the team's own dbt) and `managed` (Carve triggers + monitors — **snowflake-native**, **dbt Cloud**, **remote**). The old "dbt Cloud out of v0.x" punt is retired; which backend ships when is a [DELIVERY](./DELIVERY.md) call.
 
 ## What's after v0.2
 

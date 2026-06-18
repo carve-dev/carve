@@ -84,7 +84,7 @@ A standalone process model that schedules and executes pipelines:
 - **Job queue** — A Postgres table (`jobs`) with status (`queued`, `claimed`, `running`, `succeeded`, `failed`), `claimed_by` (worker ID), `heartbeat_at` (last heartbeat from worker). Claims happen via optimistic `UPDATE ... WHERE status = 'queued'`.
 - **Worker** — A process that loops: claim → execute → mark complete → repeat. Each worker handles one job at a time; concurrency comes from running multiple workers. Workers emit heartbeats every 10 seconds while a job is in progress.
 - **Crash recovery** — A reaper loop checks for workers with stale heartbeats (> 60 seconds) and resets their jobs to `queued` so another worker can pick them up.
-- **Step executors** — One per step type. `dlt`, `dbt`, and `sql` in v0.1. Each is a subprocess invocation (shelling out to `dlt pipeline run`, `dbt build`, or executing SQL against the target connection) with structured log capture and output extraction.
+- **Step executors** — One per step type (`dlt`, `dbt`, `sql`). `dlt` and `sql` shell out (`dlt pipeline run`; SQL against the target connection). The **`dbt` step dispatches to the component's configured execution backend** ([dbt-execution](capabilities/dbt-execution.md)) — a subprocess for `local` (bundled Fusion/dbt-core or the team's env) or a trigger for `managed` (snowflake-native / dbt Cloud / remote). Structured log capture + output extraction, normalized across backends.
 
 Detailed in §4.
 
@@ -93,7 +93,7 @@ Detailed in §4.
 Three external projects that Carve invokes but does not own:
 
 - **dlt** (`pip install dlt`) — The extract-load runtime. Carve generates dlt code (sources, resources, configs in `.dlt/`) and shells out to `dlt pipeline run` to execute it. dlt owns schema inference, incremental state, type coercion, destination adapters.
-- **dbt-core** (`pip install dbt-core` + adapter) — The transform runtime. Carve generates dbt models (post-v0.2) and invokes `dbt build`, `dbt run`, `dbt test`. dbt owns the model DAG, materializations, test framework, manifest.
+- **dbt** — The transform runtime, run via a **pluggable backend** ([dbt-execution](capabilities/dbt-execution.md)): Carve-bundled **dbt Core v2.0** (the Fusion engine, Apache-2.0) or **dbt-core** (Python), the team's own dbt, **dbt Cloud**, or **dbt-on-Snowflake-native**. dbt owns the model DAG, materializations, tests, and manifest; Carve composes / schedules / monitors. Authoring is the dbt engineer ([dbt-engineer](capabilities/dbt-engineer.md)).
 - **Postgres** — The state store. Bundled via docker-compose for first-run; users override the connection string for managed Postgres in production. Carve manages migrations via Alembic.
 
 ### 2.5 The hosted overlay
@@ -631,7 +631,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 **Outputs**: `Run` row with status/timing/cost/per-step status; `step_runs` rows; `logs` rows streamed during execution. (No lineage graph is maintained — lineage is investigated on demand, §6.2.)
 
-**Side effects**: reads current build's manifest; invokes step executors (`dlt`, `dbt`, `sql`) which call external systems (destination warehouse, dlt subprocess, dbt subprocess); **may modify the destination warehouse** — this is the actual data movement; emits structured logs, events, webhook payloads; updates the `jobs` table (queued → claimed → running → succeeded|failed).
+**Side effects**: reads current build's manifest; invokes step executors (`dlt`, `dbt`, `sql`) which call external systems (destination warehouse; the `dlt` subprocess; **dbt via its execution backend** — a subprocess for `local`, a trigger for `managed`); **may modify the destination warehouse** — this is the actual data movement; emits structured logs, events, webhook payloads; updates the `jobs` table (queued → claimed → running → succeeded|failed).
 
 **Failure modes**: worker crash mid-run (job reclaimed by reaper §4.5, restarts from scratch); step failure (failure mode applied per step); destination connection failure (retried with backoff). dlt's incremental state handles re-runs cleanly; sql steps must be idempotent by author convention.
 
@@ -841,17 +841,12 @@ Output extraction: parses `.dlt/pipelines/<name>/state.json` for rows loaded per
 
 ### 10.3 dbt invocation
 
-The `dbt` step type invokes `dbt build` / `dbt run` / `dbt test` via subprocess. Common flags:
+The `dbt` step runs `build`/`run`/`test`/`snapshot`/`seed` through the component's **configured execution backend** ([dbt-execution](capabilities/dbt-execution.md)) — it does *not* assume dbt-core/subprocess. Common args (`--target`, `--select`, `--vars`, `--full-refresh`) pass through the backend interface.
 
-- `--target <target>` — picks the dbt profile target (resolved from Carve's target config)
-- `--select <selector>` — passes through
-- `--vars '<json>'` — passes through
+- **`local`** — a subprocess of the bundled (Fusion / dbt Core v2.0, or dbt-core Python) or the team's external engine, in the dbt project dir; state under `<dbt_project>/target/`; results from `run_results.json`/`manifest.json`. Runs on whichever worker claims the step — **worker placement** (§4) lets it run on the user's own box.
+- **`managed`** — Carve triggers + polls: **snowflake-native** (execute the dbt project object via SQL; results from `QUERY_HISTORY`), **dbt Cloud** (Admin API + artifacts), or a **remote** runner.
 
-Subprocess runs in the dbt project's directory (resolved per §10.1); dbt manages its own state under `<dbt_project>/target/`.
-
-Output extraction: reads `<dbt_project>/target/run_results.json` for per-model status, timings, error messages. These become the step's structured outputs.
-
-For orchestration-only mode, no model generation occurs. The dbt step executes against user-authored models.
+Output is normalized to the step's structured outputs regardless of backend. For orchestration-only mode, no model generation occurs — the step executes pre-authored models.
 
 ### 10.4 Workspace cache (separate-remote mode)
 

@@ -115,6 +115,7 @@ path = "/path/to/ingest-stripe"  # required when mode == "separate-local"
 | `branch` | string | optional | track this branch's HEAD if `ref` unset |
 | `sync_mode` | `"hard"\|"soft"` | optional (default `hard`) | opt out of hard-reset sync |
 | `sync_before_run` | bool | optional (default `true`) | set `false` for offline operation |
+| `dbt_backend` | `local\|snowflake-native\|dbt-cloud\|remote` | dbt components | **how** dbt runs (orthogonal to `mode`, which is *where the code lives*); plus per-backend params — `local`: `dbt_engine`/`dbt_version` (pinned on first resolve), `dbt_env`, `worker_label`; managed: cloud/native creds + refs. Full schema in [dbt-execution](../capabilities/dbt-execution.md). |
 
 **Pin precedence:** `ref` wins (exact pin) → else `branch` (track that branch's HEAD) → else the remote's default-branch HEAD. Simple-mode (convention-discovered) components are never pinned — branch-HEAD, zero friction.
 

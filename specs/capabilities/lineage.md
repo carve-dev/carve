@@ -22,7 +22,7 @@ That is the whole spec. No tables, no builder, no graph walk.
 ## Out of scope
 
 - **Any persisted/precomputed lineage.** Explicitly **not** built: `lineage_nodes`/`lineage_edges`, a lineage builder, refresh-on-build/manifest-change/sync triggers, a stitch step, FQN canonicalization tables, BFS query infrastructure. The agent investigates live; it does not consult a Carve store. (This is the reversal — ARCHITECTURE §6.1 layer 4, §6.2, §6.3 lineage row, and §9.6 are updated to drop the graph.)
-- **Column-level lineage.** The agent can read a model's SQL to reason about column derivation when asked, but Carve ships no structured column-lineage feature; deeper column lineage pairs with v0.2 dbt authoring.
+- **Column-level lineage (Carve-built).** The agent can read a model's SQL to reason about column derivation when asked, but Carve ships no structured column-lineage feature of its own. **It may come from the engine:** when the [dbt execution backend](./dbt-execution.md) uses the **Fusion engine (dbt Core v2.0)**, the manifest carries native column-level lineage + SQL comprehension — so for Fusion/Snowflake projects the explorer reads column-level lineage straight from the engine's artifacts. (The manifest's location also varies by backend — local `target/`, Snowflake `QUERY_HISTORY`, or the Cloud artifacts API; see [dbt-execution](./dbt-execution.md).)
 - **Static-UI lineage view** — already deferred (spec 11); nothing to render since there's no graph. The hosted cloud UI may build its own visualization post-v0.1.
 - **Embedding / semantic search** (ARCHITECTURE §6.1 layer 5) — post-v0.1.
 - **A `lineage`/`upstream_of`/`downstream_of`/`impact_of_change` graph-query skill family** — there is no graph to query. Those names are retired.

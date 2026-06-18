@@ -22,6 +22,8 @@
 
 The four axes are independent. A user can have `--external-postgres` + brownfield dbt same-repo + greenfield dlt + memory scaffolded — and `carve init` handles that combination cleanly.
 
+**init *detects*, it doesn't *provision*.** For dbt it records *which execution backend exists* (an existing dbt project → `local`; dbt Cloud creds → `dbt-cloud`; dbt-on-Snowflake → `snowflake-native`; none) into the component config — but it does **not** install a dbt engine or force an engine/version choice. Bundled-engine install + pin happens lazily on first dbt use via [connect](./connect.md). A power user may opt into eager install (`--dbt-engine … --dbt-version …`); otherwise it's deferred. See [dbt-execution](./dbt-execution.md) for the backends.
+
 In **interactive mode** (default when stdout is a TTY), missing flags trigger prompts. In **non-interactive mode** (`--non-interactive`, or when stdout is not a TTY), all decisions must be supplied via flags or env vars; missing required input is a clean error.
 
 ## Out of scope

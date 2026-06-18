@@ -335,13 +335,12 @@ class DltStepExecutor:
 
 ### Step executor: `dbt`
 
-`src/carve/runtime/step_types/dbt.py`:
+`src/carve/runtime/step_types/dbt.py` — **backend-agnostic**. It resolves the dbt component and **dispatches to that component's configured execution backend** ([dbt-execution](./dbt-execution.md)); it does *not* assume dbt-core/subprocess.
 
-- Resolves the dbt project path **by component name** via spec 03's dbt locator: `component = "analytics"` → the workspace clone @ pinned ref in multi mode, or the local detected project in simple mode; an **omitted** `component` resolves to the single detected dbt project (`ProjectPaths.dbt_project_path`). A named component that doesn't resolve is a step failure with a clear message.
-- Invokes `dbt {command} --target {target} --select {select} --vars '{vars_json}'`
-- For `command="build"`, parses `<dbt_project>/target/run_results.json` for per-model status, timings, error messages
-- For `command="test"`, surfaces test failures as the step's `error_message` (one entry per failing test)
-- Default timeout: 3600s (1 hour); configurable per step
+- Resolves the dbt project/component **by name** via the [layout](./layout.md) locator: `component = "analytics"` → the workspace clone @ pinned ref in multi mode, or the local detected project in simple mode; an **omitted** `component` resolves to the single detected dbt project (`ProjectPaths.dbt_project_path`). A named component that doesn't resolve is a step failure with a clear message.
+- Calls `DbtBackend.run(command, select, exclude, vars, target, full_refresh)` on the component's backend — `local` shells out to the bundled/external engine (Fusion or dbt-core, subprocess); `managed` triggers snowflake-native / dbt Cloud / remote. The backend normalizes results so this executor stays uniform.
+- Surfaces per-model status, timings, and errors from the normalized `DbtRunResult` (sourced from local `target/run_results.json`, Snowflake `QUERY_HISTORY`, or the Cloud artifacts API per backend); `command="test"` surfaces failing tests as `error_message`.
+- Default timeout: 3600s (1 hour); configurable per step.
 
 ### Step executor: `sql`
 
@@ -464,7 +463,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 - **Unit (failure modes each):** one test per mode, exercising the transition rules from the table above
 - **Unit (Jinja sandbox):** template renders against the standard namespace; attempts to access filesystem or import os raise sandbox errors
 - **Unit (dlt executor):** mock subprocess; verifies command construction, env-var injection, state.json output parsing
-- **Unit (dbt executor):** mock subprocess; verifies run_results.json parsing, per-model status extraction
+- **Unit (dbt executor):** the executor calls `DbtBackend.run` and normalizes `DbtRunResult` identically across a stubbed `local` (subprocess) and a stubbed `managed` (snowflake-native / dbt-cloud) backend — it never assumes dbt-core/subprocess ([dbt-execution](./dbt-execution.md))
 - **Unit (sql executor):** real connection to a fixture Postgres; verifies single-transaction semantics + output capture
 - **Integration (3-step pipeline):** a synthetic `pipelines/stripe.toml` with dlt → dbt → sql; fixture Stripe-like mock API; runs end-to-end; rows land in fixture warehouse; step_runs table has the right shape
 - **Integration (parallel steps):** a pipeline with two independent dlt steps and one dbt that depends on both; both dlt steps run concurrently; dbt waits for both

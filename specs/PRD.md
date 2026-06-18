@@ -341,7 +341,7 @@ Agents read this file as part of their context on every invocation. Users can ha
 - `carve init --with-dlt` scaffolds a new dlt project: `el/` directory, templated `.dlt/secrets.toml` and `.dlt/config.toml`, a starter pipeline file showing the dlt patterns Carve will author against.
 - The flags compose: `carve init --with-dbt --with-dlt` is a clean greenfield-for-both install.
 
-**Ongoing integration.** The runtime invokes `dbt build` / `dbt test` / `dbt run --select` and `dlt pipeline run` as step types against the registered projects (same-repo, local-path, or remote-URL). dlt artifacts land data into schemas dbt's `sources.yml` declares — so the dbt → dlt boundary is explicit and inspectable regardless of repo topology.
+**Ongoing integration.** The runtime runs `dlt pipeline run` (subprocess) and **dbt via its execution backend** — Carve-run for `local` (bundled Fusion/dbt-core or the team's own env) or *triggered* for `managed` (dbt Cloud, dbt-on-Snowflake-native) — as step types against the registered projects (same-repo, local-path, or remote-URL). dlt artifacts land data into schemas dbt's `sources.yml` declares — so the dbt → dlt boundary is explicit and inspectable regardless of repo topology *or* how dbt runs.
 
 Acceptance:
 
