@@ -2,7 +2,7 @@
 
 **What to build, in what order, given what's already built.** This is the temporal layer ([`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)): it sequences work into dependency-ordered, foundation-first increments and carries the phase/increment identity (and the release tag at the end). The durable design lives elsewhere and is **not** organized by phase — [`PRD.md`](./PRD.md) (what/why/who), [`ARCHITECTURE.md`](./ARCHITECTURE.md) (the technical model), and the capability specs (today under [`capabilities/`](./capabilities/); they describe *how a capability works*, version-independently).
 
-This is a **living, delta-aware** document. It plans *changes and additions* to the current codebase, not greenfield builds. As increments land, update the *Current state* section and check off exit criteria; as priorities shift, re-sequence increments here — without touching the capability specs.
+This is a **living, delta-aware** document. It plans *changes and additions* to the current codebase, not greenfield builds. As increments land, update the *Current state* section and check off exit criteria; as priorities shift, re-sequence increments here — without touching the capability specs. It covers the **whole lifecycle** — the initial foundation build *and* ongoing change (bugs, enhancements, new capabilities) after it — under one structure: **Current state** (the perpetual delta baseline) → **Increments** (the initial build; becomes the build log) → **Backlog** (ongoing work that needs sequencing). How any individual change flows (the bug-vs-change rule, spec-first) is [`_strategy/2026-06-change-lifecycle.md`](./_strategy/2026-06-change-lifecycle.md).
 
 > **Note.** Specs live in [`capabilities/<area>`](./capabilities/) (durable design); increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` — is the source of truth for sequencing and scope. The concrete **file manifest for each slice is not stored** — it is generated at build time (see *How a slice is built*, below).
 
@@ -153,9 +153,9 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
 - **Deploy + recovery after a pipeline can run** (they act on built/running pipelines).
 - **Reference + release last** (derives from the built surface) — the ADR's reasoning for why reference docs ship last.
 
-## Capabilities pending sequencing
+## Backlog (ongoing & pending sequencing)
 
-Specs that exist but aren't yet placed in an increment — the next sequencing pass (Increments 1–6 above were drawn *before* the dbt deep-dive + the adversarial PRD/ARCH/use-cases audit added the specs below):
+The living queue of work that needs sequencing — capabilities not yet placed in an increment, plus post-build changes (new capabilities, large enhancements) per the [change-lifecycle ADR](./_strategy/2026-06-change-lifecycle.md). Bugs and small enhancements don't live here — they ride GitHub issues + the capability-spec edit. The list below is the next sequencing pass (Increments 1–6 above were drawn *before* the dbt deep-dive + the adversarial PRD/ARCH/use-cases audit added the specs below):
 
 - **Added since the increments were drawn — awaiting placement.** Several are **M1.1-shipped or foundational** (likely a retroactive Increment 0, *not* deferred): [`plan-build`](./capabilities/plan-build.md) (the change lifecycle — Plan/Build entities, synthesis, drift; M1.1-shipped), [`model-auth`](./capabilities/model-auth.md) (provider credentials — API key + Claude-subscription OAuth; M1.1-shipped), [`observability`](./capabilities/observability.md) (agent/run telemetry tables + `carve metrics` + OTel), [`connect`](./capabilities/connect.md) (on-demand provisioning — engine install + pin, warehouse/source connect), [`dbt-execution`](./capabilities/dbt-execution.md) (run dbt across backends — needed *before* authoring, since orchestration-only shops run dbt without writing it).
 - **dbt authoring** — [`dbt-engineer`](./capabilities/dbt-engineer.md) (AI authoring of models/tests/sources + dbt-qa); follows dlt authoring + dbt-execution.

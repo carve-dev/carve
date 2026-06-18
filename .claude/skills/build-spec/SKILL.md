@@ -32,6 +32,10 @@ Read the capability spec. Extract:
 
 **Do not** look for a "Files this spec produces" section — capability specs don't have one. The file manifest is generated in step 3.
 
+### 1b. Classify the change (the spec-first gate)
+
+Before building, classify this run per the [change-lifecycle ADR](../../../specs/_strategy/2026-06-change-lifecycle.md): an **initial build**, a **bug** (code diverges from a *correct* spec → the build adds a regression test + the fix; the capability spec body is untouched), or a **change** (the desired behavior differs from the spec → the capability spec must be updated **first**). For a change whose spec still describes the old behavior, **stop and update the spec before continuing** — `task-planner` enforces this gate, returning `SPEC-FIRST REQUIRED` instead of a manifest. Bugs and small enhancements are tracked as GitHub issues; new capabilities / large changes get a `DELIVERY.md` backlog entry.
+
 ### 2. Check dependencies
 
 Invoke the `dependency-checker` agent with the capability + its increment.
@@ -131,6 +135,7 @@ Next:
 
 ## Constraints
 
+- **Spec-first for changes.** A behavior change is reflected in the capability spec *before* it's built (the [change-lifecycle ADR](../../../specs/_strategy/2026-06-change-lifecycle.md)); a bug fix adds a regression test and leaves the spec body alone. `task-planner` gates this.
 - **Sequential phases, parallel within a phase.** Steps 1–5 sequential; step 6 (reviewers) parallel; fix iterations sequential.
 - **The delivery spec is the unit of work.** It's generated per run from (capability spec × increment × current code) and lives only under `.carve-build/`. Never store a file manifest back into `specs/`.
 - **Never modify `specs/` except via `spec-keeper`.** Engineers and reviewers write only to `.carve-build/` (transient) and to source directories (code).

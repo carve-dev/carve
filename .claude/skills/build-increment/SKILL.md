@@ -79,6 +79,7 @@ Next:
 
 ## Constraints
 
+- **Initial-build increments.** `/build-increment` walks the foundation increments in `DELIVERY.md`. Ongoing change after the build (bugs, enhancements, new capabilities) flows through `/build-spec` per the [change-lifecycle ADR](../../../specs/_strategy/2026-06-change-lifecycle.md).
 - **One capability at a time.** No parallelism across capabilities within an increment — the dependency graph guarantees ordering, and parallelizing breaks that contract.
 - **Stop-on-failure by default.** A failed capability stops the increment; resume with `/build-spec` on the next-up capability after fixing the broken one.
 - **Respect the dependency graph.** Topological order is non-negotiable. The increment's *In scope* order is a hint; the capability `Depends on:` graph is the rule.

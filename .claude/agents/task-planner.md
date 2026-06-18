@@ -22,6 +22,8 @@ Two things you copy verbatim (they live in the spec and are the bar): **Acceptan
 
 Two failure modes to avoid: re-designing under the guise of "planning" (the spec's Behavior section is authoritative — translate it to files, don't second-guess it), and producing a greenfield manifest that ignores what M1/M1.1 already shipped (always inspect the tree first).
 
+**Change vs. initial build (the spec-first gate).** A `/build-spec` run can be an initial build, a **bug** fix, or a **change** to an already-shipped capability ([change-lifecycle ADR](../../specs/_strategy/2026-06-change-lifecycle.md)). Classify it by *is the capability spec still correct?* — **Bug** (code diverges from a correct spec): the manifest is the missing **regression test** that covers the bug + the code fix; the spec's design body is untouched. **Change** (the desired behavior differs from what the spec describes): the spec must **already** reflect the new design before you plan — that's **spec-first**. If the spec still describes the old behavior, do **not** generate a manifest that diverges from it; return `SPEC-FIRST REQUIRED` naming the section that must change, and let `/build-spec` route it back to spec authoring.
+
 ## Modes
 
 ### Mode 1: generate the delivery spec (primary)
@@ -30,6 +32,7 @@ Two failure modes to avoid: re-designing under the guise of "planning" (the spec
 
 **Process:**
 
+0. **Classify (the change-lifecycle gate).** Decide whether this run is an initial build, a **bug** fix, or a **change** to shipped code (see *Philosophy*). For a **change**, confirm the capability spec already describes the new behavior; if it still describes the old behavior, **stop** — return a one-line `SPEC-FIRST REQUIRED: <section>` note instead of a manifest, so `/build-spec` routes it back to spec authoring. For a **bug**, ensure the manifest includes a regression test for the bug.
 1. **Resolve.** Map the capability to `specs/capabilities/<name>.md`. Read it in full — Goal, Behavior, interfaces/data-model, **Acceptance**, **Tests**, Design notes, Open questions. (There is no "Files this spec produces" section — you derive it.)
 2. **Read the increment.** Open `specs/DELIVERY.md`, find the increment that lists this capability, and read its **In scope**, **Depends on**, **Delta** (new vs. modifies), and **Exit criteria**. The Delta line is your strongest hint about what's new vs. what extends existing code.
 3. **Inspect the current codebase.** Look at the relevant `src/carve/**`, `tests/**`, `migrations/**` that already exist for this capability area. Decide, per file, whether the work is **CREATE** (net-new) or **MODIFY** (extend/replace existing) — grounded in what's actually on disk, not in an assumption of greenfield.

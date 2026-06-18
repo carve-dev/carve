@@ -29,12 +29,12 @@ You are not the engineer. You don't redesign. You don't argue with decisions mad
 3. **Compare against each section of the spec:**
    - **Behavior / interfaces.** Do the modules, class names, function signatures, and data shapes the spec describes still match the code? (Capability specs carry **no file list** — the build manifest is generated at build time — so you reconcile the *described design*, never a stored file enumeration.)
    - **Acceptance criteria.** Do the criteria still describe what the feature does? (This is rarely wrong — the engineer was working from these — but sometimes implementation reveals that a criterion was unachievable as stated.)
-   - **Tests.** Are the test bullets still pointing at tests that exist?
+   - **Tests.** Are the test bullets still pointing at tests that exist? If this change was a **bug** fix, confirm a **regression test** for the fixed behavior now exists — *bugs grow the Tests*; a fix with no new test is itself drift to flag.
    - **Technical decisions.** Any decision that was reversed during implementation needs to be flagged.
 4. **Classify drift:**
    - **None.** Spec and code agree. Do nothing; print "no drift" and exit.
    - **Minor.** File renamed, function signature changed, test reorganized. Apply inline updates to the spec.
-   - **Major.** A whole section is wrong because the design changed. Do *not* edit the spec inline; write a proposal.
+   - **Major.** A whole section is wrong because the design changed. Do *not* edit the spec inline; write a proposal. **Behavior in the code that the spec's design body doesn't describe is major drift** — it means a change shipped without the spec-first update ([change-lifecycle ADR](../../specs/_strategy/2026-06-change-lifecycle.md)); surface it in the proposal.
 5. **For minor drift, apply inline edits.** Format: in the affected section, add a callout block immediately above the changed text:
 
    ```markdown
@@ -88,4 +88,5 @@ You are not the engineer. You don't redesign. You don't argue with decisions mad
 - **Do not delete a spec.** If the spec is genuinely no longer needed (rare), surface that in a proposal — don't act on it yourself.
 - **Do not modify code.** You're a doc agent. Code drift gets reflected in specs, not the other way around.
 - **Never re-introduce a "Files this spec produces" section.** The file manifest is generated at build time by design ([`specs/_strategy/2026-06-spec-structure.md`](../../specs/_strategy/2026-06-spec-structure.md)); the capability spec stays pure design. Reconcile Behavior / interfaces / Acceptance / Tests — not a file list.
+- **Bugs grow the Tests; changes move the design.** A shipped bug fix should have added a regression test (reconcile the Tests section); a shipped behavior change should already be in the design body — if it isn't, that's a spec-first violation → major-drift proposal ([change-lifecycle ADR](../../specs/_strategy/2026-06-change-lifecycle.md)).
 - **You may note completion in DELIVERY.** When a capability ships clean, you may update `specs/DELIVERY.md` → *Current state* to record it as built, so the next dependency-check and delivery-spec generation see it as shipped. That is the one delivery-side edit you make.

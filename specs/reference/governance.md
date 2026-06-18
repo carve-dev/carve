@@ -45,6 +45,18 @@ Leadership decisions are reversible by a 2/3 vote of all maintainers. This is a 
 - **Code changes:** PR with at least one maintainer approval. Trivial fixes (typos, doc corrections) can self-merge after a brief delay.
 - **Bug triage:** Maintainers tag and assign. No formal process.
 
+### Change lifecycle (bugs, enhancements, new capabilities)
+
+How a change flows from "found" to "shipped" is the [change-lifecycle ADR](../_strategy/2026-06-change-lifecycle.md). The rule: **is the capability spec still correct?** If yes, it's a **bug** — add a regression test, fix the code, the spec body is untouched. If no, it's a **change** — update the capability spec *first* (spec-first), then build; a new capability gets a new spec. Change type maps to the SemVer bump:
+
+| Change | Spec change? | SemVer |
+|---|---|---|
+| Bug fix | regression test only | patch |
+| Enhancement | update the capability spec | minor |
+| New capability / breaking change | spec (+ PRD/ARCH) | minor (pre-1.0) / major |
+
+Substantive changes (public API, config schema, default behavior, architecture, security) additionally go through the **RFC process** below.
+
 ### Substantive changes — RFC process
 
 Any change that affects:

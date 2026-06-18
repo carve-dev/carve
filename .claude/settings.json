@@ -5,5 +5,17 @@
       "mcp__reddit__browse_subreddit",
       "mcp__reddit__search_reddit"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-no-version-vocab.sh\""
+          }
+        ]
+      }
+    ]
   }
 }
