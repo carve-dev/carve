@@ -34,31 +34,6 @@ The original migrator code is preserved in git history at commit `23bcf88` for r
 - Read replicas, partitioned tables, PgBouncer configuration — those are hosted-product concerns.
 - Migrating M1-era test fixtures from SQLite-backed `_make_config` helpers to the new Postgres fixture. Spec implied this work but the scope ballooned past the iteration budget; deferred to **state-store** (see *Deferred work* at the end of this spec).
 
-## Files this spec produces
-
-```
-src/carve/core/state/database.py             # MODIFY — engine factory targets Postgres; rejects everything else
-src/carve/core/state/models.py               # MODIFY — JSONB where TEXT/JSON used; TIMESTAMPTZ for timestamps
-src/carve/core/state/repository.py           # MODIFY — JSONB write fix (manifest_json no longer json.dumps'd)
-migrations/env.py                            # MODIFY — Postgres-aware Alembic env
-migrations/versions/0001_baseline.py         # AUDIT — port to Postgres if SQLite-specific
-migrations/versions/0002_pipeline_centric.py # AUDIT
-migrations/versions/0003_rename_apply_to_deploy.py # AUDIT
-migrations/versions/0004_build_entity.py     # AUDIT
-migrations/versions/0005_runs_target.py      # AUDIT
-migrations/versions/0006_recovery_chains.py  # AUDIT
-alembic.ini                                  # MODIFY — connection string template is Postgres
-tests/conftest.py                            # MODIFY — Postgres fixtures (testcontainers-python)
-src/carve/core/config/state_store.py         # NEW — read state_store_url from runtime.toml + env
-docs/installation.md                         # NEW — first-install walkthrough (bundled + external Postgres)
-```
-
-Plus the JSONB call-site sweep (6 readers + 2 writers) and the `.replace(tzinfo=None)` removal across 12 sites — these are derived consequences of the JSONB and TIMESTAMPTZ shifts and didn't get their own per-file entries in the original draft. Files touched by that sweep:
-
-- `src/carve/cli/commands/build.py`, `el/deploy.py`, `el/verify.py`, `el/list.py`
-- `src/carve/cli/orchestrator/builder.py`, `planner.py`
-- `src/carve/core/deploy/preflight.py`
-
 ## Behavior
 
 ### Engine and connection

@@ -25,31 +25,6 @@ Users (and Carve's built-ins) define agents, skills, hooks, and MCP imports **de
 - **Carve-exposes-MCP** (server) — [mcp-server](./mcp-server.md).
 - **In-process custom-skill SDK** (`@skill`-decorated Python from users) + **custom step-type SDK** — post-v0.1.
 
-## Files this spec produces
-
-```
-src/carve/core/agents/builtin/                # NEW (dir) — the built-in agent source dir the registry scans (each domain spec adds its own <name>.md here: dlt-engineer, dlt-qa, dlt-security, pipeline-engineer, explorer, recovery-engineer, sql-specialist)
-src/carve/core/agents/definition.py           # NEW — parse an agent .md: frontmatter (name/description/model/tools/allowed_paths/classifications/max_mode) + system-prompt body, via a SAFE yaml loader
-src/carve/core/agents/registry.py             # NEW — AgentRegistry: discover built-in + carve/agents/*.md; mtime hot-reload AT DISPATCH TIME only; name override (no silent overwrite); routing lookup
-src/carve/core/skills/pack.py                 # NEW — SkillPack loader: parse carve/skills/<name>/SKILL.md (frontmatter + body + bundled scripts/resources, NOT executed at load); description-match discovery
-src/carve/core/skills/builtin/__init__.py     # MODIFY — register built-in @skill functions (catalog + dbt_manifest + memory_read readers) here (this is where shipped registration lives — NOT registry.py)
-src/carve/core/skills/registry.py             # MODIFY — add the SkillPack + MCP-tool registration paths + connector-library loader to the registry API (built-in @skill registration stays in builtin/__init__.py)
-src/carve/core/agents/hooks.py                # NEW — Hook config (carve/hooks.toml), event set, runner (ordered; fail-closed); wires to spec-15 fire-points + the spec-07 event subscriber
-src/carve/core/mcp/client.py                  # NEW — connect to an external MCP server; import tools as mcp:<server>:<tool> with effects metadata (fail-closed default)
-src/carve/core/mcp/registry.py                # NEW — carve/mcp.toml
-src/carve/cli/agents.py                        # NEW — carve agents list/show/create/edit/test
-src/carve/cli/skills.py                        # NEW — carve skills list/show/test
-src/carve/cli/mcp_servers.py                   # NEW — carve mcp-servers list/add/remove
-templates/agent.md.j2                          # NEW — carve agents create scaffold
-tests/fixtures/skill_packs/_example/SKILL.md   # NEW — self-contained fixture pack for the discovery test (NOT dependent on spec 04's _reference_hackernews)
-tests/unit/test_agent_definition.py            # NEW
-tests/unit/test_agent_registry_override.py     # NEW
-tests/unit/test_skill_pack_discovery.py        # NEW
-tests/unit/test_hooks.py                        # NEW
-tests/integration/test_mcp_import.py            # NEW
-docs/extending-carve.md                         # NEW
-```
-
 ## Behavior
 
 ### Declarative agents

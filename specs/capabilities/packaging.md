@@ -25,19 +25,6 @@ The compose bundle is Postgres-only. Carve's API server, scheduler, and worker(s
 - Production-hardening the bundled Postgres (replication, backups, encrypted volumes, tuning). The bundle is for dev/test/single-team-self-host. Production users override with managed Postgres.
 - The actual `carve init` UX (interactive prompts, brownfield detection, dlt/dbt scaffolding) — that's [init](./init.md). This spec only ships the compose template and the boundary in init code that says "drop this template in unless `--external-postgres` was passed."
 
-## Files this spec produces
-
-```
-src/carve/templates/docker-compose.yml.j2    # NEW — the compose template carve init renders
-src/carve/templates/dot_env.example.j2       # MODIFY (or NEW if it doesn't exist as a template) — DATABASE_URL line
-src/carve/cli/commands/init.py               # MODIFY — render docker-compose.yml; add --external-postgres flag
-docs/installation.md                         # MODIFY — extend the existing install doc (shipped by spec 01) with pip/pipx/uv + first-run steps
-docs/first-run-with-bundled-postgres.md      # NEW — `carve init` → `docker compose up` → `carve serve` walkthrough
-docs/first-run-with-external-postgres.md     # NEW — `carve init --external-postgres ...` walkthrough
-tests/integration/test_init_compose.py       # NEW — verifies the rendered compose file is valid + Postgres comes up
-tests/integration/test_init_external_pg.py   # NEW — verifies `--external-postgres` skips compose scaffolding cleanly
-```
-
 ## Behavior
 
 ### Install paths

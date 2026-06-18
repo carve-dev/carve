@@ -30,26 +30,6 @@ After this spec lands, every other v0.1 spec that needs memory access uses the l
 - A web UI for editing memory (the static HTML UI from spec 11 renders memory read-only; edits happen via CLI, REST, MCP, or `$EDITOR`)
 - A separate "memory index" in Postgres for fast queries (file-based with mtime cache is sufficient for v0.1 — see Design notes)
 
-## Files this spec produces
-
-```
-src/carve/core/memory/loader.py                         # NEW — file reads + mtime cache
-src/carve/core/memory/selector.py                       # NEW — orchestrator-side "which files for this goal?"
-src/carve/core/memory/writer.py                         # NEW — write policy enforcement + append-decision helper
-src/carve/core/memory/models.py                         # NEW — MemoryBundle, MemoryFile dataclasses
-src/carve/cli/memory.py                                 # NEW — `carve memory` Typer command group
-src/carve/api/routers/memory.py                         # NEW — REST endpoints under /api/v1/memory
-src/carve/mcp/tools/memory.py                           # NEW — MCP tools (auto-generated from REST per spec 10)
-src/carve/core/agents/orchestrator_hooks/memory.py      # NEW — orchestrator integration point (calls selector + loader)
-tests/unit/test_memory_loader.py
-tests/unit/test_memory_selector.py
-tests/unit/test_memory_writer_append.py
-tests/integration/test_memory_cli.py
-tests/integration/test_memory_rest.py
-tests/integration/test_memory_orchestrator_integration.py
-docs/project-memory.md                                  # NEW — user-facing reference: when to use which file, examples, best practices
-```
-
 ## Behavior
 
 ### File catalog

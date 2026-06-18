@@ -32,24 +32,6 @@ After this spec lands, every other v0.1 spec assumes this control-plane config +
 - The `carve init` UX that creates the layout — that's [init](./init.md). This spec defines what gets created; init wires up the user-facing flow.
 - **Deploy behavior** (`carve deploy`, per-component promotion, the cross-repo linked-PR flow) — unchanged here and pending the Wave 2 deploy revision of [deploy](./deploy.md). Where this spec touches sync-before-deploy and the separate-remote authoring-via-PR guardrail, that behavior is left as-is and noted as pending the Wave 2 deploy revision.
 
-## Files this spec produces
-
-```
-src/carve/core/config/project.py             # MODIFY (or NEW) — carve.toml control-plane schema + parsing for [components.<name>] blocks
-src/carve/core/config/paths.py               # NEW — canonical control-plane path resolution (control-plane root, el dir, pipelines dir, scratch dir, dlt config dir)
-src/carve/core/config/components.py          # NEW — component model ([components.<name>]: type/mode/url/branch/path/ref) + convention-based simple-mode discovery
-src/carve/integrations/component_locator.py  # NEW — resolves a component NAME → on-disk code path per its topology (same-repo / separate-local / separate-remote), for both type = dlt and type = dbt
-src/carve/integrations/workspace_cache.py    # NEW — clone/sync helper for separate-remote components
-src/carve/core/state/models.py               # MODIFY — workspaces table (tracks last-synced commit per remote-cached component)
-migrations/versions/0007_workspaces.py       # NEW — Alembic migration adding the `workspaces` table
-src/carve/integrations/dlt/provenance.py     # NEW — read/write the provenance header in generated dlt files
-tests/unit/test_paths.py                     # NEW — path resolution unit tests
-tests/unit/test_component_discovery.py       # NEW — convention-based simple-mode discovery + explicit [components.*] block parsing
-tests/unit/test_component_locator.py         # NEW — name→path resolution for dlt + dbt components across all three modes; ref-pin checkout
-tests/integration/test_workspace_cache.py    # NEW — clone, sync, conflict-on-local-modification, ref-pin checkout
-docs/project-layout.md                       # NEW — user-facing reference for the control-plane layout and the carve.toml [components.<name>] blocks
-```
-
 ## Behavior
 
 ### Canonical directory layout

@@ -27,19 +27,6 @@ That is the whole spec. No tables, no builder, no graph walk.
 - **Embedding / semantic search** (ARCHITECTURE §6.1 layer 5) — post-v0.1.
 - **A `lineage`/`upstream_of`/`downstream_of`/`impact_of_change` graph-query skill family** — there is no graph to query. Those names are retired.
 
-## Files this spec produces
-
-```
-src/carve/core/skills/builtin/dlt_schema.py    # NEW — the `dlt_schema` reader skill: dlt's stored schema → resource→table + source→resource (read-only)
-src/carve/core/skills/builtin/__init__.py      # MODIFY — register `dlt_schema` alongside `dbt_manifest`, `memory_read`
-src/carve/integrations/dlt/schema_reader.py    # NEW — thin adapter over dlt's stored schema (Python API or exported schema file); the skill's data source
-src/carve/core/agents/builtin/explorer.md      # MODIFY — add `dlt_schema` to the grant; add the lineage investigation playbook (which tool for which question; dlt-table↔dbt-source correlation by name)
-docs/lineage.md                                 # NEW — "how Carve answers lineage: it investigates dbt + dlt native lineage and the code; it maintains no lineage store"
-
-tests/unit/test_dlt_schema_skill.py                  # NEW — a fixture dlt stored schema → resource→table + source→resource; a never-run component degrades gracefully (source/resource names, no tables)
-tests/integration/test_explorer_lineage_investigation.py  # NEW — explorer answers "where does stg_orders come from?" and "what breaks if I change raw_stripe.charges?" by chaining dbt_manifest + dlt_schema + grep, citing real findings; asserts NO lineage table is read or written
-```
-
 ## Behavior
 
 ### The `dlt_schema` reader skill

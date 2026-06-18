@@ -26,18 +26,6 @@ These docs are reference material — pure cross-reference of specs 01–12, not
 - API reference for the REST API (Swagger UI from spec 09 covers that; `cli-reference.md` cross-links)
 - MCP tool reference (`docs/mcp-server.md` from spec 10 covers that; this spec doesn't duplicate)
 
-## Files this spec produces
-
-```
-specs/reference/cli-reference.md                        # REWRITE (was tagged REWRITE in audit)
-specs/reference/config-schema.md                        # REWRITE (was tagged REWRITE in audit)
-specs/reference/glossary.md                             # REVISE (was tagged REVISE)
-specs/reference/governance.md                           # REVISE (was tagged REVISE)
-specs/reference/README.md                               # MODIFY — points at the four refs above + brief overview
-tests/unit/test_cli_reference_completeness.py           # NEW — every Typer-registered command appears in cli-reference.md
-tests/unit/test_config_schema_completeness.py           # NEW — every config file scaffolded by carve init appears in config-schema.md
-```
-
 ## Behavior
 
 ### `cli-reference.md`

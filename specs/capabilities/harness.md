@@ -30,30 +30,6 @@ This spec ships the harness mechanics. The declarative agent/skill *format* is [
 - **Concurrent subagent execution** — post-v0.1 (v0.1 is sequential).
 - **Format-specific check parsing** (`state.json`/`run_results.json`) — the format owners (04 dlt, 08 dbt) provide the parse callable; this spec's `run_check` is format-agnostic.
 
-## Files this spec produces
-
-```
-src/carve/core/agents/loop.py                 # MODIFY — add: (a) the pre-execution PERMISSION GATE in _execute_tool_calls (before tool.executor), (b) the pre_tool/post_tool hook fire-points, (c) the delegation hook, (d) a per-run read-set (for edit), (e) cancellation check between turns, (f) compaction hook. Stays SYNC.
-src/carve/core/agents/subagent.py             # NEW — SubagentRunner: build a scoped sync AgentLoop (prompt + tool set ∩ mode + clamped permission mode + context bundle); run sequentially; capture DelegationResult (files_changed from the run's edit-log; outputs from the agent's submit_result terminator)
-src/carve/core/agents/delegate.py             # NEW — the sync `delegate` tool + DelegateTool type + DelegationResult + SubagentError
-src/carve/core/agents/permissions.py          # NEW — PermissionMode lattice + Allowlist.evaluate(tool|command|path) -> allow|prompt|deny; bash command parser (shlex + metachar-deny); fail-closed; warehouse role selection; clamp(parent, agent)
-src/carve/core/agents/tools/edit.py           # NEW — edit (re-read-at-apply string replace; symlink-resolved, allowed_paths-confined) + create_file (new files)
-src/carve/core/agents/tools/bash.py           # NEW — gated, sandboxed shell (scrubbed env; cwd-pinned; timeout; captured+capped stdout/stderr)
-src/carve/core/agents/tools/search.py         # NEW — glob + grep (secret-path deny-listed)
-src/carve/core/agents/tools/web.py            # NEW — web_fetch + web_search (bounded)
-src/carve/core/agents/tools/todo.py           # NEW — TodoWrite-style task list for long runs
-src/carve/core/agents/m1_tools.py             # MODIFY — keep read_file (+ secret-path deny) / run_snowflake_query; write_file removed from the agent grant (superseded by edit + create_file)
-src/carve/core/agents/verification.py         # NEW — run_check(cmd, *, parse) -> CheckResult: runs cmd THROUGH the gated bash tool, applies the injected parse callable; bounded iterations + cost ceiling
-src/carve/core/agents/compaction.py           # NEW — top-level-chat compaction (token-threshold trigger)
-src/carve/core/agents/cancel.py               # NEW — cancellation signal the loop checks between turns (drives run.cancelled, spec 09)
-tests/unit/test_delegate_clamp.py             # NEW — mode clamp + isolation
-tests/unit/test_bash_gate.py                  # NEW — metachar deny, argv allowlist, secret env scrub
-tests/unit/test_permission_modes.py           # NEW
-tests/unit/test_edit_tool.py                  # NEW — TOCTOU re-read, allowed_paths, create_file
-tests/integration/test_verification_loop.py   # NEW — bounded generate->run->read->fix with a fixture parse fn (no dlt/dbt needed)
-docs/agent-harness.md                         # NEW
-```
-
 ## Behavior
 
 ### Subagent delegation (sync, sequential)

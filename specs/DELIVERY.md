@@ -4,7 +4,7 @@
 
 This is a **living, delta-aware** document. It plans *changes and additions* to the current codebase, not greenfield builds. As increments land, update the *Current state* section and check off exit criteria; as priorities shift, re-sequence increments here — without touching the capability specs.
 
-> **Note.** Specs now live in [`capabilities/<area>`](./capabilities/) — the structural migration (ADR step 3a) is done; increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` or `PROJECT_PLAN.md` — is the source of truth for sequencing and scope. (Remaining: lifting the per-spec "Files this spec produces" work-order sections into increments — ADR step 3b.)
+> **Note.** Specs live in [`capabilities/<area>`](./capabilities/) (durable design); increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` or `PROJECT_PLAN.md` — is the source of truth for sequencing and scope. The concrete **file manifest for each slice is not stored** — it is generated at build time (see *How a slice is built*, below).
 
 ---
 
@@ -18,7 +18,7 @@ Each increment is a shippable, dependency-respecting slice:
 - **Delta** — what's *new* vs. what *modifies* already-shipped code (the delta-aware part).
 - **Exit criteria** — how we know it's done.
 
-`/build-spec` consumes a slice (a spec, or a scoped part of one) within an increment; the spec is the design reference, the increment is the work order.
+**How a slice is built.** The build (`/build-spec`'s planning stage) takes a slice = (capability spec × this increment) and **generates a *delivery spec*** at build time: it reads the spec as the design reference, inspects the **current codebase**, and emits the concrete, delta-aware file manifest (*create / modify*) plus the increment's slice of the spec's Acceptance + Tests as the bar. The manifest is computed, never stored — so it is always correct against what's already built (see [`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md) → *The delivery spec*).
 
 ---
 

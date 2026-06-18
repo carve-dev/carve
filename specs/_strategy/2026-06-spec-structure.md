@@ -30,11 +30,13 @@ Tiers 1–2 answer **"what is Carve and how does it work."** Tier 3 answers **"w
 
 ## What a "spec" becomes
 
-A capability spec stops being a work order. The clearest work-order part — **"Files this spec produces"** (literally *what to build*) — moves into the delivery plan's increment items (where it can be delta-aware: "modify X, add Y"). The spec keeps the **durable design**: behavior, contracts, data model, interfaces, design decisions, phasing annotations — **and its Acceptance + Tests**, which are the durable definition of "correct" for the capability (the delivery increment points *at* them as the bar, rather than re-stating them).
+A capability spec stops being a work order. The clearest work-order part — **"Files this spec produces"** (literally *what to build*) — is **removed from the design corpus entirely**: it is regenerated at build time (see *The delivery spec*, below), so it is never stored stale. The spec keeps the **durable design**: behavior, contracts, data model, interfaces, design decisions, phasing annotations — **and its Acceptance + Tests**, which are the durable definition of "correct" for the capability (the generated delivery spec points *at* them as the bar, rather than re-stating them).
 
-## The `/build-spec` implication (decide deliberately)
+## The delivery spec — generated at build time
 
-Today `/build-spec` consumes *a spec* as a unit of work. Under this model it consumes *a delivery-plan increment* (a slice of one or more capability specs), with the capability spec as the design reference. This is a real change to the build workflow — it is acknowledged here and will be worked out as the delivery plan and the first increment are built; it is **not** changed implicitly.
+The work order is **computed, not stored.** When the build runs a capability slice within a delivery increment, it **generates a *delivery spec*** by evaluating the capability spec (the design) against (a) the increment's scope + sequencing in `DELIVERY.md` and (b) the **current codebase**. That generated delivery spec is the concrete, **delta-aware** work order: the file manifest (*create X, modify Y*) wired to the current state, plus the increment's slice of the spec's Acceptance + Tests as the bar.
+
+This is *why* no file manifest lives statically in either the capability spec or `DELIVERY.md`: a stored manifest goes stale against the code; a generated one is correct by construction — it reads what's already built and plans only the changes + additions ("recognize what has already been built"). Concretely, this is the role of `/build-spec`'s planning stage — it evolves from "consume a whole spec" to **"consume a delivery increment → read the capability spec as the design reference → inspect the code → emit the delivery spec the engineer builds from."** The capability spec and `DELIVERY.md` are durable inputs; the delivery spec is an ephemeral build artifact.
 
 ## Target structure
 
@@ -54,7 +56,7 @@ specs/
 2. **Stand up `DELIVERY.md`** — port the build order into dependency-ordered, delta-aware increments. ✅ Done.
 3. **Migrate specs** `v0.1/NN` → `capabilities/<area>`, in two parts:
    - **3a — structural.** ✅ Done (2026-06-17). All 19 specs moved to [`../capabilities/<area>.md`](../capabilities/); version identity stripped from filenames, titles, and cross-references corpus-wide; the build-order README replaced by a capability index; the landed M1/M1.1 follow-ups archived.
-   - **3b — content.** Remaining: lift each spec's **"Files this spec produces"** section into the delivery increment that builds it, and reframe any leftover version-as-scope language as phasing annotations. Capability-by-capability; non-structural polish. (Acceptance + Tests stay in the spec — see *What a "spec" becomes*.)
+   - **3b — de-work-order the specs.** ✅ Done (2026-06-17). The static **"Files this spec produces"** section was **removed** from all 19 specs (not moved to `DELIVERY.md`) — the file manifest is now generated at build time per *The delivery spec*. Acceptance + Tests stay in the spec as the durable bar.
 
 `DELIVERY.md` is the source of truth for sequencing and scope. [`PROJECT_PLAN.md`](../PROJECT_PLAN.md) is superseded as a build plan by `DELIVERY.md` (its durable "shape of Carve" framing folds into PRD/ARCHITECTURE).
 
@@ -63,4 +65,4 @@ specs/
 - **`DELIVERY.md`** is created as the live delivery plan (step 2).
 - **`PROJECT_PLAN.md`** becomes a static precursor — its sequencing role moves to `DELIVERY.md`; keep until the migration settles, then retire/fold.
 - **`capabilities/README.md`** is now a capability index (the build-order table moved to `DELIVERY.md`'s increments).
-- **Capability specs** lost their version prefix (step 3a). Lifting the "Files this spec produces" sections into delivery increments is step 3b (remaining); Acceptance + Tests stay in the spec as the durable verification bar.
+- **Capability specs** lost their version prefix (3a) and their static "Files this spec produces" section (3b) — the file manifest is generated at build time (*The delivery spec*). Acceptance + Tests stay as the durable verification bar.

@@ -56,28 +56,6 @@ ARCHITECTURE specifies a `Deploy` flow (§7.5) and `deploys` table (§9.4) from 
 - **A multi-provider `Provider` abstraction.** Rejected (archived M2-14 as too prescriptive). PR creation rides one configurable command; GitLab/Bitbucket via override.
 - **GitHub App / OAuth provider auth.** The `pr` step shells out to the user's already-authenticated provider CLI; Carve owns no provider credentials.
 
-## Files this spec produces
-
-```
-src/carve/cli/commands/deploy.py                     # REPLACE — the deprecated --from/--to alias becomes the real `carve deploy <pipeline>` promote verb
-src/carve/core/deploy/git_promote.py                 # NEW — per-repo commit / push / pr stage machinery (subprocess git + configurable pr_command)
-src/carve/core/deploy/cross_repo.py                  # NEW — detect touched repos from the build manifest + component resolution; open + link + order the per-repo PRs; pin-bump
-src/carve/core/deploy/branch.py                      # NEW — slug + branch naming, git-ref-name validation, numeric-suffix collision
-src/carve/core/deploy/templates/commit_message.j2    # NEW
-src/carve/core/deploy/templates/pr_body.md.j2        # NEW — includes the cross-link + merge-order block when part of a linked deploy
-src/carve/core/config/schema.py                      # MODIFY — add DeployConfig (`[deploy]` + `[deploy.targets.<name>]`)
-src/carve/core/state/models.py                       # MODIFY — add the Deploy entity (per-repo rows joined by linked_deploy_id)
-src/carve/core/state/repositories/deploys.py         # NEW — Deploy repository (create, link, get-latest-open-for-pipeline+component)
-migrations/versions/00NN_deploys.py                  # NEW — `deploys` table. Set `down_revision` to the current Alembic head at build time.
-specs/ARCHITECTURE.md                                # MODIFY — supersede §7.5/§9.4 (handoff, status, linked_deploy_id used); §10 topology→components; note el-deploy retirement
-docs/deploy.md                                        # NEW — the handoff model, the cross-repo linked-PR flow, per-persona setup, the recommended CI rollout template
-tests/unit/test_deploy_handoff.py                    # NEW
-tests/unit/test_deploy_branch.py                     # NEW
-tests/unit/test_deploy_pr_command.py                 # NEW
-tests/integration/test_deploy_git_promote.py         # NEW — single-repo commit/push against a bare remote; pr_command stubbed
-tests/integration/test_deploy_cross_repo.py          # NEW — linked PRs across a control-plane repo + a separate-remote component repo
-```
-
 ## Behavior
 
 ### CLI surface

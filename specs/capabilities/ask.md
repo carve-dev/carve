@@ -33,34 +33,6 @@ After this spec lands, a user can ask "where do we calculate net revenue?" or "w
 - Embedding-based semantic search over decisions/code (post-v0.1; v0.1 explorer uses the read tools + skills directly)
 - Conversational follow-ups (each ask is a single round; multi-turn chat lives in the chat tool, e.g., Claude Desktop, which can call `ask` repeatedly)
 
-## Files this spec produces
-
-```
-src/carve/core/agents/builtin/explorer.md               # NEW — the explorer declarative agent (frontmatter: read-only tools + read_only mode; system-prompt body); loaded by spec 16's AgentRegistry
-src/carve/core/agents/run_explorer.py                   # NEW — invoke the explorer subagent in read_only mode (via spec 15's SubagentRunner / delegate) and post-process its result into an Answer
-
-src/carve/core/asks/__init__.py
-src/carve/core/asks/store.py                            # NEW — persistence (.carve/asks/<id>.json + asks table index)
-src/carve/core/asks/models.py                           # NEW — Ask, Answer, CitedEntity dataclasses
-src/carve/core/asks/citation_builder.py                 # NEW — converts the explorer's cited references into structured CitedEntity objects
-
-src/carve/cli/ask.py                                    # NEW — `carve ask`, `carve asks list`, `carve asks show` commands
-
-src/carve/api/routers/asks.py                           # NEW — wires asks endpoints into the spec-09 app
-
-src/carve/core/state/models.py                          # MODIFY — add Ask table
-migrations/versions/0011_asks.py                        # NEW
-
-tests/unit/test_explorer_read_only_mode.py              # NEW — the explorer's tool grant resolves to the read tools only; the read_only permission gate denies edit/bash-write/warehouse-write (no separate ask-only guardrail)
-tests/unit/test_ask_citation_builder.py                 # NEW
-tests/integration/test_ask_end_to_end.py                # NEW — real ask against a fixture project; verify answer + citations
-tests/integration/test_ask_no_side_effects.py           # NEW — files / state store / destination unchanged after ask
-tests/integration/test_ask_concurrent_with_plan.py      # NEW — ask runs alongside plan/build/run without contention
-tests/integration/test_ask_cites_decisions.py           # NEW — "why did we do X?" surfaces decisions.md entries
-
-docs/ask.md                                             # NEW — what the explorer does, example questions, how it differs from plan
-```
-
 ## Behavior
 
 ### Ask data model

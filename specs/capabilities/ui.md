@@ -30,47 +30,6 @@ After this spec lands, a user can `open http://127.0.0.1:8766` (or `carve docs o
 - Pipeline / step authoring UI (users author via `carve plan` / `carve build`)
 - Anything fancy (the cloud UI in hosted has the polish; this exists to be honestly minimal)
 
-## Files this spec produces
-
-```
-src/carve/ui/__init__.py
-src/carve/ui/generator.py                               # NEW — orchestrates regeneration: query state store, render templates, write files
-src/carve/ui/triggers.py                                # NEW — subscribes to runtime events and re-renders affected pages
-src/carve/ui/server.py                                  # NEW — `carve docs serve` static-file server
-src/carve/ui/url_helpers.py                             # NEW — link generation (pipelines/<name>.html, run/<id>.html, etc.)
-
-src/carve/ui/templates/                                 # NEW — Jinja2 templates
-    base.html                                           # shared layout, nav, footer
-    index.html                                          # recent activity dashboard
-    runs.html                                           # runs list with filters via query params
-    run/detail.html                                     # single run: steps, logs, timings, cost
-    pipelines.html                                      # all pipelines + last-run status
-    pipeline/detail.html                                # single pipeline: config, schedule, recent runs
-    agents.html                                         # built-in + custom agents
-    skills.html                                         # built-in + MCP-imported skills
-    partials/
-        step_status_badge.html
-        run_status_badge.html
-        cron_friendly.html                              # renders "0 2 * * *" as "daily at 2:00 AM UTC"
-        log_block.html
-
-src/carve/ui/static/                                    # NEW — bundled CSS/JS/fonts
-    carve.css                                           # ~5-10 KB, hand-written, no framework
-    carve.js                                            # tiny, table sort + filter only
-    fonts/                                              # system-fallback + one self-hosted font for code blocks
-    favicon.svg
-
-src/carve/cli/docs.py                                   # NEW — `carve docs` Typer command group (serve, regen, open)
-
-tests/unit/test_ui_url_helpers.py
-tests/unit/test_ui_templates_render.py                  # NEW — fixture state store; render each template; assert HTML is well-formed
-tests/unit/test_ui_triggers_subscription.py             # NEW — event emitted → expected pages re-rendered
-tests/integration/test_ui_server_serves_files.py        # NEW — start server, GET pages, assert 200 + expected content
-tests/integration/test_ui_regeneration_end_to_end.py    # NEW — run a pipeline, verify index/runs/pipeline pages reflect it
-
-docs/ui.md                                              # NEW — what the UI does, where it falls short, upgrade hook to cloud UI
-```
-
 ## Behavior
 
 ### Output directory

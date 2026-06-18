@@ -32,25 +32,6 @@ When a scheduled run fails (retries exhausted), Carve **diagnoses the failure wi
 - **Adds** the diagnose-then-**delegate** model (the POC diagnosed in isolation; now it delegates the fix to a domain engineer subagent).
 - **Replaces** the message-string failure classification with the **dlt exception-class** classification (the real classes + adapter — see below).
 
-## Files this spec produces
-
-```
-src/carve/core/agents/builtin/recovery-engineer.md # NEW — the recovery engineer as a declarative agent (read-only diagnose tools + delegate)
-src/carve/core/agents/recovery/agent.py            # MODIFY — retarget to run.failed; diagnose-then-delegate; drop deploy contexts
-src/carve/core/agents/recovery/invocation.py       # MODIFY — drop DeployPreflight/Verify/DdlApply; keep/extend RunFailure invocation
-src/carve/core/agents/recovery/classify.py         # NEW — dlt exception-class -> category map + the version-tolerant adapter (unwrap PipelineStepFailed.exception; isinstance on terminal/transient base classes)
-src/carve/core/agents/recovery/schema_diff.py      # NEW — per-resource diff: dlt destination cached schema vs current source schema (degrades gracefully if cached schema absent)
-src/carve/core/state/models.py                     # MODIFY — add the Investigation entity
-migrations/versions/00XX_investigations.py         # NEW — investigations table (down_revision = current head at build time)
-src/carve/core/state/repositories/investigations.py# NEW — create / get / list / dismiss / dedup-append
-src/carve/cli/investigations.py                    # NEW — carve investigations list / show / dismiss
-docs/recovery.md                                   # NEW — what gets auto-diagnosed, the human-in-loop flow, cost caps
-tests/unit/test_recovery_classify.py               # NEW — real dlt exception classes -> categories; adapter unwrap
-tests/unit/test_recovery_schema_diff.py            # NEW
-tests/integration/test_recovery_delegates_fix.py   # NEW — run.failed -> diagnosis -> delegate to DLT engineer -> reviewable Plan; no autonomous write
-tests/integration/test_recovery_autopause_resume.py# NEW — auto-pause on failure; auto-resume on the resolving deploy
-```
-
 ## Behavior
 
 ### The Investigation entity

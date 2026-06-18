@@ -26,26 +26,6 @@ v0.1 ships **Snowflake + DuckDB first-class** (DuckDB powers local dev + tests);
 - **dbt model authoring** (v0.2) — the SQL specialist writes ad-hoc/step SQL, not dbt models.
 - First-class hardening of bigquery/databricks/sqlserver (post-v0.2; v0.1 is Snowflake + DuckDB).
 
-## Files this spec produces
-
-```
-src/carve/core/sql/dialect.py            # NEW — sqlglot wrapper: parse, validate, transpile(target_dialect), lint, identifier-quote per dialect
-src/carve/core/sql/introspect.py         # NEW — dialect-dispatched schema introspection (list_databases/schemas/tables, describe_table, table_exists)
-src/carve/core/sql/execute.py            # NEW — permission-gated execution: classify read vs write/DDL, select role (read|write) from the permission mode, prompt on destructive DDL, capped results
-src/carve/core/sql/adapters/snowflake.py # MODIFY/NEW — generalize the M1 Snowflake connector behind the dialect interface
-src/carve/core/sql/adapters/duckdb.py    # NEW — local-dev + test dialect (first-class)
-src/carve/core/sql/adapters/__init__.py  # NEW — adapter registry (postgres/bigquery/databricks/sqlserver = sqlglot + stub introspection, post-v0.1 hardening)
-src/carve/core/agents/tools/sql.py       # NEW — the `sql` tool (spec 15): explain | generate | modify | validate | introspect | run, dialect from the connection
-src/carve/core/agents/builtin/sql-specialist.md   # NEW — the thin SQL specialist declarative agent
-src/carve/core/skills/builtin/catalog.py # MODIFY — the 5 catalog skills become dialect-dispatched (Snowflake + DuckDB), via introspect.py
-src/carve/core/agents/m1_tools.py        # MODIFY — run_snowflake_query -> the dialect-aware `sql` run path (back-compat alias)
-docs/sql-layer.md                        # NEW — dialects, role-scoping, the sql tool + specialist
-tests/unit/test_sql_dialect.py           # NEW — sqlglot validate/transpile across dialects; bad SQL caught pre-exec
-tests/unit/test_sql_permission_roles.py  # NEW — read on read-role; DDL prompts; write role only in build/deploy
-tests/integration/test_sql_introspect_duckdb.py # NEW — real introspection against a fixture DuckDB
-tests/integration/test_sql_introspect_snowflake.py # NEW — against a Snowflake fixture/testcontainer
-```
-
 ## Behavior
 
 ### The `sql` tool (used by every agent)

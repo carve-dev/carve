@@ -30,31 +30,6 @@ After this spec lands, a user who installs Carve and runs `claude` (or opens Cla
 - Specific tool curation or per-tool prompt engineering — every REST endpoint becomes an MCP tool; the LLM picks
 - A polished MCP-server UI for managing tool exposure (out for v0.1)
 
-## Files this spec produces
-
-```
-src/carve/mcp/__init__.py
-src/carve/mcp/server.py                                 # NEW — MCP server core (handles initialize, list_tools, call_tool messages)
-src/carve/mcp/tool_generator.py                         # NEW — reads OpenAPI schema, emits MCP tool definitions
-src/carve/mcp/adapter.py                                # NEW — translates MCP tool_use → REST request → MCP tool_result
-src/carve/mcp/transports/__init__.py
-src/carve/mcp/transports/stdio.py                       # NEW — read JSON-RPC from stdin, write to stdout
-src/carve/mcp/transports/websocket.py                   # NEW — WebSocket transport
-src/carve/mcp/auth.py                                   # NEW — token discovery for MCP context
-
-src/carve/cli/mcp_serve.py                              # NEW — `carve mcp-serve` Typer command
-
-tests/unit/test_mcp_tool_generation.py                  # NEW — verifies REST → MCP tool schemas
-tests/unit/test_mcp_adapter_call.py                     # NEW — verifies tool_use → REST request translation
-tests/unit/test_mcp_protocol_conformance.py             # NEW — verifies MCP protocol messages match spec
-tests/integration/test_mcp_stdio_e2e.py                 # NEW — spawn server as subprocess; send tool_use over stdin; assert tool_result on stdout
-tests/integration/test_mcp_ws_e2e.py                    # NEW — start WS server; connect; exercise tool_use
-tests/integration/test_mcp_full_coverage.py             # NEW — every REST endpoint has a corresponding MCP tool
-
-docs/mcp-server.md                                      # NEW — overview + register-with-Claude-Desktop / Cursor / Claude Code walkthroughs
-docs/mcp-server-troubleshooting.md                      # NEW — common setup issues
-```
-
 ## Behavior
 
 ### MCP protocol overview
