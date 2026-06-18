@@ -14,11 +14,14 @@ The durable, **version-independent** design of each Carve capability — the low
 **Components & composition**
 - [`sql.md`](./sql.md) — the dialect-aware SQL tool layer + thin specialist
 - [`dlt-engineer.md`](./dlt-engineer.md) — the DLT engineer subagent (+ dlt-qa / dlt-security reviewers)
+- [`dbt-engineer.md`](./dbt-engineer.md) — the dbt authoring subagent (+ dbt-qa); backend-agnostic
+- [`dbt-execution.md`](./dbt-execution.md) — running dbt as a pipeline step across backends (local: bundled/external, engine Fusion/dbt-core; managed: snowflake-native / dbt-cloud / remote)
 - [`pipelines.md`](./pipelines.md) — pipeline composition, the step DAG, `[seed_schedule]`, the pipeline engineer
 
 **Runtime & bootstrap**
-- [`runtime.md`](./runtime.md) — scheduler, job queue, workers, reaper, archiver, the live `schedules` table
-- [`init.md`](./init.md) — `carve init` (greenfield / brownfield)
+- [`runtime.md`](./runtime.md) — scheduler, job queue, workers (+ placement/labeling), reaper, archiver, the live `schedules` table
+- [`init.md`](./init.md) — `carve init` (greenfield / brownfield); scaffold + detect
+- [`connect.md`](./connect.md) — AI-driven onboarding: provision + connect on demand (engine install + pin, warehouse/source connect)
 - [`memory.md`](./memory.md) — conventions / standards / decisions + `carve memory`
 
 **Interfaces & investigation**
