@@ -4,7 +4,9 @@
 
 ## Status
 
-- **Status:** Mostly landed (2026-05-19); M1 test sweep deferred to state-store
+> **Updated during implementation (2026-06-18):** the M1 test-fixture sweep referenced here is complete (verified against the test suite — every state-store-touching test threads the `postgres_state_store_url` fixture; no test builds a live SQLite store). Status updated from "mostly landed" to "landed". The one remaining follow-up is the cosmetic dev-only label on `DEFAULT_STATE_STORE_URL` (see *Deferred work* #3).
+
+- **Status:** Landed (2026-05-19; test-fixture sweep + new unit tests confirmed 2026-06-18)
 - **Depends on:** None (foundation spec)
 - **Blocks:** every subsequent capability spec — the state store is foundational
 - **Audit reference:** M1-03 was HISTORICAL with a code-revision flag; this spec ships that revision
@@ -100,11 +102,13 @@ Where a migration is clean, leave it alone. Where it isn't, rewrite the relevant
 
 ## Deferred work
 
-The following items were spec'd but are deferred to **state-store** (or folded into packaging OSS packaging where overlap makes sense):
+> **Updated during implementation (2026-06-18):** items #1 and #2 below are **done** — verified against the code and a green test run, not just claimed. The fixture sweep landed in full (no remaining SQLite-backed fixtures; the whole suite threads `postgres_state_store_url`) and all three unit/integration tests now exist. They are marked DONE inline below rather than deleted, so the history of what was deferred stays legible. Item #3 (the dev-only label on `DEFAULT_STATE_STORE_URL`) is the lone remaining open follow-up; it is cosmetic and non-blocking.
 
-1. **M1 test fixture sweep.** ~7 test files build a local `_make_config` helper that constructs `ServerConfig(state_store="sqlite:///...")`. The new engine factory rejects SQLite, so these tests fail at fixture-creation time. Each needs to thread the `postgres_state_store_url` fixture through and pass it into the Config. Fix plan at [`.carve-build/fixes/state-store-iter1.md`](../../.carve-build/fixes/state-store-iter1.md) enumerates the files (Buckets A/B/C). Partial sweep landed in commit `23bcf88` (3 files: `test_pipelines.py`, `test_listing.py`, `test_recovery.py` plus `test_extract_load_agent._config()` signature change). Remaining: ~4 mechanical files + 3 Bucket B rewrites + 1 Bucket C semantic rewrite.
-2. **Three new unit tests** for spec ## Tests bullets that have no dedicated coverage: model metadata reflection (bullet 1), engine factory rejection of non-Postgres URLs (bullet 2; `grep StateStoreBackendError tests/` currently returns zero hits), `alembic upgrade head` schema-shape assertion on empty Postgres (bullet 3).
-3. **Security-reviewer Informational** findings: superuser-requirement note (no longer relevant — the migrator used `SET LOCAL session_replication_role = 'replica'` which required superuser; that code is gone). The dev-only label on `DEFAULT_STATE_STORE_URL` carries forward as a small follow-up.
+The following items were spec'd as deferred. #1 and #2 have since landed; #3 remains open:
+
+1. **M1 test fixture sweep. — DONE (2026-06-18).** The sweep is complete: no test builds a live SQLite `ServerConfig(state_store="sqlite:///...")`. Every state-store-touching helper (`_make_config` / `_config` / `_build_config` across el / recovery / targets / snowflake / config / orchestrator tests) threads the `postgres_state_store_url` fixture (or `postgres_config`) through into the Config. The `ServerConfig(state_store=...)` field name persists as the legacy alias, but the resolved URL is always Postgres. The original partial sweep landed in commit `23bcf88`; the remainder followed. (The earlier "~4 mechanical + 3 Bucket B + 1 Bucket C remaining" estimate was a pre-completion snapshot and no longer applies.)
+2. **Three new unit tests — DONE (2026-06-18).** All three now exist and pass: model metadata reflection (`test_model_metadata_reflects_against_postgres`), engine-factory rejection of non-Postgres URLs (`test_engine_factory_rejects_non_postgres_url`), and the `alembic upgrade head` schema-shape assertion on empty Postgres (`test_alembic_upgrade_head_on_empty_postgres`). The old "`grep StateStoreBackendError tests/` returns zero hits" note is stale — `StateStoreBackendError` is now covered in `tests/core/state/test_database.py`.
+3. **Dev-only label on `DEFAULT_STATE_STORE_URL` — OPEN.** A small, cosmetic, non-blocking follow-up: label `DEFAULT_STATE_STORE_URL` as dev-only so it reads clearly as a local-development default rather than a production connection string. (The related security-reviewer superuser-requirement note is no longer relevant — the migrator that used `SET LOCAL session_replication_role = 'replica'` is gone.)
 
 ## Design notes
 
