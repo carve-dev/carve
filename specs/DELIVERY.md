@@ -28,26 +28,26 @@ Shipped and in `src/` — every increment plans *against* this:
 
 - **M1 — walking skeleton.** CLI foundation (Typer), config loader, state store, the Anthropic agent loop, the Python step + `LocalVenvRunner` subprocess primitive, the Snowflake connector. The smallest end-to-end loop.
 - **M1.1 — lifecycle + UX.** `carve init` templates, Claude-subscription OAuth, dotenv autoload, plan progress, agent-prompt tightening, the **plan / build / run** separation, run-retry-permits-redo. (The OAuth and the plan/build/run separation are the shipped cores of [model-auth](./capabilities/model-auth.md) + [plan-build](./capabilities/plan-build.md) — Increment 0 formalizes them.)
-- **Spec 01 — state store → Postgres.** Landed (SQLite retired; Postgres baseline + the six audited migrations). Followups landed: the M1 test sweep and `DATABASE_URL` precedence. ~300 tests passing.
+- **Spec 01 — state store → Postgres.** Landed (SQLite retired; Postgres baseline + the six audited migrations). Followups landed: the M1 test sweep and `DATABASE_URL` precedence. ~300 tests passing. **Increment 0 (state-store formalization) complete 2026-06-18** — spec reconciled to the shipped code.
 
 Everything else is **designed but unbuilt**. The foundational AI specs **harness** and **extensibility** have been adversarially reviewed + hardened. The full corpus is internally consistent under the control-plane + AI-harness model.
 
 ---
 
-## Increment 0 — Baseline: formalize the shipped foundation
+## Increment 0 — Baseline: formalize the shipped state store ✅ *(done 2026-06-18)*
 
-**Goal.** Give the M1/M1.1 shipped baseline its durable capability-spec homes and close the gaps, so everything forward builds on specs that match the code.
+**Goal.** Reconcile the shipped Postgres state store with its spec — the foundation every increment plans against.
 
 **In scope**
-- Postgres state store — [state-store](./capabilities/state-store.md) *(landed; verify the spec matches code)*
-- **Model auth** — `ANTHROPIC_API_KEY` + Claude-subscription OAuth, credential precedence, `carve auth login` — [model-auth](./capabilities/model-auth.md) *(M1.1-shipped; formalize + close the CLI gap)*
-- **Plan / build** — the Plan/Build entities, `plan` / `build` / `plan-and-build` verbs, `--refine`, the config-hash drift check — [plan-build](./capabilities/plan-build.md) *(M1.1 core shipped; add the drift check + the richer plan synthesis)*
+- Postgres state store — [state-store](./capabilities/state-store.md) *(landed; spec reconciled — verified green against a live Postgres testcontainer)*
 
-**Depends on.** Current state only (these shipped in M1/M1.1 against the M1 loop; their specs reference the harness as the durable design the M1 loop already partially embodies).
+> **Re-slotted.** The other two M1.1-shipped capabilities first bucketed here — **model-auth** and **plan-build** — moved to where their declared deps are actually *rebuilt*: **model-auth → Increment 1** (it integrates with the rebuilt layout + harness), **plan-build → Increment 3** (its plan-synthesis rolls up the engineers' diffs/costs). Formalizing shipped code against the soon-to-be-replaced M1 shape is busywork; against the rebuilt foundation it's real.
 
-**Delta.** Mostly MODIFY/verify against shipped code. CREATE: the config-hash drift gate + the richer plan synthesis (exact LLM cost + runtime estimate). The synthesis that rolls up engineer diffs/costs feeds in as the engineers land (Increment 3) — the *mechanism* ships here.
+**Depends on.** Current state only.
 
-**Exit criteria.** The state-store / model-auth / plan-build specs match the code; `carve plan` → `carve build` round-trips with a `config_hash` drift guard (exit 3 on drift); `carve auth login` + API-key precedence both work.
+**Delta.** Verify/MODIFY against shipped code (the M1 fixture sweep + the three unit tests already landed). No new code — the spec was made honest (Status → Landed).
+
+**Exit criteria.** ✅ The state-store spec matches the code; the full state/migration test surface is green against Postgres.
 
 ---
 
@@ -60,12 +60,13 @@ Everything else is **designed but unbuilt**. The foundational AI specs **harness
 - Control-plane flat layout: `carve.toml` `[components.<name>]`, the component locator, repo topology, simple-mode convention discovery, the workspace cache — [layout](./capabilities/layout.md)
 - **The agent harness** — subagent `delegate`, terminal tools (edit/bash/grep/web), the permission gate (modes + `allowed_paths` + bash sandbox + secret-deny), verify-by-execution, interrupt/TODO/compaction — [harness](./capabilities/harness.md)
 - **Extensibility** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks (`hooks.toml`), MCP both directions, runtime grant attenuation — [extensibility](./capabilities/extensibility.md)
+- **Model auth** *(formalize M1.1-shipped)* — `ANTHROPIC_API_KEY` + Claude-subscription OAuth, credential precedence, `carve auth login`, against the rebuilt harness (the consumer) + layout (`models.toml`'s config-bundle home) — [model-auth](./capabilities/model-auth.md)
 
-**Depends on.** Increment 0 (model-auth for the harness's model calls; the state store) + M1/M1.1 (the agent loop the harness wraps; the CLI/config it extends).
+**Depends on.** Increment 0 (the state store) + M1/M1.1 (the agent loop the harness wraps + the OAuth/API-key model-auth shipped in M1.1, which this increment formalizes).
 
-**Delta.** 15 *wraps* the M1 agent loop (adds delegation, the gate, context management); it does not replace it. 16 is net-new. 03 introduces `carve.toml` as control-plane config (supersedes the M1 project-shaped config) + the locator (net-new).
+**Delta.** 15 *wraps* the M1 agent loop (adds delegation, the gate, context management); it does not replace it. 16 is net-new. 03 introduces `carve.toml` as control-plane config (supersedes the M1 project-shaped config) + the locator (net-new). model-auth formalizes the M1.1 OAuth/API-key code against the rebuilt harness + layout (re-homing `models.toml` into the control-plane config) — verify + close the `auth login` CLI gap.
 
-**Exit criteria.** A `carve.toml` with `[components.<name>]` resolves names to code (simple + multi mode); an agent runs under the permission gate with terminal tools and can `delegate` to a subagent that verifies by execution; a user-authored `carve/agents/*.md` overrides a built-in, attenuated to its mode.
+**Exit criteria.** A `carve.toml` with `[components.<name>]` resolves names to code (simple + multi mode); an agent runs under the permission gate with terminal tools and can `delegate` to a subagent that verifies by execution; a user-authored `carve/agents/*.md` overrides a built-in, attenuated to its mode; `carve auth login` + API-key precedence work against the rebuilt harness, with `models.toml` in the layout's config bundle.
 
 ---
 
@@ -96,12 +97,13 @@ Everything else is **designed but unbuilt**. The foundational AI specs **harness
 - **dbt execution backends** — local (bundled Fusion/dbt-core, or the team's own dbt) + managed (snowflake-native, dbt Cloud, remote), behind one step interface — [dbt-execution](./capabilities/dbt-execution.md)
 - **connect** — AI-driven on-demand provisioning: engine install + pin, warehouse/source connect — [connect](./capabilities/connect.md)
 - **Multi-step pipeline** composition: `pipelines/<name>.toml`, the step DAG executor (dlt/dbt/sql), `[seed_schedule]`, component-by-name, the definition reconciler, the **pipeline engineer**, `carve component(s)` graduation — [pipelines](./capabilities/pipelines.md)
+- **Plan / build** *(formalize M1.1-shipped + complete)* — the Plan/Build entities + `plan`/`build`/`plan-and-build` verbs + `--refine` (shipped), the config-hash drift gate, and the plan synthesis that now rolls up the engineers' verified diffs/costs — [plan-build](./capabilities/plan-build.md)
 
 **Depends on.** Increment 2 (init/memory/sql) + Increment 1 (harness, layout, extensibility).
 
-**Delta.** 04 *replaces/generalizes* the M1 EL agent as a declarative subagent. **dbt-engineer is net-new — the exact parallel to the DLT engineer, co-equal from the start.** dbt-execution is net-new: it implements the `dbt` step against the StepExecutor protocol (the runtime's scheduler + worker-placement *dispatch* it in Increment 4). connect + dbt-execution are co-designed (the bundled-engine provisioning seam). 08 is net-new (the reconciler creates the `pipelines`/`schedules` tables).
+**Delta.** 04 *replaces/generalizes* the M1 EL agent as a declarative subagent. **dbt-engineer is net-new — the exact parallel to the DLT engineer, co-equal from the start.** dbt-execution is net-new: it implements the `dbt` step against the StepExecutor protocol (the runtime's scheduler + worker-placement *dispatch* it in Increment 4). connect + dbt-execution are co-designed (the bundled-engine provisioning seam). 08 is net-new (the reconciler creates the `pipelines`/`schedules` tables). plan-build formalizes its M1.1-shipped lifecycle core + adds the config-hash drift check + the synthesis rollup, now that the dlt/dbt engineers produce the diffs/costs it composes.
 
-**Exit criteria.** `carve plan "ingest Stripe, then stage it with dbt"` → the **DLT and dbt engineers** author + verify their components (`dlt pipeline run`, `dbt build`/`test`); `carve build` materializes them + a `pipelines/<name>.toml` referencing them by name; `carve pipelines validate` passes; first dbt use provisions + pins the engine via `connect`.
+**Exit criteria.** `carve plan "ingest Stripe, then stage it with dbt"` → the **DLT and dbt engineers** author + verify their components (`dlt pipeline run`, `dbt build`/`test`); `carve build` materializes them + a `pipelines/<name>.toml` referencing them by name; `carve pipelines validate` passes; first dbt use provisions + pins the engine via `connect`; `carve plan` rolls up exact LLM cost + a runtime estimate from the engineers' diffs, and `carve build` refuses a drifted plan (exit 3).
 
 ---
 
@@ -179,17 +181,18 @@ Everything else is **designed but unbuilt**. The foundational AI specs **harness
 M1 / M1.1
    │
    ▼
-Incr 0  state-store · model-auth · plan-build            (formalize the shipped baseline)
+Incr 0  state-store                                      (formalize the shipped state store -- done)
    │
    ▼
-Incr 1  packaging · layout · harness · extensibility     (control-plane + AI foundation)
+Incr 1  packaging · layout · harness · extensibility ·   (control-plane + AI foundation;
+        model-auth                                        + formalize M1.1 model-auth)
    │
    ▼
 Incr 2  init · memory · sql                              (scaffold a project + the SQL tool)
    │
    ▼
 Incr 3  dlt-engineer · dbt-engineer · dbt-execution ·    (AI authors / runs / composes
-        connect · pipelines                               dlt AND dbt — co-equal)
+        connect · pipelines · plan-build                  dlt AND dbt; + M1.1 plan-build)
    │
    ▼
 Incr 4  runtime · observability                          (schedule / run / record)
@@ -205,7 +208,7 @@ Incr 6  deploy · recovery
 Incr 7  reference-docs + initial release tag             (all 26 capabilities)
 ```
 
-- **Baseline first.** Incr 0 reconciles the M1/M1.1 shipped code with its capability specs so everything forward builds on honest specs.
+- **Baseline first.** Incr 0 reconciles the shipped state store with its spec; the other M1.1-shipped capabilities (model-auth, plan-build) formalize alongside the rebuilt foundation they integrate with (model-auth in Incr 1, plan-build in Incr 3) rather than against the soon-to-be-replaced M1 shape.
 - **Foundation before components.** The harness + control-plane layout (1) and the scaffold + SQL tool (2) gate everything AI- and component-shaped.
 - **dlt and dbt are co-equal components (3).** Both are authored, verified-by-execution, and composed from the start — dbt is *not* deferred. Execution (dbt-execution) + on-demand provisioning (connect) land with them, before the scheduler, so a dbt step can run the moment it's composed.
 - **Capability before interface.** Author / run / compose / schedule (3–4) before exposing over REST/MCP/UI + investigation (5).
