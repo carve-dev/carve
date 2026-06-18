@@ -1,13 +1,13 @@
 # dbt engineer: authoring dbt models, tests, and sources
 
-> The **dbt authoring subagent** — the exact parallel to the [DLT engineer](./dlt-engineer.md), one tier up the stack. A declarative agent on the [harness](./harness.md) that **writes and modifies** dbt models, tests, snapshots, and `sources.yml` entries to fit the project's conventions, and **verifies by executing** (`dbt build`/`test`) until green — with a **dbt-qa** review subagent for coverage/convention. It is **backend-agnostic**: it authors the dbt *code*; [`dbt-execution`](./dbt-execution.md) runs it however the component runs (bundled / external / dbt Cloud / snowflake-native). *Phasing annotation:* authoring follows dlt authoring — Carve **runs** dbt (via `dbt-execution`), and **authors** it in a later increment; the increment is a [DELIVERY](../DELIVERY.md) decision, not set here.
+> The **dbt authoring subagent** — the exact parallel to the [DLT engineer](./dlt-engineer.md), one tier up the stack. A declarative agent on the [harness](./harness.md) that **writes and modifies** dbt models, tests, snapshots, and `sources.yml` entries to fit the project's conventions, and **verifies by executing** (`dbt build`/`test`) until green — with a **dbt-qa** review subagent for coverage/convention. It is **backend-agnostic**: it authors the dbt *code*; [`dbt-execution`](./dbt-execution.md) runs it however the component runs (bundled / external / dbt Cloud / snowflake-native). Carve authors dbt *and* dlt components from the start; this engineer is the dbt half, co-equal with the DLT engineer. Backend-agnostic: it authors the dbt code; `dbt-execution` runs it.
 
 ## Status
 
 - **Status:** Drafting
 - **Depends on:** [harness](./harness.md) (subagent + delegation + permission gate + verify-by-execution), [extensibility](./extensibility.md) (the declarative agent + the `dbt_manifest` skill it leans on), [sql](./sql.md) (dialect-aware authoring/validation of model SQL), [dbt-execution](./dbt-execution.md) (how it runs `dbt build`/`test` to verify), [memory](./memory.md) (conventions/standards it writes to), [layout](./layout.md) (the dbt component it authors into).
 - **Used by:** [pipelines](./pipelines.md) (the authored models become `dbt` steps), [recovery](./recovery.md) (delegates a model-side fix here).
-- **Lineage:** net-new. The Pillar-3 "dbt agent" long deferred to a later increment — now a first-class capability with phasing as an annotation, per [`_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md).
+- **Lineage:** net-new. The Pillar-3 "dbt agent", now a first-class capability co-equal with the DLT engineer, per [`_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md).
 
 ## Goal
 
@@ -54,7 +54,7 @@ The DLT engineer lands data into schemas the dbt engineer declares as `sources.y
 - The dbt engineer authors/modifies models, tests, and sources matching project conventions, **verifying by executing** through whatever [`dbt-execution`](./dbt-execution.md) backend the component uses, and returns a **reviewable Plan** — never deploying autonomously.
 - A **dbt-qa** reviewer surfaces coverage/convention gaps.
 - Authoring is **backend-agnostic** — a team on dbt Cloud or snowflake-native gets the same authoring, verified via their backend.
-- The capability is documented as durable design with phasing as an annotation (no increment hard-coded).
+- The capability is documented as durable design — dbt authoring is in scope from the start, co-equal with dlt authoring.
 
 ## Design notes
 
@@ -64,4 +64,4 @@ The DLT engineer lands data into schemas the dbt engineer declares as `sources.y
 ## Open questions
 
 - **Fusion authoring affordances.** Fusion's SQL comprehension can validate model SQL *before* a warehouse run; the dbt engineer should use that as a cheaper inner-loop check when the backend is Fusion. Confirm the interface when `dbt-execution`'s Fusion path lands.
-- **Phasing.** The increment that introduces authoring is a [DELIVERY](../DELIVERY.md) call — likely after the dlt-engineer + dbt-execution land.
+- **Sequencing within the increment.** dbt authoring is in scope from the start, co-equal with dlt authoring; the exact ordering relative to the dlt-engineer + dbt-execution within the increment is a [DELIVERY](../DELIVERY.md) detail.

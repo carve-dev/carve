@@ -18,7 +18,7 @@ This replaces the implicit prior model where a "Carve project" was one repo/SDLC
 - **AI-native authoring + the cross-cutting build → deploy → schedule → monitor loop is the differentiator** — the answer to "why not Dagster + an agent?" and "why not dltHub Pro?". Framing orchestration *alone* as the value collapses Carve into "a simpler Dagster," which the positioning explicitly rejects.
 - **Two modes, both first-class:** build-with-Carve (AI authors components into their repos) and orchestration-only (Carve references existing dlt/dbt/sql by version and only composes/schedules/monitors — PRD §6.2 mode 2). This duality is exactly *why* the control plane references components rather than owning them.
 
-**Timing caveat:** dlt authoring ships first; **dbt authoring is a later increment** (Carve initially *runs* dbt against existing models, doesn't write them); `sql` steps are user-authored at first. Orchestration-only mode is present from the start across all three.
+**Timing:** dlt **and dbt authoring are co-equal** — both authored from the start (the dbt-authoring deferral was reversed 2026-06-18); `sql` steps are user-authored at first. Orchestration-only mode is present from the start across all three (run dbt without authoring it).
 
 ## Why
 

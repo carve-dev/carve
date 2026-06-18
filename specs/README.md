@@ -24,7 +24,7 @@ The corpus splits into **durable design** (version-independent — what Carve is
 |---|---|---|
 | **P1** | Extract & Load — the **DLT component + engineer** (AI authors/runs dlt components) | First cut |
 | **P2** | Runtime — the **control plane** (scheduler / executor / monitor referencing components by name) | First cut |
-| **P3** | Transform — the **dbt component + engineer** | Later increment |
+| **P3** | Transform — the **dbt component + engineer** (AI authors/runs dbt components, co-equal with dlt) | First cut |
 | **P4** | Multi-step pipeline — **composition** (components by name → step DAG) | First cut |
 
 Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine (subagent orchestration, terminal-grade tools, a permission system, verify-by-execution, and declarative agents/skills/hooks extensibility), plus the recovery engineer and the dialect-aware SQL tool layer.

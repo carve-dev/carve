@@ -1,6 +1,6 @@
 # Carve — capability specs
 
-The durable, **version-independent** design of each Carve capability — the lowest level of design detail (per [`../_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md)). Each file describes *how a capability works*, with phasing expressed as annotations ("the dbt engineer arrives in a later increment"). **Sequencing and "what to build when" live in [`../DELIVERY.md`](../DELIVERY.md), not here.**
+The durable, **version-independent** design of each Carve capability — the lowest level of design detail (per [`../_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md)). Each file describes *how a capability works*, with phasing expressed as annotations ("concurrent subagent fan-out arrives in a later increment"). **Sequencing and "what to build when" live in [`../DELIVERY.md`](../DELIVERY.md), not here.**
 
 ## The capabilities
 
@@ -33,7 +33,7 @@ The durable, **version-independent** design of each Carve capability — the low
 - [`ask.md`](./ask.md) — the explorer (`carve ask`)
 - [`lineage.md`](./lineage.md) — lineage by investigation (no Carve store)
 - [`observability.md`](./observability.md) — agent/run telemetry tables, `carve metrics` rollups, OpenTelemetry export
-- [`semantic-search.md`](./semantic-search.md) — embedding-based concept retrieval + `carve embeddings rebuild` *(a later increment)*
+- [`semantic-search.md`](./semantic-search.md) — embedding-based concept retrieval + `carve embeddings rebuild`
 
 **Deploy & recovery**
 - [`deploy.md`](./deploy.md) — `carve deploy` configurable handoff + cross-repo linked PRs

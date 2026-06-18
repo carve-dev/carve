@@ -148,7 +148,7 @@ Resolution rules, per the component's `mode` (or convention in simple mode):
 - **`separate-local`**: the recorded `path` is the component's code path. Must exist; error at startup if not.
 - **`separate-remote`**: workspace cache at `<root>/.carve/workspaces/<derived-name>/` (derived name = `slugify(url) + "-" + ref-or-branch`), synced via the workspace cache module below and checked out at the component's pinned `ref` (or the branch HEAD if unpinned, per the precedence rule above).
 
-Every runtime call site (`dlt`/`dbt` step executors, the EL agent's file-write target, the dbt agent's in a later increment, manifest reader, sources.yml reader) resolves component code through `resolve_component` — no path math elsewhere. `carve components show` (spec 08) surfaces the resolved set.
+Every runtime call site (`dlt`/`dbt` step executors, the EL agent's file-write target, the dbt agent's, manifest reader, sources.yml reader) resolves component code through `resolve_component` — no path math elsewhere. `carve components show` (spec 08) surfaces the resolved set.
 
 ### Workspace cache for `separate-remote` mode
 

@@ -1,6 +1,6 @@
 # 2026-06 — The AI harness: a Claude-Code-style agentic engine for data work
 
-> **Status:** Decided 2026-06-16 (Nate). Foundational. Builds on [`2026-06-control-plane.md`](./2026-06-control-plane.md) and refines [`2026-05-positioning.md`](./2026-05-positioning.md). Captures Carve's AI-layer direction; the per-spec plan is at the end. Concrete shapes here are enough to spec against; a fuller reference model is the first spec-out step.
+> **Status:** Decided 2026-06-16 (Nate). Foundational. Builds on [`2026-06-control-plane.md`](./2026-06-control-plane.md) and refines [`2026-05-positioning.md`](./2026-05-positioning.md). Captures Carve's AI-layer direction; the per-spec plan is at the end. Concrete shapes here are enough to spec against; a fuller reference model is the first spec-out step. *(Updated 2026-06-18: the dbt engineer is first-class and co-equal with the DLT engineer — authored from the start, not deferred.)*
 
 ## The decision
 
@@ -30,10 +30,10 @@ The orchestrator is the **main loop**; everything else is a delegated subagent. 
 | **Orchestrator** | classify + decompose goal, delegate, synthesize into a reviewable plan/diff | main loop; doesn't do deep work itself |
 | **DLT engineer** | author + run dlt sources/pipelines into a named component | connector skill-library + the customer repo for context; verifies via `dlt pipeline run` |
 | **DLT qa / security** (review) | adversarial review of the dlt diff | schema-contract, credential handling, data-loss modes |
-| **DBT engineer** (**later increment**) | author + run dbt models/tests/sources | dlt + dbt repo context; verifies via `dbt build`/`test` |
-| **DBT qa** (review, later increment) | test/coverage/convention review | |
+| **DBT engineer** | author + run dbt models/tests/sources | dlt + dbt repo context; verifies via `dbt build`/`test` |
+| **DBT qa** (review) | test/coverage/convention review | |
 | **Pipeline engineer** | compose components **by name** into `pipelines/<name>.toml` | the control-plane runtime specialist (spec 08) |
-| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT or SQL engineer (dbt engineer in a later increment) | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
+| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT, dbt, or SQL engineer | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
 | **Explorer** | read-only Q&A: how/where/why, lineage, logic, definitions, tests, "where does this data come from" | the `ask` verb (spec 12), elevated; citation-backed |
 
 **SQL is a cross-cutting capability, not a silo:** a **dialect-aware tool layer** every subagent uses (snowflake / duckdb / postgres / bigquery / databricks / sqlserver) — `sqlglot` for transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution (read vs write, DDL prompts) — plus a thin **SQL specialist** for "explain / write / modify this query." **Connect/onboarding** (the `carve connect` first-magical-moment) is a capability the orchestrator wields, not a standing agent.
@@ -101,7 +101,7 @@ on = "run.failed"; run = "notify-slack"
 
 - **Harness (foundation):** subagent delegation + terminal toolset (`edit`/`bash`/`grep`/`web`) + permission modes/allowlists/sandbox + the verification loop. Build this first.
 - **Agents (declarative):** orchestrator, DLT engineer, pipeline engineer, explorer (`ask`), recovery engineer (delegating). QA/security review subagents phased in (start: security-on-deploy, qa-on-build).
-- **DBT engineer:** **a later increment** (matches the existing dbt-authoring deferral).
+- **DBT engineer:** **first-class, co-equal with the DLT engineer** — authors dbt alongside dlt from the start (the earlier deferral was reversed 2026-06-18).
 - **Extensibility:** declarative agents + skills + MCP-consume. Hooks + MCP-expose close behind.
 - **SQL:** dialect-aware tool layer (Snowflake first; others via `sqlglot`) + thin specialist.
 - **Per-agent model tiering:** pricing support already exists; wire selection.

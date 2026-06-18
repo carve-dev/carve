@@ -188,7 +188,7 @@ Alphabetical terms with one-paragraph definitions. Revise from the existing vers
 
 - **Approval step** — drop (was M3-era; not yet in scope)
 - **Capability flow** — drop (outdated mental model)
-- **Embedding search** — annotate as "future / a later increment"
+- **Embedding search** — document as an in-scope retrieval layer (see semantic-search)
 - **`LocalVenvRunner`** — keep but note it's now wrapped by the runtime worker pool
 
 **Existing entries to keep/update**:

@@ -30,7 +30,7 @@ After this spec lands, a user can ask "where do we calculate net revenue?" or "w
 - **The harness core** — the subagent loop, the `delegate` tool, the terminal tools, the `read_only` permission gate, and role-scoped warehouse access all live in [harness](./harness.md); the declarative agent format in [extensibility](./extensibility.md); the `sql` tool in [sql](./sql.md). This spec **consumes** them and ships the explorer's agent definition, its system prompt, the Ask data model, and the citation builder.
 - Streaming the answer token-by-token (synchronous return; the answer arrives as one chunk when the explorer finishes)
 - Asking *about* asks (e.g., "what have we been asking lately?") — handled by `carve asks list` rather than a meta-ask
-- Embedding-based semantic search over decisions/code (a later increment; the explorer uses the read tools + skills directly)
+- Embedding-based semantic search over decisions/code (the explorer uses the read tools + skills directly)
 - Conversational follow-ups (each ask is a single round; multi-turn chat lives in the chat tool, e.g., Claude Desktop, which can call `ask` repeatedly)
 
 ## Behavior

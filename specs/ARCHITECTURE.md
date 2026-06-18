@@ -69,7 +69,7 @@ The hosted overlay adds a **polished cloud UI** as a fourth interface, plus a pu
 
 The heart of Carve. Carve is a **control plane** that references independently-versioned dlt/dbt **components** by name (§10.1) rather than containing them; `carve.toml` is the control-plane config (see [the control-plane decision](_strategy/2026-06-control-plane.md)). Six subcomponents:
 
-- **Agent layer** — Anthropic SDK reasoning loop, orchestration agent, specialist agents (extract-load, runtime; the dbt specialist is a later increment). Token budget enforcement, skill-call caching, structured plan output.
+- **Agent layer** — Anthropic SDK reasoning loop, orchestration agent, specialist agents (extract-load, dbt, runtime). Token budget enforcement, skill-call caching, structured plan output.
 - **Plan/Build store** — Plans persisted as `.carve/plans/<id>.json` plus index rows in Postgres. Builds persisted as `Build` rows referencing on-disk artifacts (dlt pipelines, dbt models, `pipelines/*.toml`). Both are immutable once created; refinement creates child plans.
 - **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables include `pipelines`, `schedules`, `schedule_changes`, `tokens`, `plans`, `builds`, `deploys`, `jobs`, `runs`, `step_runs`, `logs`, `workers`, `events`, `workspaces` (full schema in §9). Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7). The store holds the **control plane's** running state — it references components by name (§10.1); it never contains their code.
 - **Event bus** — In-process publish-subscribe in OSS; replaceable by Redis Streams in the hosted product without changing subscribers. Events: `run.queued`, `run.started`, `step.*`, `run.completed`, `agent.invoked`, `skill.called`.
@@ -352,7 +352,7 @@ Carve has one orchestration agent (the main loop) and a set of specialist **suba
 - **Pipeline engineer** — composes `pipelines/<name>.toml` (components by name, the step DAG, `[seed_schedule]`).
 - **Recovery engineer** — diagnoses a failure (grounded), then **delegates** the fix to the right engineer.
 - **Explorer** — the read-only investigative agent (the `ask` verb).
-- **dbt engineer (a later increment)** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
+- **dbt engineer** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
 
 Per the **engineer + review-subagent** pattern (the `/build-spec` fan-out brought to users' pipelines), each domain has an *engineer* (architect + build) plus *qa/security review* subagents. **SQL is a cross-cutting tool layer** ([spec 18](capabilities/sql.md)), used by every agent, not an agent itself.
 
@@ -364,7 +364,7 @@ Given a user goal, the orchestrator:
 
 1. **Classifies the goal** — new pipeline, modification, config change, schedule change, etc. Classification determines which skills to call.
 2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage investigation (dbt manifest + dlt schema, [lineage](capabilities/lineage.md)).
-3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ the dbt engineer, a later increment).
+3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer + the dbt engineer.
 4. **Hands each a starting bundle** — the goal slice, relevant file contents, conventions, impacted dependencies; the subagent gathers anything else within its own isolated context.
 5. **Generates a structured Plan** — JSON-schema-validated, with task graph, file diffs, cost estimate.
 
@@ -525,7 +525,7 @@ The agent layer never reads the full warehouse catalog or the full dbt manifest 
 2. **dbt manifest queries** — The dbt project's `target/manifest.json` is the source of truth for dbt structure. Skills like `list_models`, `model_columns`, `model_dependencies`, `tests_on_model` load the manifest (cached by mtime) and answer structured questions.
 3. **File grep** — When an agent needs "where is column `customer_id` referenced," a ripgrep-backed skill (`grep_dbt_models`, `grep_dlt_code`) scans the project tree. Bounded by max match count (default 50) and per-match truncation.
 4. **Lineage investigation** — Carve maintains *no* lineage graph (§6.2). The explorer investigates dbt's manifest (model DAG) + dlt's schema (resource→table, via the `dlt_schema` skill) + the code on demand ([lineage](capabilities/lineage.md)), correlating dlt tables to dbt sources by relation name in-context. Results are entity pointers into the native artifacts, not full content.
-5. **Embedding search (a later increment)** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
+5. **Embedding search** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
 
 The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. The orchestrator's classification step decides which skills to call.
 
@@ -547,7 +547,7 @@ Because the explorer runs in an isolated context and returns a cited summary, it
 | Catalog queries       | 60 seconds             | Time-based                                  |
 | dbt manifest          | until change           | File mtime watch                            |
 | File grep             | per-invocation         | None — re-runs each agent invocation        |
-| Embedding (later)     | until index rebuild    | Manual `carve embeddings rebuild`           |
+| Embedding             | until index rebuild    | Manual `carve embeddings rebuild`           |
 
 In-process cache in the FastAPI server (OSS); Redis-backed in the hosted product so multiple API replicas share.
 
@@ -612,7 +612,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 **Inputs**: plan id, current project state.
 
-**Outputs**: `Build` row with `manifest_json` listing every file written; files on disk (`el/<name>/`, `pipelines/<name>.toml`, `.dlt/*.toml`, dbt models in a later increment); pipeline's `current_build_id` updated.
+**Outputs**: `Build` row with `manifest_json` listing every file written; files on disk (`el/<name>/`, `pipelines/<name>.toml`, `.dlt/*.toml`, dbt models); pipeline's `current_build_id` updated.
 
 **Side effects**: reads + writes scoped to allowed paths from the plan; invokes specialist agents with pre-scoped context; records `agents_invocations` and `skill_calls`.
 

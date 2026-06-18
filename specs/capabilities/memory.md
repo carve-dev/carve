@@ -26,7 +26,7 @@ After this spec lands, every other spec that needs memory access uses the loader
 
 - The initial scaffolding of memory files (lives in spec 05)
 - The convention-inference engine itself (lives in spec 05 — this spec calls into it)
-- Embedding-based semantic search over memory files (a later increment)
+- Embedding-based semantic search over memory files
 - A web UI for editing memory (the static HTML UI from spec 11 renders memory read-only; edits happen via CLI, REST, MCP, or `$EDITOR`)
 - A separate "memory index" in Postgres for fast queries (file-based with mtime cache is sufficient — see Design notes)
 
@@ -291,7 +291,7 @@ In the hosted product's Redis-backed cache, invalidation is a pub/sub message th
 - **Why a Postgres table for memory writes (via the `plan_id` requirement) but not for memory reads?** Because writes need an audit trail and a review gate; reads need to be fast. Plan/Build rows in Postgres provide the audit + review gate without needing memory itself in the database.
 - **Why is `append_decision` exempt from the plan/build requirement?** Because the cost-of-friction calculus is different. Recording a decision is low-risk (it's information, not code); requiring plan/build would push users away from recording decisions at all, which is worse than recording them with slightly less ceremony. Standards changes get the heavier process because they directly change agent behavior.
 - **Why mtime caching instead of a real cache invalidation protocol?** Simplicity. mtime is what dbt does for its manifest cache; it's well-understood and reliable for single-process OSS. The hosted product's Redis-backed variant uses real pub/sub invalidation because mtime breaks down across replicas.
-- **Why no embedding search over memory?** Memory is small (rare for a single file to exceed 50KB; full bundle stays well under the agent's context budget). Embedding search becomes useful when memory grows large enough that targeted retrieval matters; defer until that happens.
+- **Why no embedding search inside the memory capability?** Memory is small (rare for a single file to exceed 50KB; full bundle stays well under the agent's context budget), so the memory loader hands the whole bundle to context rather than retrieving slices. Embedding-based semantic search is an in-scope retrieval layer, owned by the dedicated [semantic-search](./semantic-search.md) capability, not duplicated here.
 - **Why isn't there a "memory query" skill that agents can call?** Because we want memory in pre-scoped context, not as a discovery skill that agents can choose to call. Forcing memory into the bundle every time means agents can never miss it; making it a skill creates the risk that agents skip it and ignore the team's standards. Pre-scoping is the safer default.
 
 ## Open questions

@@ -446,7 +446,7 @@ Classification uses dlt's actual exception hierarchy — the recovery engineer u
 
 ### Design decisions surfaced
 
-- **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT or SQL engineer subagent (the dbt engineer is a later increment), whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
+- **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT, dbt, or SQL engineer subagent, whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
 - **New state-store entity: `Investigation`** with columns `id, triggering_run_id, diagnosis_md, proposed_plan_id NULL, status, created_at, resolved_by_plan_id NULL, resolved_by_deploy_id NULL, recurring_run_ids JSONB`. Status set: `proposed | acknowledged | resolved | dismissed`.
 - **Carve never auto-deploys a fix.** The proposed Plan is reviewable; it goes through build/deploy/PR like any other change. **Human in the loop is a hard invariant.** The hosted product's plan-approval workflows extend it but don't replace it.
 - **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the runtime auto-pauses the schedule immediately — the same `schedules`-row mutation as a manual `carve schedule pause`, audited in `schedule_changes` with `paused_by = recovery` (distinct from a human's `paused_by = user`; there is no seed-time pause — `[seed_schedule]` can't pause, spec 08). If the schedule was **already paused by a human**, recovery leaves it untouched and just diagnoses. The recovery engineer diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
@@ -557,7 +557,7 @@ Carve does not attempt to correlate the Account changes as a rename — dlt has 
 **Post-resolution backfills (analyst-initiated, separate from the resolution)**
 
 20. **Analyst:** `carve run salesforce --target prod --refresh drop_data --resources leads`. Confirmation prompt: "this will drop state and reload all rows from source. Type 'salesforce' to confirm" (UC3 decision; member-invokable). Worker runs a full reload of the lead resource. Historical Leads now have `LeadScore__c` populated.
-21. **For Account historical fill (`industry` → `industrysector`):** Out of scope for this incident. The follow-up dbt PR opened in step 13 adds a staging-layer alias mapping historical `industry` values to the new `industrysector` column. Belongs in dbt territory (a later increment specifies the dbt-side ergonomics).
+21. **For Account historical fill (`industry` → `industrysector`):** Out of scope for this incident. The follow-up dbt PR opened in step 13 adds a staging-layer alias mapping historical `industry` values to the new `industrysector` column. Belongs in dbt territory (the dbt-side ergonomics are specified in the dbt-engineer capability).
 22. **For Opportunity column archival:** Analyst manually runs `ALTER TABLE prod_db.raw_sfdc.opportunities DROP COLUMN legacy_forecast_category` (or renames to `_legacy_*` for archival) outside of Carve. Carve neither suggests nor executes the DDL — same hard rule as dlt: destination column lifecycle is the analyst's.
 
 ### Design decisions surfaced
@@ -594,6 +594,6 @@ Future stories to walk through, roughly in priority order:
 - **Schema drift in a source** — Salesforce adds a column; what does Carve do at the next scheduled run?
 - **Audit / observability** — "what shipped to prod last week, and who triggered each manual run?"
 - **Rollback a bad deploy** — merged PR introduced a regression; how does the team revert in prod?
-- **Add a dbt model** that depends on the Salesforce data from UC1 (a later increment, but worth designing for)
+- **Add a dbt model** that depends on the Salesforce data from UC1 (worth designing for)
 - **Multi-step pipeline** — pipeline composes dlt + dbt + sql with cross-step outputs
 - **Brownfield adoption** — existing dbt + dlt project, first `carve init`, convention inference

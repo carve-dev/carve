@@ -41,7 +41,7 @@ The brownfield process where Carve scans an existing dbt/dlt project and writes 
 Directed acyclic graph. Used for pipeline steps (a step's `depends_on`) and for dbt model dependencies (refs).
 
 **dbt**
-[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve drives for the transform phase. Carve treats dbt-core as a runtime dependency. AI authoring of models (the dbt **engineer**) is a later increment; Carve runs dbt via the `dbt` step type.
+[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve drives for the transform phase. Carve treats dbt-core as a runtime dependency. AI authoring of models is provided by the dbt **engineer**; Carve also runs dbt via the `dbt` step type.
 
 **dbt manifest**
 dbt's compiled project representation (`target/manifest.json`). Carve reads it (via the `dbt_manifest` skill) for model dependencies, sources, and tests — this *is* dbt's model-level lineage. See [lineage](../capabilities/lineage.md).
@@ -64,8 +64,8 @@ A dlt construct: one endpoint or table inside a source (e.g., `charges`). dlt's 
 **dlt source**
 A dlt construct: a logical connector (e.g., Stripe) containing one or more resources.
 
-**Embedding search** *(a later increment)*
-Semantic search over indexed model descriptions / column docs via vector embeddings, for fuzzy concept lookup. Deferred to a later increment; retrieval today is catalog + manifest + grep + investigation.
+**Embedding search**
+Semantic search over indexed model descriptions / column docs via vector embeddings, for fuzzy concept lookup. An in-scope retrieval layer alongside catalog + manifest + grep + investigation.
 
 **Event bus**
 The internal pub/sub for runtime events (`job.*`, `run.*`, `step.*`, `schedule.*`). In-process for OSS; the seam where hooks and webhooks subscribe. See [runtime](../capabilities/runtime.md).
@@ -140,7 +140,7 @@ The runtime loop that reclaims jobs from crashed workers via stale-heartbeat det
 The loop in `carve serve` that reconciles each `pipelines/<name>.toml` *definition* (steps, DAG, component refs, pins) into state — code wins. It seeds a schedule row from `[seed_schedule]` at first registration but never afterward touches the live schedule (which is data). See [pipelines](../capabilities/pipelines.md).
 
 **Recovery engineer**
-The subagent that diagnoses a retries-exhausted failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer is a later increment). Never writes component code or auto-deploys; produces an Investigation + a reviewable Plan. See [recovery](../capabilities/recovery.md).
+The subagent that diagnoses a retries-exhausted failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT, dbt, or SQL engineer. Never writes component code or auto-deploys; produces an Investigation + a reviewable Plan. See [recovery](../capabilities/recovery.md).
 
 **Refine**
 Iterating on a Plan with feedback (`carve plan --refine <plan_id> "<feedback>"`), producing a child plan in the same chain.
