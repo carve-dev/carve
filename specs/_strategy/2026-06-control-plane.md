@@ -1,6 +1,6 @@
 # 2026-06 — Carve is a control plane, not a project
 
-> **Status:** Decided 2026-06-16 (Nate). Foundational architecture decision. Refines [`2026-05-positioning.md`](./2026-05-positioning.md) (OSS agent over dlt + dbt; hosting + UI is the paid product) with the structural model. Many v0.1 specs are currently "project-shaped" and will need revision against this — see *Impact* below.
+> **Status:** Decided 2026-06-16 (Nate). Foundational architecture decision. Refines [`2026-05-positioning.md`](./2026-05-positioning.md) (OSS agent over dlt + dbt; hosting + UI is the paid product) with the structural model. Many capability specs are currently "project-shaped" and will need revision against this — see *Impact* below.
 
 ## The decision
 
@@ -18,7 +18,7 @@ This replaces the implicit prior model where a "Carve project" was one repo/SDLC
 - **AI-native authoring + the cross-cutting build → deploy → schedule → monitor loop is the differentiator** — the answer to "why not Dagster + an agent?" and "why not dltHub Pro?". Framing orchestration *alone* as the value collapses Carve into "a simpler Dagster," which the positioning explicitly rejects.
 - **Two modes, both first-class:** build-with-Carve (AI authors components into their repos) and orchestration-only (Carve references existing dlt/dbt/sql by version and only composes/schedules/monitors — PRD §6.2 mode 2). This duality is exactly *why* the control plane references components rather than owning them.
 
-**v0.1 timing caveat:** dlt authoring ships in v0.1; **dbt authoring is v0.2** (v0.1 *runs* dbt against existing models, doesn't write them); `sql` steps are user-authored in v0.1. Orchestration-only mode is fully v0.1 across all three.
+**Timing caveat:** dlt authoring ships first; **dbt authoring is a later increment** (Carve initially *runs* dbt against existing models, doesn't write them); `sql` steps are user-authored at first. Orchestration-only mode is present from the start across all three.
 
 ## Why
 
@@ -55,8 +55,8 @@ These refine the model above; concrete config shapes are in [`control-plane-refe
 
 ## Still-open sub-decisions
 
-4. **Deploy under the control-plane model — RESOLVED (2026-06-16): linked-PR ships in v0.1.** `carve deploy` promotes a component (its repo) + the control-plane composition, and cross-repo **linked-PR coordination** (ingest-first ordering) is **built in v0.1**, not deferred to v0.2 — spec 14's separate-remote deferral is reversed. `carve el deploy` retires or shrinks to a thin target-readiness `verify`. This is the **Wave 2** work item (spec 14 + ARCHITECTURE §7.5/§9.4/§10).
-5. **v0.1 scope/bundling.** Control plane + EL component + simple-mode is the v0.1 wedge; multi-component separation is the bigger appeal it must not preclude. *Open: does the shipping order / pillar bundling change under control-plane framing?*
+4. **Deploy under the control-plane model — RESOLVED (2026-06-16): linked-PR ships in the first usable cut.** `carve deploy` promotes a component (its repo) + the control-plane composition, and cross-repo **linked-PR coordination** (ingest-first ordering) is **built up front**, not deferred to a later increment — spec 14's separate-remote deferral is reversed. `carve el deploy` retires or shrinks to a thin target-readiness `verify`. The delivery plan sequences this work item (spec 14 + ARCHITECTURE §7.5/§9.4/§10).
+5. **Initial scope/bundling.** Control plane + EL component + simple-mode is the initial wedge; multi-component separation is the bigger appeal it must not preclude. *Open: does the shipping order / pillar bundling change under control-plane framing?*
 6. **Pillar restructure.** Re-articulate the four pillars around control-plane vs components (the README rewrite).
 
 ## Impact (docs/specs currently "project-shaped" — to revise)

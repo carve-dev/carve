@@ -1,6 +1,6 @@
 # REST API: FastAPI app, middleware, routers, streaming, webhooks
 
-> Consolidates the REST surface that earlier specs described endpoint-by-endpoint into a single FastAPI app with cross-cutting middleware (auth, errors, pagination, idempotency), streaming (WebSocket/SSE), and webhook delivery. Per [PRD §6.13 interfaces](../PRD.md), [PRD §6 intro on API parity](../PRD.md), [ARCHITECTURE §8.2 REST API](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 9](../PROJECT_PLAN.md).
+> Consolidates the REST surface that earlier specs described endpoint-by-endpoint into a single FastAPI app with cross-cutting middleware (auth, errors, pagination, idempotency), streaming (WebSocket/SSE), and webhook delivery. Per [PRD §6.13 interfaces](../PRD.md), [PRD §6 intro on API parity](../PRD.md), and [ARCHITECTURE §8.2 REST API](../ARCHITECTURE.md).
 
 ## Status
 
@@ -20,7 +20,7 @@ Ship the FastAPI app that exposes Carve's full functionality over HTTP. Concrete
 6. **WebSocket and SSE streaming** for live log and event subscriptions
 7. **Webhook publisher** that delivers durable events from the `events` table to user-subscribed URLs with HMAC signing
 8. **OpenAPI schema generation** auto-served at `/api/openapi.json` + Swagger UI at `/api/docs`
-9. **The full set of v0.1 routers** (plans, builds, runs, deploys, schedules, pipelines, agents, skills, mcp-servers, memory, jobs, workers, metrics, asks*, webhooks)
+9. **The full set of routers** (plans, builds, runs, deploys, schedules, pipelines, agents, skills, mcp-servers, memory, jobs, workers, metrics, asks*, webhooks)
 
 After this spec lands, every CLI command from earlier specs has its REST counterpart on the v1 API. Spec 10 generates MCP tools from this surface mechanically.
 
@@ -325,7 +325,7 @@ The FastAPI app shares the process's connection pool and event loop with the run
 - **Unit (errors):** representative `CarveError` subclasses serialize to the expected problem+json shape with stable `type` URLs
 - **Unit (pagination):** cursor encode/decode is stable; `has_more` detection via LIMIT+1 trick works
 - **Unit (idempotency):** same key + same body → cached response; same key + different body → 409; expired key → fresh execution
-- **Unit (openapi):** generated schema includes all v0.1 endpoints; the generated schema validates against the OpenAPI 3.1 spec
+- **Unit (openapi):** generated schema includes all endpoints; the generated schema validates against the OpenAPI 3.1 spec
 - **Integration (lifecycle):** `carve serve` starts; `curl http://127.0.0.1:8765/healthz` returns 200; `curl /api/openapi.json` returns valid schema
 - **Integration (streams WebSocket):** start a run via REST; open a WebSocket against `/api/v1/runs/{id}/stream`; receive expected event sequence
 - **Integration (streams SSE):** same scenario via SSE; verify keepalive frames every 30s
@@ -360,6 +360,6 @@ The FastAPI app shares the process's connection pool and event loop with the run
 
 - **CORS configuration defaults.** *Implementation default.* OSS default: allow `http://127.0.0.1:*` (loopback) for the static UI. Production users override via `[api.cors] allowed_origins = [...]` in `runtime.toml`. Hosted has stricter CORS managed by the control plane.
 - **OpenAPI 3.0 vs 3.1.** *Implementation default.* Use 3.1 (FastAPI 0.100+ default); broader tooling supports both. Revisit if a key downstream tool only supports 3.0.
-- **API versioning policy: how do we handle v2?** *Implementation default.* When v2 lands, both `/api/v1/*` and `/api/v2/*` run side-by-side for a deprecation window (12 months minimum). v1 endpoints get a `Deprecation` header with a sunset date. Documented in `docs/api-reference.md` even though we don't have a v2 in v0.1.
-- **Whether to ship a Python SDK for the REST API.** *Strategy-required.* Probably yes eventually; not in v0.1 (the CLI itself acts as a reference client). A separate `carve-client` Python package could ship post-v0.1 if there's demand. Defer.
+- **API versioning policy: how do we handle v2?** *Implementation default.* When v2 lands, both `/api/v1/*` and `/api/v2/*` run side-by-side for a deprecation window (12 months minimum). v1 endpoints get a `Deprecation` header with a sunset date. Documented in `docs/api-reference.md` even though we don't have a v2 yet.
+- **Whether to ship a Python SDK for the REST API.** *Strategy-required.* Probably yes eventually; not now (the CLI itself acts as a reference client). A separate `carve-client` Python package could ship later if there's demand. Defer.
 - **Telemetry headers.** *Strategy-required.* Should the server return any anonymous telemetry headers (`X-Carve-Version`, response timing) that opt-in clients can use? Coordinate with the broader telemetry question from spec 05.

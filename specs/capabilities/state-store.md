@@ -1,12 +1,12 @@
 # State store: Postgres (SQLite retired)
 
-> Aligns the M1 state store (SQLAlchemy + SQLite) to the v0.1 positioning's Postgres-from-day-one decision ([positioning #11](../_strategy/2026-05-positioning.md), [ARCHITECTURE §5.7](../ARCHITECTURE.md), [PROJECT_PLAN spec set item 1](../PROJECT_PLAN.md)).
+> Aligns the M1 state store (SQLAlchemy + SQLite) to the positioning's Postgres-from-day-one decision ([positioning #11](../_strategy/2026-05-positioning.md), [ARCHITECTURE §5.7](../ARCHITECTURE.md)).
 
 ## Status
 
 - **Status:** Mostly landed (2026-05-19); M1 test sweep deferred to state-store
 - **Depends on:** None (foundation spec)
-- **Blocks:** every subsequent v0.1 spec — the state store is foundational
+- **Blocks:** every subsequent capability spec — the state store is foundational
 - **Audit reference:** M1-03 was HISTORICAL with a code-revision flag; this spec ships that revision
 
 ## Goal
@@ -17,7 +17,7 @@ Replace SQLite with Postgres as Carve's state store backend, in a single coheren
 2. Audits and (where needed) revises the six existing Alembic migrations to work cleanly against Postgres
 3. Updates test infrastructure to run against Postgres (via testcontainers-python)
 
-After this spec lands, every subsequent v0.1 spec assumes a Postgres state store. SQLite is retired outright — the engine factory rejects any non-Postgres URL.
+After this spec lands, every subsequent capability spec assumes a Postgres state store. SQLite is retired outright — the engine factory rejects any non-Postgres URL.
 
 ### No migration tool
 
@@ -29,7 +29,7 @@ The original migrator code is preserved in git history at commit `23bcf88` for r
 
 - A SQLite → Postgres migration tool. Removed — see *No migration tool* above.
 - The `docker-compose.yml` bundling Postgres for first-run UX — that's [packaging OSS packaging](./packaging.md).
-- New tables introduced by other v0.1 specs (jobs, asks, lineage, webhooks, archive tables, etc.) — those land in their respective specs via additional Alembic migrations on top of the post-this-spec baseline.
+- New tables introduced by other capability specs (jobs, asks, lineage, webhooks, archive tables, etc.) — those land in their respective specs via additional Alembic migrations on top of the post-this-spec baseline.
 - Multi-tenancy `tenant_id` columns on every table — covered in [runtime](./runtime.md) and [rest-api](./rest-api.md) where the actual tenant-aware code paths land. This spec keeps the M1-shape schema; multi-tenancy is additive later.
 - Read replicas, partitioned tables, PgBouncer configuration — those are hosted-product concerns.
 - Migrating M1-era test fixtures from SQLite-backed `_make_config` helpers to the new Postgres fixture. Spec implied this work but the scope ballooned past the iteration budget; deferred to **state-store** (see *Deferred work* at the end of this spec).
@@ -55,7 +55,7 @@ The existing six tables (Run, Log, Plan, Pipeline, Build, plus the recovery-chai
 | `Run.error_message`       | TEXT             | TEXT                | unchanged                                            |
 | Timestamps                | naive UTC        | `TIMESTAMP WITH TIME ZONE` | Postgres native tz support; ARCHITECTURE §4.2 expects it for `scheduled_for`-style fields |
 
-Naive UTC was a SQLite portability concession; Postgres handles `TIMESTAMPTZ` natively and v0.1 step types (especially `dlt`'s schedule semantics) benefit from real tz handling. All ORM-side accessors continue to return UTC.
+Naive UTC was a SQLite portability concession; Postgres handles `TIMESTAMPTZ` natively and Carve's step types (especially `dlt`'s schedule semantics) benefit from real tz handling. All ORM-side accessors continue to return UTC.
 
 ### Alembic migration audit
 
@@ -108,15 +108,15 @@ The following items were spec'd but are deferred to **state-store** (or folded i
 
 ## Design notes
 
-- **Why Postgres-only at runtime instead of supporting both?** Because the v0.1 runtime (spec 07) depends on Postgres-specific features (partial unique indexes, `FOR UPDATE SKIP LOCKED`, JSONB) that have no clean SQLite equivalents. Supporting both would force the runtime to maintain two code paths, which defeats the simplicity dividend of Postgres-from-day-one.
-- **Why naive UTC → tz-aware?** SQLite drops `tzinfo` on round-trip, so M1 stored naive UTC and reattached `UTC` at the boundary. Postgres handles `TIMESTAMPTZ` natively; v0.1 step types (especially scheduled runs) benefit from real tz handling. The ORM-side return shape stays the same (UTC datetimes), so application code is unchanged.
+- **Why Postgres-only at runtime instead of supporting both?** Because the runtime (spec 07) depends on Postgres-specific features (partial unique indexes, `FOR UPDATE SKIP LOCKED`, JSONB) that have no clean SQLite equivalents. Supporting both would force the runtime to maintain two code paths, which defeats the simplicity dividend of Postgres-from-day-one.
+- **Why naive UTC → tz-aware?** SQLite drops `tzinfo` on round-trip, so M1 stored naive UTC and reattached `UTC` at the boundary. Postgres handles `TIMESTAMPTZ` natively; Carve's step types (especially scheduled runs) benefit from real tz handling. The ORM-side return shape stays the same (UTC datetimes), so application code is unchanged.
 - **Why a separate migration tool instead of in-place automatic migration?** The M1 user base is small enough that we can ask them to run one command, and the explicit gating prevents surprise behavior on `carve serve` startup (e.g., long migration delays, partial state on failure). A one-shot tool is easier to test, easier to reason about, and easier to recover from than auto-migration.
-- **Why not bump Alembic revision IDs?** The migration chain (0001..0006) remains the canonical history. Audits that rewrite operator calls inside an existing migration keep the same revision so users don't see a phantom "migration ran" entry. New v0.1 tables get fresh revisions (0007 onward) in their respective specs.
+- **Why not bump Alembic revision IDs?** The migration chain (0001..0006) remains the canonical history. Audits that rewrite operator calls inside an existing migration keep the same revision so users don't see a phantom "migration ran" entry. New tables get fresh revisions (0007 onward) in their respective specs.
 
 ## Open questions
 
 > Tagged **Strategy-required** (needs explicit user decision before the spec ships) or **Implementation default** (Claude Code picks a reasonable default during `/build-spec`; user confirms or redirects in PR review).
 
 - **`testcontainers-python` dependency.** *Implementation default.* Use it; the standard pattern; ~5–10s overhead on cold runs, negligible after first use via reuse. Swap to `pytest-postgresql` or `docker-py` if CI feels slow in practice.
-- **Connection pool sizing defaults.** *Implementation default.* Start with 10/20 (pool/overflow). With the v0.1 default of 1 worker we won't even stress 5 connections. Revisit when [runtime](./runtime.md) lands with concrete worker counts.
+- **Connection pool sizing defaults.** *Implementation default.* Start with 10/20 (pool/overflow). With the default of 1 worker we won't even stress 5 connections. Revisit when [runtime](./runtime.md) lands with concrete worker counts.
 - **Auto-migrate on `carve serve` startup vs explicit flag.** *Implementation default.* OSS: auto-migrate on startup (M1's current behavior; matches the dbt-core model for friendliness). Hosted: explicit out-of-band step. The OSS path is what this spec ships; hosted overrides via its own startup flow.

@@ -33,7 +33,7 @@ The durable, **version-independent** design of each Carve capability — the low
 - [`ask.md`](./ask.md) — the explorer (`carve ask`)
 - [`lineage.md`](./lineage.md) — lineage by investigation (no Carve store)
 - [`observability.md`](./observability.md) — agent/run telemetry tables, `carve metrics` rollups, OpenTelemetry export
-- [`semantic-search.md`](./semantic-search.md) — embedding-based concept retrieval + `carve embeddings rebuild` *(post-v0.1)*
+- [`semantic-search.md`](./semantic-search.md) — embedding-based concept retrieval + `carve embeddings rebuild` *(a later increment)*
 
 **Deploy & recovery**
 - [`deploy.md`](./deploy.md) — `carve deploy` configurable handoff + cross-repo linked PRs

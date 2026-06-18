@@ -1,13 +1,13 @@
 # MCP server: auto-generated adapter over REST; stdio + WebSocket transports
 
-> Ships Carve's MCP server as a thin adapter over the REST API from spec 09. Per [PRD §6.13 interfaces](../PRD.md), [ARCHITECTURE §8.3 MCP server](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 10](../PROJECT_PLAN.md). Implements the consumer side of [positioning #13 headless by default](../_strategy/2026-05-positioning.md) — every CLI action is reachable from Claude Desktop, Cursor, Claude Code, or any other MCP client.
+> Ships Carve's MCP server as a thin adapter over the REST API from spec 09. Per [PRD §6.13 interfaces](../PRD.md), and [ARCHITECTURE §8.3 MCP server](../ARCHITECTURE.md). Implements the consumer side of [positioning #13 headless by default](../_strategy/2026-05-positioning.md) — every CLI action is reachable from Claude Desktop, Cursor, Claude Code, or any other MCP client.
 
 ## Status
 
 - **Status:** Drafting
 - **Depends on:** [rest-api](./rest-api.md) (the REST surface this spec adapts)
 - **Blocks:** nothing structurally; MCP is consumer-facing
-- **Soft depends on:** v0.1 user experience — once MCP lands, the user can drive Carve from chat tools, which closes the headless-by-default loop
+- **Soft depends on:** the broader user experience — once MCP lands, the user can drive Carve from chat tools, which closes the headless-by-default loop
 
 ## Goal
 
@@ -28,7 +28,7 @@ After this spec lands, a user who installs Carve and runs `claude` (or opens Cla
 - Carve consuming *other* MCP servers as skills (lives in spec 04's `mcp:*` allowed_skills + the `mcp-servers` router from spec 09; this spec is about Carve being the *server*, not the client)
 - MCP server in hosted with multi-tenant routing (hosted concern)
 - Specific tool curation or per-tool prompt engineering — every REST endpoint becomes an MCP tool; the LLM picks
-- A polished MCP-server UI for managing tool exposure (out for v0.1)
+- A polished MCP-server UI for managing tool exposure (out for now)
 
 ## Behavior
 
@@ -36,10 +36,10 @@ After this spec lands, a user who installs Carve and runs `claude` (or opens Cla
 
 Carve implements the standard Anthropic MCP (Model Context Protocol) over JSON-RPC 2.0. The messages exchanged are:
 
-- **`initialize`** (client → server): client announces protocol version + capabilities; server responds with its protocol version + capabilities (we declare `tools` capability; not `resources`, `prompts`, or `sampling` in v0.1)
+- **`initialize`** (client → server): client announces protocol version + capabilities; server responds with its protocol version + capabilities (we declare `tools` capability; not `resources`, `prompts`, or `sampling` initially)
 - **`tools/list`** (client → server): client asks for the tool catalog; server returns the auto-generated list (one entry per REST endpoint)
 - **`tools/call`** (client → server): client invokes a tool; server adapts to REST; response is the tool result
-- **`notifications/*`** (server → client, optional): server-pushed events for long-running operations; v0.1 doesn't use these for tool calls (responses are synchronous), but the WebSocket transport keeps the channel open for future use
+- **`notifications/*`** (server → client, optional): server-pushed events for long-running operations; Carve doesn't use these for tool calls (responses are synchronous), but the WebSocket transport keeps the channel open for future use
 
 ### Tool generation
 
@@ -260,4 +260,4 @@ Per ARCHITECTURE §8.3, the hosted product offers a managed MCP endpoint at `wss
 - **MCP protocol version pinning.** *Implementation default.* Pin to the latest stable MCP spec version at the time of `/build-spec` execution; declare it in the `initialize` response. Upgrade when the MCP spec releases a new version with non-breaking improvements.
 - **Tool description quality.** *Implementation default.* The auto-generator uses the OpenAPI `description` field as the MCP tool description. The REST routers in spec 09 should write clear endpoint descriptions in their FastAPI route definitions; spec 09's reviewers should pay attention to description quality since it becomes LLM-visible context here.
 - **Handling Carve version skew between MCP server and REST server.** *Implementation default.* MCP server fetches OpenAPI from REST; if schemas reflect different endpoints, the tool catalog reflects the REST side. If the MCP server is older than the REST API, new endpoints simply won't have tools — graceful degradation. If the MCP server is newer than REST, the test for "every REST endpoint has a tool" still passes because we're driven by what's in the REST OpenAPI. Both directions degrade safely.
-- **Whether to support MCP `resources` capability for read-only resources like `pipelines/<name>.toml` contents.** *Implementation default.* No in v0.1; `tools/call` to `pipeline_show` returns the same content. Resources are a slightly different abstraction (LLM-discoverable, statically addressable) and aren't load-bearing for v0.1's use cases. Revisit if a client's UX would meaningfully improve with `resources` exposure.
+- **Whether to support MCP `resources` capability for read-only resources like `pipelines/<name>.toml` contents.** *Implementation default.* No for now; `tools/call` to `pipeline_show` returns the same content. Resources are a slightly different abstraction (LLM-discoverable, statically addressable) and aren't load-bearing for the initial use cases. Revisit if a client's UX would meaningfully improve with `resources` exposure.

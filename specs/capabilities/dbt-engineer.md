@@ -1,13 +1,13 @@
 # dbt engineer: authoring dbt models, tests, and sources
 
-> The **dbt authoring subagent** — the exact parallel to the [DLT engineer](./dlt-engineer.md), one tier up the stack. A declarative agent on the [harness](./harness.md) that **writes and modifies** dbt models, tests, snapshots, and `sources.yml` entries to fit the project's conventions, and **verifies by executing** (`dbt build`/`test`) until green — with a **dbt-qa** review subagent for coverage/convention. It is **backend-agnostic**: it authors the dbt *code*; [`dbt-execution`](./dbt-execution.md) runs it however the component runs (bundled / external / dbt Cloud / snowflake-native). *Phasing annotation:* authoring follows dlt authoring — Carve **runs** dbt from the start (via `dbt-execution`), and **authors** it in a later increment; the increment is a [DELIVERY](../DELIVERY.md) decision, not set here.
+> The **dbt authoring subagent** — the exact parallel to the [DLT engineer](./dlt-engineer.md), one tier up the stack. A declarative agent on the [harness](./harness.md) that **writes and modifies** dbt models, tests, snapshots, and `sources.yml` entries to fit the project's conventions, and **verifies by executing** (`dbt build`/`test`) until green — with a **dbt-qa** review subagent for coverage/convention. It is **backend-agnostic**: it authors the dbt *code*; [`dbt-execution`](./dbt-execution.md) runs it however the component runs (bundled / external / dbt Cloud / snowflake-native). *Phasing annotation:* authoring follows dlt authoring — Carve **runs** dbt (via `dbt-execution`), and **authors** it in a later increment; the increment is a [DELIVERY](../DELIVERY.md) decision, not set here.
 
 ## Status
 
 - **Status:** Drafting
 - **Depends on:** [harness](./harness.md) (subagent + delegation + permission gate + verify-by-execution), [extensibility](./extensibility.md) (the declarative agent + the `dbt_manifest` skill it leans on), [sql](./sql.md) (dialect-aware authoring/validation of model SQL), [dbt-execution](./dbt-execution.md) (how it runs `dbt build`/`test` to verify), [memory](./memory.md) (conventions/standards it writes to), [layout](./layout.md) (the dbt component it authors into).
 - **Used by:** [pipelines](./pipelines.md) (the authored models become `dbt` steps), [recovery](./recovery.md) (delegates a model-side fix here).
-- **Lineage:** net-new. The Pillar-3 "dbt agent" long deferred to "v0.2" — now a first-class capability with phasing as an annotation, per [`_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md).
+- **Lineage:** net-new. The Pillar-3 "dbt agent" long deferred to a later increment — now a first-class capability with phasing as an annotation, per [`_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md).
 
 ## Goal
 

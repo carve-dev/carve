@@ -1,6 +1,6 @@
 # Reference
 
-Canonical reference material for Carve v0.1, derived from the functional specs. Spec [reference-docs](../capabilities/reference-docs.md) keeps these in lock-step with the code at build time via completeness tests (every Typer command appears in the CLI reference; every init-scaffolded file appears in the config schema).
+Canonical reference material for Carve, derived from the capability specs. Spec [reference-docs](../capabilities/reference-docs.md) keeps these in lock-step with the code at build time via completeness tests (every Typer command appears in the CLI reference; every init-scaffolded file appears in the config schema).
 
 - [cli-reference.md](./cli-reference.md) — every `carve` command, with flags, examples, and exit codes
 - [config-schema.md](./config-schema.md) — every config file Carve reads or writes, with schema, defaults, and examples (the control-plane `carve.toml`, `pipelines/<name>.toml`, the `carve/` bundle)

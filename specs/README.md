@@ -14,19 +14,18 @@ The corpus splits into **durable design** (version-independent — what Carve is
 - Capability specs in [`capabilities/`](./capabilities/) — the lowest level of *design* detail, one per capability area.
 
 **Delivery:**
-- [`DELIVERY.md`](./DELIVERY.md) — the live, dependency-aware, **delta-aware** delivery plan, organized into foundation-first increments. **The source of truth for sequencing and scope.**
-- [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — the prior pillar-based build plan; **superseded for sequencing** by `DELIVERY.md` (its durable "shape of Carve" framing folds into PRD/ARCHITECTURE).
+- [`DELIVERY.md`](./DELIVERY.md) — the live, dependency-aware, **delta-aware** delivery plan, organized into foundation-first increments. **The source of truth for sequencing and scope.** (The prior pillar-based `PROJECT_PLAN.md` is retired to [`_archive/`](./_archive/PROJECT_PLAN-pillars.md); its "shape of Carve" framing folds into PRD/ARCHITECTURE.)
 
 ### Carve's four product pillars
 
 **Carve is a control plane plus an AI harness, over independently-versioned dlt/dbt/sql components — not a project that contains them** ([`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md), [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md)). The value proposition: **build, schedule, and monitor pipelines — all with AI.** The work is organized as four pillars (sequenced into increments in [`DELIVERY.md`](./DELIVERY.md)); the capability specs are in [`capabilities/`](./capabilities/).
 
-| Pillar | Theme | Ships |
+| Pillar | Theme | Sequencing |
 |---|---|---|
-| **P1** | Extract & Load — the **DLT component + engineer** (AI authors/runs dlt components) | v0.1 |
-| **P2** | Runtime — the **control plane** (scheduler / executor / monitor referencing components by name) | v0.1 |
-| **P3** | Transform — the **dbt component + engineer** | v0.2 |
-| **P4** | Multi-step pipeline — **composition** (components by name → step DAG) | v0.1 |
+| **P1** | Extract & Load — the **DLT component + engineer** (AI authors/runs dlt components) | First cut |
+| **P2** | Runtime — the **control plane** (scheduler / executor / monitor referencing components by name) | First cut |
+| **P3** | Transform — the **dbt component + engineer** | Later increment |
+| **P4** | Multi-step pipeline — **composition** (components by name → step DAG) | First cut |
 
 Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine (subagent orchestration, terminal-grade tools, a permission system, verify-by-execution, and declarative agents/skills/hooks extensibility), plus the recovery engineer and the dialect-aware SQL tool layer.
 
@@ -59,7 +58,7 @@ These are kept as living spec directories for the M1 / M1.1 work that's already 
 If you're picking this project up cold:
 
 1. Read [`PRD.md`](./PRD.md) end to end. It's the most important document — everything else is implementation detail.
-2. Read [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) to understand the four-pillar delivery shape.
+2. Read [`DELIVERY.md`](./DELIVERY.md) to see what's already built and what's next (the four-pillar shape is in the PRD and the pillar table above).
 3. Skim [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the technical model.
 4. Open [`capabilities/`](./capabilities/) and start building — read [`capabilities/README.md`](./capabilities/README.md) first (specs 15/16 are the AI-harness foundation everything runs on). M1 + M1.1 are already shipped.
 

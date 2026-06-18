@@ -35,7 +35,7 @@ url  = "git@github.com:acme/analytics.git"
 ref  = "9f3a1c7"
 ```
 
-- **Pin is per-component** (one resolved version per component, used by every pipeline that references it). Per-step version overrides are a possible later addition, not v0.1.
+- **Pin is per-component** (one resolved version per component, used by every pipeline that references it). Per-step version overrides are a possible later addition, not part of the initial cut.
 - **Simple mode writes none of this.** By convention: each `el/<name>/` dir is a `dlt` component named `<name>`; the detected dbt project is a `dbt` component. `[components.*]` blocks materialize only when you split a component out.
 
 ## Pipelines — reference by name
@@ -99,4 +99,4 @@ To move the dbt project into the analytics team's own repo:
 
 - **Simple-mode component naming:** do simple-mode steps omit `component` (and graduation backfills it), or always name it (zero graduation-churn, slightly less hidden)? Leaning: omit in simple mode, backfill on graduation — keeps simple mode cleanest.
 - **`ref` vs `branch`:** allow either on a component (`ref` = pinned, `branch` = track HEAD), default to tracking the repo's default branch when neither is set? Leaning: yes.
-- **`sql` components:** sql steps reference files in the control-plane repo today. Do ad-hoc sql files ever become a named/separable component, or stay inline? Leaning: stay inline for v0.1.
+- **`sql` components:** sql steps reference files in the control-plane repo today. Do ad-hoc sql files ever become a named/separable component, or stay inline? Leaning: stay inline for the initial cut.

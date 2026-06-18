@@ -80,7 +80,7 @@ Five components, same shape as before but with different contents:
 - **Is:** scheduled runs of named pipelines, each pipeline a small DAG of `dlt`, `dbt`, `sql`, `shell`, or `http` steps; retry-with-backoff; structured per-run logs; an alert when a run fails; a lineage record of which dlt sources fed which dbt models.
 - **Isn't (for now):** fan-out parallelism beyond intra-pipeline step parallelism, cross-pipeline conditional triggers, backfills as a first-class concept, asset-graph reactivity, custom Python operators outside the supported step types.
 
-If users hit the wall on those, the answer is "use a real orchestrator alongside Carve" — not "we'll add it." We may add some of these post-v1, but each one we add eats the simplicity dividend.
+If users hit the wall on those, the answer is "use a real orchestrator alongside Carve" — not "we'll add it." We may add some of these later, but each one we add eats the simplicity dividend.
 
 ## What changes in the existing 4-pillar plan
 
@@ -112,7 +112,7 @@ The runtime moves up because it's the paid wedge — we can't ship the hosted pr
 
 ## Implications for things outside the four pillars
 
-- **Snowflake-only stance loosens.** dlt is destination-agnostic, and so is dbt. We can still ship Snowflake-first for v0.1 (focus, fewer test matrices) but the architectural commitment to *only* Snowflake softens. Postgres/BigQuery/Databricks become P5+ work that adds adapter glue, not a rewrite.
+- **Snowflake-only stance loosens.** dlt is destination-agnostic, and so is dbt. We can still ship Snowflake-first initially (focus, fewer test matrices) but the architectural commitment to *only* Snowflake softens. Postgres/BigQuery/Databricks become later work that adds adapter glue, not a rewrite.
 - **The "Carve owns the execution layer" decision (PRD §5.2) is now more defensible**, because the layer is genuinely narrow (scheduled dbt + dlt) rather than a general process runner. Worth rewriting that section.
 - **The "we are not Dagster" message is now load-bearing**. Documentation needs an explicit "when to pick Carve vs Dagster/Prefect" page so users self-select correctly.
 - **Quality agent (P4 in old plan)** can probably fold into the dbt agent. dlt's schema contracts cover the ingest-side quality story.
@@ -129,7 +129,7 @@ The runtime moves up because it's the paid wedge — we can't ship the hosted pr
 ## Decisions (resolved 2026-05-14, round 2)
 
 7. **Curated source library lives in the main OSS monorepo** (e.g. `carve/sources/`). Reconsider extraction once the repo gets unwieldy or release cadences diverge. Quality bar matches the rest of Carve (typed, tested, documented); upstream contribution to `dlt-hub/verified-sources` is fine on a case-by-case basis but not the primary destination.
-8. **Initial Airbyte port list is deferred.** Heuristic when the time comes: "most popular Airbyte sources that dlt doesn't already have native coverage of," informed by what real users tell us they want to ingest. Not a v0.1 blocker.
+8. **Initial Airbyte port list is deferred.** Heuristic when the time comes: "most popular Airbyte sources that dlt doesn't already have native coverage of," informed by what real users tell us they want to ingest. Not a blocker for the first increment.
 9. **OSS local UI is static HTML regenerated per run**, modeled on `dbt docs`. At the end of each run the runtime re-renders `index.html` (run history table, lineage view, links to log files on disk). No live updates, no interactivity beyond links, no auth. Strong upgrade hook to the hosted product, which provides live operational monitoring. Honest trade: feels dated, but limited *by design*.
 ## Decisions (resolved 2026-05-14, round 3)
 
@@ -141,11 +141,11 @@ The runtime moves up because it's the paid wedge — we can't ship the hosted pr
 
 13. **Carve is headless by default. The full REST API and MCP server are OSS.** Every action available to Carve's own agents is available to external agents, chat tools, and scripts via REST or MCP. The CLI and local static-HTML UI are just two clients among many; users can also drive Carve from Claude Desktop, Cursor, Claude Code, or custom agents. The hosted product's moats are *operational, not feature-functional* — we do not gate API endpoints. The hosted product adds multi-tenancy, SSO/OAuth/RBAC, service accounts, audit log, rate limiting, polished cloud UI, premium integrations, hosted secrets, and managed infra; it does not add API capabilities the OSS version lacks. This is the dbt Labs / Sentry / Posthog model and explicitly rejects the open-core gating anti-pattern.
 
-14. **v0.1 bundles Pillars 1, 2, and 4 (dlt EL agent + runtime + multi-step pipeline composition) into a single release.** P3 (dbt agent) is the only pillar deferred to v0.2. Rationale: shipping P1 + P2 without P4 would leave v0.1 users unable to sequence dlt → dbt as a single pipeline — they'd have to schedule them as two separate cron jobs at staggered times, which is fragile and surprising for the headline use case. Bundling P4 in v0.1 makes the first release demonstrate the *full Carve loop* (intent → plan → build → run → deploy → schedule a composed pipeline → observe) end to end, even though dbt models are still user-authored until v0.2 ships the dbt agent. Note this collapses the version cadence: PROJECT_PLAN.md needs to handle that v0.2 carries only the dbt-agent pillar.
+14. **Pillars 1, 2, and 4 (dlt EL agent + runtime + multi-step pipeline composition) land together, before Pillar 3 (dbt agent).** The delivery plan sequences these into increments; Pillar 3 (dbt agent) is the only pillar held for a later increment. Rationale: shipping P1 + P2 without P4 would leave users unable to sequence dlt → dbt as a single pipeline — they'd have to schedule them as two separate cron jobs at staggered times, which is fragile and surprising for the headline use case. Landing P4 alongside P1/P2 makes the first usable cut demonstrate the *full Carve loop* (intent → plan → build → run → deploy → schedule a composed pipeline → observe) end to end, even though dbt models are still user-authored until the dbt agent lands. The delivery plan owns this sequencing: the later increment carries only the dbt-agent pillar.
 
 ## Still open
 
-- **Migration from M1's existing SQLite state store.** The walking skeleton (already shipped) uses SQLite. New direction is Postgres. Cleanest path is probably "wipe and start over with Postgres" since v0.1 isn't released yet, but worth confirming.
+- **Migration from M1's existing SQLite state store.** The walking skeleton (already shipped) uses SQLite. New direction is Postgres. Cleanest path is probably "wipe and start over with Postgres" since nothing is released yet, but worth confirming.
 - **Static-HTML UI implementation detail**: pure file regeneration, or a tiny read-only HTTP server that reads from the state store? Probably pure file regen for simplicity (`carve docs serve` to view), but a 50-line FastAPI app reading SQLite isn't much harder. Decide at implementation time.
 - **How the worker interacts with `carve run <pipeline>` invoked manually while the scheduler is also running.** Does the manual invocation jump the queue, queue normally, or run out-of-band of the worker entirely? Probably "queue normally and surface running state in CLI" is right, but worth confirming.
 

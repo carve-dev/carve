@@ -2,7 +2,7 @@
 
 > **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): `ask` is the **explorer** — a declarative **subagent** (`builtin/explorer.md`) the orchestrator `delegate`s read-only questions to, run in the **`read_only` permission mode** (spec 15) with read-only **terminal-grade tools** (`read_file`/`grep`/`glob`/`web_fetch`) + the dialect-aware **`sql` tool on the read role** (spec 18) + lineage/manifest/memory skills. The former `NoWriteSkillsGuardrail` is **subsumed by the `read_only` mode**: the permission gate (not a separate ask-only mechanism) structurally enforces no-writes. The citation model (`cited_entities`), the Ask data model + persistence, investigative memory selection, and the CLI/REST/MCP surface are unchanged.
 
-> The fifth lifecycle verb (sibling to plan/build/run/deploy), strictly side-effect-free. `carve ask` invokes the explorer subagent in `read_only` mode and returns a markdown answer with cited entities instead of a Plan. Per [PRD §6.5 ask](../PRD.md), [PRD §3 core loop sibling-verb note](../PRD.md), [ARCHITECTURE §7.1 ask](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 12](../PROJECT_PLAN.md).
+> The fifth lifecycle verb (sibling to plan/build/run/deploy), strictly side-effect-free. `carve ask` invokes the explorer subagent in `read_only` mode and returns a markdown answer with cited entities instead of a Plan. Per [PRD §6.5 ask](../PRD.md), [PRD §3 core loop sibling-verb note](../PRD.md), and [ARCHITECTURE §7.1 ask](../ARCHITECTURE.md).
 
 ## Status
 
@@ -28,9 +28,9 @@ After this spec lands, a user can ask "where do we calculate net revenue?" or "w
 ## Out of scope
 
 - **The harness core** — the subagent loop, the `delegate` tool, the terminal tools, the `read_only` permission gate, and role-scoped warehouse access all live in [harness](./harness.md); the declarative agent format in [extensibility](./extensibility.md); the `sql` tool in [sql](./sql.md). This spec **consumes** them and ships the explorer's agent definition, its system prompt, the Ask data model, and the citation builder.
-- Streaming the answer token-by-token (synchronous return in v0.1; the answer arrives as one chunk when the explorer finishes)
+- Streaming the answer token-by-token (synchronous return; the answer arrives as one chunk when the explorer finishes)
 - Asking *about* asks (e.g., "what have we been asking lately?") — handled by `carve asks list` rather than a meta-ask
-- Embedding-based semantic search over decisions/code (post-v0.1; v0.1 explorer uses the read tools + skills directly)
+- Embedding-based semantic search over decisions/code (a later increment; the explorer uses the read tools + skills directly)
 - Conversational follow-ups (each ask is a single round; multi-turn chat lives in the chat tool, e.g., Claude Desktop, which can call `ask` repeatedly)
 
 ## Behavior
@@ -241,7 +241,7 @@ These overrides go in the `tool_generator.py` override map from spec 10.
 - Asks are served synchronously by the API request handler (or the CLI's local execution for one-shot invocations without `carve serve`); each runs the explorer subagent in `read_only` mode
 - An ask invocation holds a DB session for the duration but creates no rows in `jobs`, `runs`, or `step_runs`
 - Asks DO write rows in `asks`, `agent_invocations`, and the harness's tool-call telemetry (so the agent observability surface still records them; the explorer's cost/tokens roll up to its invocation per spec 15)
-- Multiple concurrent asks are fine; the only contention is DB connections, which is well-sized for the v0.1 default of one worker + a few API request slots
+- Multiple concurrent asks are fine; the only contention is DB connections, which is well-sized for the default of one worker + a few API request slots
 
 ### What asks read
 
@@ -325,7 +325,7 @@ This is implemented by subscribing to the explorer's tool-call events and printi
 ## Design notes
 
 - **Why a dedicated explorer subagent (vs. the M1 plan-orchestrator-with-a-guardrail)?** Under the harness, "ask" is just the **`read_only` mode** of a subagent that gathers context and answers — exactly the Claude-Code explorer pattern. A declarative `builtin/explorer.md` with a read-only tool grant is simpler and *safer* than bolting a write-blocking guardrail onto the orchestrator: the mode enforces no-writes for the explorer and every other read-only delegate uniformly, the agent is user-overridable like any other, and context-isolation (spec 15) keeps an investigation's tool churn out of the orchestrator's window. It does **not** delegate further — it answers itself.
-- **Why is the answer synchronous (no streaming in v0.1)?** Because the typical ask takes 5–15 seconds, which is fine for synchronous return. Streaming the answer would require a different protocol (SSE/WebSocket on the asks endpoint) and a different client-side UX. The `--watch` mode streams *progress* (which tool is running) which is the more useful UX for a 10-second wait.
+- **Why is the answer synchronous (no streaming)?** Because the typical ask takes 5–15 seconds, which is fine for synchronous return. Streaming the answer would require a different protocol (SSE/WebSocket on the asks endpoint) and a different client-side UX. The `--watch` mode streams *progress* (which tool is running) which is the more useful UX for a 10-second wait.
 - **Why is `decisions.md` included by default in ask but not in plan?** Because asks frequently look backward ("why did we…?") whereas plans look forward. Loading decisions into plan context wastes tokens for the typical case where the plan doesn't reference past decisions. The selector's `is_investigative` flag is the explicit toggle.
 - **Why no separate jobs/queue for asks?** Because asks are short, synchronous, and stateless from the runtime's perspective. Adding them to the jobs table would create contention with scheduled runs for no benefit; the API request handler does the work directly.
 - **Why a separate citations data structure rather than embedding citations in the markdown?** Because consumers (static UI, cloud UI, external agents via MCP) want structured citations they can render as cards / deep-links. Markdown alone forces every consumer to parse footnotes themselves. The duplication (markdown footnotes + structured cited_entities) is intentional: markdown for human readability, structured data for programmatic consumption.
@@ -333,7 +333,7 @@ This is implemented by subscribing to the explorer's tool-call events and printi
 
 ## Open questions
 
-- **Whether asks should cite warehouse rows (e.g., "Stripe had 12,438 charges loaded yesterday").** *Implementation default.* The explorer can `sql` introspect/`SELECT` on the read role during an ask (allowed in `read_only`). Whether to add a dedicated "sample some rows" affordance that returns row excerpts as `cited_entity` excerpts. Defer to post-v0.1 — users who need row-level data via ask can compose a `sql` step in their pipelines and ask about the output.
+- **Whether asks should cite warehouse rows (e.g., "Stripe had 12,438 charges loaded yesterday").** *Implementation default.* The explorer can `sql` introspect/`SELECT` on the read role during an ask (allowed in `read_only`). Whether to add a dedicated "sample some rows" affordance that returns row excerpts as `cited_entity` excerpts. Defer to a later increment — users who need row-level data via ask can compose a `sql` step in their pipelines and ask about the output.
 - **Maximum ask invocation duration.** *Implementation default.* 60-second hard cap; longer asks are likely going in circles and consuming tokens. The cap is enforced by the explorer subagent's `max_turns` (spec 15), tuned so ~20 turns × typical 3s ≈ 60s.
 - **Whether `carve ask` should suggest a follow-up `carve plan` when the answer reveals a change is needed.** *Implementation default.* The prompt steers toward "here's what I found; if you want to change it, run `carve plan "<suggested phrasing>"`." The CLI surface doesn't take action automatically — the user picks.
-- **Asks-as-citations: when an ask is itself useful context for a later plan/ask.** *Implementation default.* Not in v0.1; each ask is independent. A future enhancement could index ask answers and let agents discover them ("we've answered this before"). Defer.
+- **Asks-as-citations: when an ask is itself useful context for a later plan/ask.** *Implementation default.* Not initially; each ask is independent. A future enhancement could index ask answers and let agents discover them ("we've answered this before"). Defer.

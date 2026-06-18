@@ -2,7 +2,7 @@
 
 > **Foundation spec** — the "bring your own agents, skills, MCPs, CLIs, hooks" model that makes the harness extensible. Per [`../_strategy/2026-06-ai-harness.md`](../_strategy/2026-06-ai-harness.md). Resolves the built-vs-spec agent drift: agents/skills become **declarative + discoverable**.
 >
-> **Hardened per the 15/16 adversarial review (2026-06-16):** grant validation is **runtime attenuation** (the [spec 15](./harness.md) gate is the boundary, not load-time); MCP/load defaults are **fail-closed**; the hook event set has named **emission points** (incl. `pre_deploy`/`post_build`, per the v0.1-advanced-primitives decision).
+> **Hardened per the 15/16 adversarial review (2026-06-16):** grant validation is **runtime attenuation** (the [spec 15](./harness.md) gate is the boundary, not load-time); MCP/load defaults are **fail-closed**; the hook event set has named **emission points** (incl. `pre_deploy`/`post_build`, per the advanced-primitives decision).
 
 ## Status
 
@@ -23,7 +23,7 @@ Users (and Carve's built-ins) define agents, skills, hooks, and MCP imports **de
 
 - The **harness core** (loop, gate, subagents, tools) — [harness](./harness.md). This spec defines the *format + loaders* + the hook *config*; spec 15 owns the gate, the tool-set intersection, and the hook fire-points.
 - **Carve-exposes-MCP** (server) — [mcp-server](./mcp-server.md).
-- **In-process custom-skill SDK** (`@skill`-decorated Python from users) + **custom step-type SDK** — post-v0.1.
+- **In-process custom-skill SDK** (`@skill`-decorated Python from users) + **custom step-type SDK** — a later increment.
 
 ## Behavior
 
@@ -118,6 +118,6 @@ on = "pre_deploy"; run = "scripts/policy_check.sh"        # block deploys that v
 
 ## Open questions
 
-- **Lineage graph owner.** *Resolved — no graph.* Carve maintains no `lineage_nodes`/`lineage_edges` store (the original ARCHITECTURE §6.2 graph is retired). [lineage](./lineage.md) reframes lineage as **investigation**: the explorer reads dbt's manifest + dlt's schema (the new `dlt_schema` skill) + the code on demand. Column-level lineage is a v0.2 concern.
-- **Skill-pack discovery at scale.** *Implementation default.* Description-match for tens of packs; an embedding index is post-v0.1.
-- **Org/team agent namespacing.** *Implementation default.* User-overrides-builtin by name in v0.1; richer namespacing post-v0.1.
+- **Lineage graph owner.** *Resolved — no graph.* Carve maintains no `lineage_nodes`/`lineage_edges` store (the original ARCHITECTURE §6.2 graph is retired). [lineage](./lineage.md) reframes lineage as **investigation**: the explorer reads dbt's manifest + dlt's schema (the new `dlt_schema` skill) + the code on demand. Column-level lineage is a later increment.
+- **Skill-pack discovery at scale.** *Implementation default.* Description-match for tens of packs; an embedding index is a later increment.
+- **Org/team agent namespacing.** *Implementation default.* User-overrides-builtin by name for now; richer namespacing is a later increment.

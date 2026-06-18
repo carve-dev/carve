@@ -2,7 +2,7 @@
 
 > **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). This is the **foundation** spec: it reframes `carve.toml` as the *control-plane config* (project metadata + connections + **component references**), generalizes the old singular `[dbt]` / `[dlt]` topology blocks into N named, typed `[components.<name>]` blocks (each with a `type`, a `mode`, mode-specific `url`/`branch`/`path`, and an optional per-component `ref` pin), and defines the convention-based **simple mode** that hides all of this until a component is split out. `[el]` is no longer special — EL artifacts are just `type = "dlt"` components, symmetric with dbt.
 
-> Locks the directory layout on disk and the `carve.toml` control-plane schema that records which components the control plane references and where each one resolves, per [PRD §6.2](../PRD.md), [ARCHITECTURE §3](../ARCHITECTURE.md), [ARCHITECTURE §10.1](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 3](../PROJECT_PLAN.md). Carries forward content from the archived [P1.1-01 flat-layout draft](../_archive/pillar-1.1-flat-layout/01-flat-layout.md), revised to reflect that `el/<name>/` contents are dlt pipeline files rather than bespoke Python EL scripts.
+> Locks the directory layout on disk and the `carve.toml` control-plane schema that records which components the control plane references and where each one resolves, per [PRD §6.2](../PRD.md), [ARCHITECTURE §3](../ARCHITECTURE.md), and [ARCHITECTURE §10.1](../ARCHITECTURE.md). Carries forward content from the archived [P1.1-01 flat-layout draft](../_archive/pillar-1.1-flat-layout/01-flat-layout.md), revised to reflect that `el/<name>/` contents are dlt pipeline files rather than bespoke Python EL scripts.
 
 ## Status
 
@@ -21,7 +21,7 @@ Define and lock:
 5. The provenance convention for Carve-generated dlt files (so users and agents can tell what came from where)
 6. The workspace cache for `separate-remote` components (`.carve/workspaces/<name>/` with git sync semantics) — generalized to any separate-remote component (dlt or dbt), not just dbt
 
-After this spec lands, every other v0.1 spec assumes this control-plane config + layout. Init scaffolds it (spec 05), the EL agent writes into the resolved component (spec 04), the runtime resolves component names through it (specs 07, 08). Pipeline steps reference components **by name** (`component = "<name>"`) and the graduation/inspection commands (`carve component`, `carve components show`, `carve schedule reseed`) are specified in [pipelines](./pipelines.md), which *consumes* the resolver this spec defines.
+After this spec lands, every other capability spec assumes this control-plane config + layout. Init scaffolds it (spec 05), the EL agent writes into the resolved component (spec 04), the runtime resolves component names through it (specs 07, 08). Pipeline steps reference components **by name** (`component = "<name>"`) and the graduation/inspection commands (`carve component`, `carve components show`, `carve schedule reseed`) are specified in [pipelines](./pipelines.md), which *consumes* the resolver this spec defines.
 
 ## Out of scope
 
@@ -148,7 +148,7 @@ Resolution rules, per the component's `mode` (or convention in simple mode):
 - **`separate-local`**: the recorded `path` is the component's code path. Must exist; error at startup if not.
 - **`separate-remote`**: workspace cache at `<root>/.carve/workspaces/<derived-name>/` (derived name = `slugify(url) + "-" + ref-or-branch`), synced via the workspace cache module below and checked out at the component's pinned `ref` (or the branch HEAD if unpinned, per the precedence rule above).
 
-Every runtime call site (`dlt`/`dbt` step executors, the EL agent's file-write target, the dbt agent's in v0.2, manifest reader, sources.yml reader) resolves component code through `resolve_component` — no path math elsewhere. `carve components show` (spec 08) surfaces the resolved set.
+Every runtime call site (`dlt`/`dbt` step executors, the EL agent's file-write target, the dbt agent's in a later increment, manifest reader, sources.yml reader) resolves component code through `resolve_component` — no path math elsewhere. `carve components show` (spec 08) surfaces the resolved set.
 
 ### Workspace cache for `separate-remote` mode
 
@@ -217,7 +217,7 @@ A small number of working-skeleton + M1.1 users have shipped projects with the `
 
 - `carve init --migrate-from-targets` walks the project, moves `targets/<target>/el/<artifact>/` to `el/<artifact>/`, and records target-specific configuration in `.dlt/config.toml`'s per-target sections instead
 - The migration is one-shot and not undoable
-- Pre-migration state is committed first via a git commit named "Pre-Carve-v0.1-layout-migration" so the user can revert
+- Pre-migration state is committed first via a git commit named "Pre-Carve-layout-migration" so the user can revert
 
 ## Tests
 
@@ -233,7 +233,7 @@ A small number of working-skeleton + M1.1 users have shipped projects with the `
 
 ## Acceptance
 
-- A v0.1 install (from `carve init`) in greenfield or brownfield-same-repo produces the canonical directory layout
+- An install (from `carve init`) in greenfield or brownfield-same-repo produces the canonical directory layout
 - The three topologies (same-repo, separate-local, separate-remote) are each runnable end-to-end for both dbt and dlt independently (so all nine pairwise combinations work)
 - The workspace cache correctly clones, syncs, and detects dirty state for separate-remote
 - Carve-generated dlt files carry the provenance header; the header is machine-readable
@@ -251,6 +251,6 @@ A small number of working-skeleton + M1.1 users have shipped projects with the `
 ## Open questions
 
 - **`sync_mode` per backend (hard vs soft).** *Implementation default.* Default to hard sync (`git fetch && git reset --hard`); this is the safest default for "the workspace should match the remote." Soft sync (`git pull`) preserves any uncommitted local changes but is footgun-prone. Users who want pull semantics can opt in via `[components.<name>] sync_mode = "soft"` in `carve.toml`.
-- **Workspace cache eviction policy.** *Implementation default.* No automatic eviction in v0.1; manual `carve workspaces clear <name>` if a user wants to force a fresh clone. With cache caps configurable in `runtime.toml` if it becomes an issue.
+- **Workspace cache eviction policy.** *Implementation default.* No automatic eviction; manual `carve workspaces clear <name>` if a user wants to force a fresh clone. With cache caps configurable in `runtime.toml` if it becomes an issue.
 - **Behavior when `dbt_project.yml` is found more than one level down (e.g., `<root>/some/deep/path/dbt_project.yml`).** *Implementation default.* Discovery only looks at root and one level down by default. Deeper paths require an explicit `[components.<name>]` block (`type = "dbt"`, `mode = "separate-local"`, `path = …`). The shallow default avoids false positives in monorepos that have many `dbt_project.yml` files (e.g., one per service).
-- **Should the workspace cache support sparse-checkout for large remote dbt repos?** *Implementation default.* No in v0.1. dbt projects fit in a typical clone; sparse-checkout adds complexity for a problem we don't have yet. Revisit if a user hits it.
+- **Should the workspace cache support sparse-checkout for large remote dbt repos?** *Implementation default.* No for now. dbt projects fit in a typical clone; sparse-checkout adds complexity for a problem we don't have yet. Revisit if a user hits it.

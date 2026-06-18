@@ -1,16 +1,16 @@
 # Reference doc rewrites: CLI reference, config schema, glossary, governance
 
-> Rewrites the four reference docs in `specs/reference/` to match the v0.1 positioning. Per the spec audit's tags (cli-reference REWRITE, config-schema REWRITE, glossary REVISE, governance REVISE) and [PROJECT_PLAN spec set item 13](../PROJECT_PLAN.md).
+> Rewrites the four reference docs in `specs/reference/` to match the current positioning. Per the spec audit's tags (cli-reference REWRITE, config-schema REWRITE, glossary REVISE, governance REVISE).
 
 ## Status
 
 - **Status:** Drafting
-- **Depends on:** all v0.1 functional specs (01–12 and 14). Reference docs derive from the source-of-truth specs; this spec lands last.
-- **Blocks:** nothing (last spec in v0.1)
+- **Depends on:** all the functional capability specs. Reference docs derive from the source-of-truth specs; this spec lands last.
+- **Blocks:** nothing (lands last)
 
 ## Goal
 
-Rewrite four reference docs so the canonical references for the CLI surface, config files, vocabulary, and contribution model are correct under the v0.1 positioning. After this spec lands:
+Rewrite four reference docs so the canonical references for the CLI surface, config files, vocabulary, and contribution model are correct under the current positioning. After this spec lands:
 
 - A user can look up any `carve` command in `cli-reference.md` and see flags, examples, exit codes
 - A user can find any file in a Carve project in `config-schema.md` with its schema and defaults
@@ -35,7 +35,7 @@ A complete, authoritative reference for the `carve` CLI surface. Structure:
 ```markdown
 # Carve CLI reference
 
-> Generated to match v0.1.0. For programmatic / agent consumption, see the
+> Generated to match the current release. For programmatic / agent consumption, see the
 > auto-generated OpenAPI schema at /api/openapi.json or the MCP tool listing
 > via `tools/list`.
 
@@ -186,9 +186,9 @@ Alphabetical terms with one-paragraph definitions. Revise from the existing vers
 
 **Entries to remove or rework** (out-of-date):
 
-- **Approval step** — drop (was M3-era; not in v0.1)
+- **Approval step** — drop (was M3-era; not yet in scope)
 - **Capability flow** — drop (outdated mental model)
-- **Embedding search** — annotate as "future / post-v0.1"
+- **Embedding search** — annotate as "future / a later increment"
 - **`LocalVenvRunner`** — keep but note it's now wrapped by the runtime worker pool
 
 **Existing entries to keep/update**:
@@ -245,9 +245,9 @@ This is the dbt Labs / Sentry / Posthog model.
 
 ## Maintainership
 
-v0.x maintained by Nate Skousen and Claude Code. Once v0.1 ships, additional
-maintainers will be added as contributors emerge. The hosted product is
-maintained separately by the commercial entity behind Carve.
+Currently maintained by Nate Skousen and Claude Code. Once the first release
+ships, additional maintainers will be added as contributors emerge. The hosted
+product is maintained separately by the commercial entity behind Carve.
 
 ## Trademark + branding
 
@@ -258,7 +258,7 @@ endorsement or affiliation with the upstream project.
 ## Reporting security issues
 
 Security issues should be reported privately to security@carve.dev (or the
-equivalent address at v0.1.0 time) rather than via public issues. See SECURITY.md
+equivalent address at first-release time) rather than via public issues. See SECURITY.md
 in the repo root.
 ```
 
@@ -273,15 +273,15 @@ Both tests fail CI if a new CLI command or config file ships without a correspon
 
 - `test_cli_reference_completeness.py` (described above)
 - `test_config_schema_completeness.py` (described above)
-- Manual review: a `/build-spec` reviewer reads each reference doc end-to-end and confirms it matches the v0.1 surface (this is a docs-quality check, not a unit test)
+- Manual review: a `/build-spec` reviewer reads each reference doc end-to-end and confirms it matches the current surface (this is a docs-quality check, not a unit test)
 - Cross-link integrity: every `(../capabilities/<area>)` link resolves to an existing file (verified via a simple grep + filesystem check during CI)
 
 ## Acceptance
 
-- `cli-reference.md` lists every `carve` command shipped in v0.1 with flags, examples, exit codes
+- `cli-reference.md` lists every shipped `carve` command with flags, examples, exit codes
 - `config-schema.md` lists every file in a Carve project with schema, defaults, examples
-- `glossary.md` includes the new entries listed above; out-of-date entries removed; existing entries updated for v0.1 terminology
-- `governance.md` documents the Apache 2.0 + DCO + hosted-product relationship per the v0.1 positioning
+- `glossary.md` includes the new entries listed above; out-of-date entries removed; existing entries updated for current terminology
+- `governance.md` documents the Apache 2.0 + DCO + hosted-product relationship per the current positioning
 - Completeness tests pass; CI catches reference-doc-drift when new commands or config files ship
 - A new contributor can read all four refs end-to-end in under 60 minutes and be operational
 
@@ -295,7 +295,7 @@ Both tests fail CI if a new CLI command or config file ships without a correspon
 
 ## Open questions
 
-- **Whether to auto-generate `cli-reference.md` from Typer's introspection.** *Implementation default.* No in v0.1 — hand-written reference is clearer (examples, pitfalls, cross-links) than what Typer would emit. The completeness test catches drift on the command-name dimension. Revisit if it becomes a maintenance burden.
+- **Whether to auto-generate `cli-reference.md` from Typer's introspection.** *Implementation default.* No for now — hand-written reference is clearer (examples, pitfalls, cross-links) than what Typer would emit. The completeness test catches drift on the command-name dimension. Revisit if it becomes a maintenance burden.
 - **Whether `config-schema.md` should embed actual JSON Schema / Pydantic-derived schemas.** *Implementation default.* No — annotated example contents are clearer for human readers. The Pydantic schemas in code are the executable source of truth; users who want machine-readable schemas read the code or call the OpenAPI endpoint.
-- **Whether to translate reference docs to other languages.** *Strategy-required.* English-only for v0.1. Community translations welcome post-v0.1.
-- **Whether to ship a "what's new in v0.1" changelog as part of this spec.** *Implementation default.* No — CHANGELOG.md lives at repo root and follows Keep a Changelog conventions. This spec is reference, not history. (Note: the audit didn't tag CHANGELOG; it gets updated alongside `v0.1.0` tagging.)
+- **Whether to translate reference docs to other languages.** *Strategy-required.* English-only initially. Community translations welcome later.
+- **Whether to ship a "what's new" changelog as part of this spec.** *Implementation default.* No — CHANGELOG.md lives at repo root and follows Keep a Changelog conventions. This spec is reference, not history. (Note: the audit didn't tag CHANGELOG; it gets updated alongside release tagging.)

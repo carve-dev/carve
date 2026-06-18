@@ -41,7 +41,7 @@ The brownfield process where Carve scans an existing dbt/dlt project and writes 
 Directed acyclic graph. Used for pipeline steps (a step's `depends_on`) and for dbt model dependencies (refs).
 
 **dbt**
-[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve drives for the transform phase. Carve treats dbt-core as a runtime dependency. The dbt **engineer** (AI authoring of models) arrives in v0.2; v0.1 runs dbt via the `dbt` step type.
+[Data build tool](https://docs.getdbt.com/) — the SQL transformation framework Carve drives for the transform phase. Carve treats dbt-core as a runtime dependency. AI authoring of models (the dbt **engineer**) is a later increment; Carve runs dbt via the `dbt` step type.
 
 **dbt manifest**
 dbt's compiled project representation (`target/manifest.json`). Carve reads it (via the `dbt_manifest` skill) for model dependencies, sources, and tests — this *is* dbt's model-level lineage. See [lineage](../capabilities/lineage.md).
@@ -64,8 +64,8 @@ A dlt construct: one endpoint or table inside a source (e.g., `charges`). dlt's 
 **dlt source**
 A dlt construct: a logical connector (e.g., Stripe) containing one or more resources.
 
-**Embedding search** *(post-v0.1)*
-Semantic search over indexed model descriptions / column docs via vector embeddings, for fuzzy concept lookup. Deferred to post-v0.1; v0.1 retrieval is catalog + manifest + grep + investigation.
+**Embedding search** *(a later increment)*
+Semantic search over indexed model descriptions / column docs via vector embeddings, for fuzzy concept lookup. Deferred to a later increment; retrieval today is catalog + manifest + grep + investigation.
 
 **Event bus**
 The internal pub/sub for runtime events (`job.*`, `run.*`, `step.*`, `schedule.*`). In-process for OSS; the seam where hooks and webhooks subscribe. See [runtime](../capabilities/runtime.md).
@@ -113,7 +113,7 @@ The job-queue pattern: `UPDATE ... WHERE status='queued' ... FOR UPDATE SKIP LOC
 The harness's main loop: classifies a goal, gathers bounded context, and delegates scoped tasks to subagents (engineers, reviewers, the explorer, recovery). Owns refinement and the review fan-out; does not author component code itself. See [harness](../capabilities/harness.md).
 
 **OSS edition**
-The open-source Carve (this repo), Apache 2.0, feature-complete for single-team self-hosters. Anything that ships in v0.1 stays OSS. See [governance.md](./governance.md).
+The open-source Carve (this repo), Apache 2.0, feature-complete for single-team self-hosters. Anything that ships in the initial release stays OSS. See [governance.md](./governance.md).
 
 **Permission mode**
 One of `read_only` | `plan` | `build` | `deploy` — the harness's escalating capability tiers. The **permission gate** enforces them (and `allowed_paths`, the bash sandbox, secret-path denial) at the tool-call boundary; agent grants are *attenuated* to `grant ∩ mode-permitted`, never widened. Fail-closed. See [harness](../capabilities/harness.md).
@@ -140,7 +140,7 @@ The runtime loop that reclaims jobs from crashed workers via stale-heartbeat det
 The loop in `carve serve` that reconciles each `pipelines/<name>.toml` *definition* (steps, DAG, component refs, pins) into state — code wins. It seeds a schedule row from `[seed_schedule]` at first registration but never afterward touches the live schedule (which is data). See [pipelines](../capabilities/pipelines.md).
 
 **Recovery engineer**
-The subagent that diagnoses a retries-exhausted failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer arrives in v0.2). Never writes component code or auto-deploys; produces an Investigation + a reviewable Plan. See [recovery](../capabilities/recovery.md).
+The subagent that diagnoses a retries-exhausted failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer is a later increment). Never writes component code or auto-deploys; produces an Investigation + a reviewable Plan. See [recovery](../capabilities/recovery.md).
 
 **Refine**
 Iterating on a Plan with feedback (`carve plan --refine <plan_id> "<feedback>"`), producing a child plan in the same chain.
@@ -179,10 +179,10 @@ The dialect-aware capability every agent uses (parse/validate/transpile via `sql
 The Postgres database that persists pipelines, plans, builds, jobs, runs, steps, logs, schedules, investigations, and audit trails. SQLite was retired in spec 01. See [state-store](../capabilities/state-store.md).
 
 **Static HTML UI**
-Carve's minimal local web UI: pages (run history, per-run detail + logs, pipelines) regenerated on run events and served on loopback by `carve docs serve`. No live updates, no auth, no lineage view in v0.1. The polished operational UI is the hosted product. See [ui](../capabilities/ui.md).
+Carve's minimal local web UI: pages (run history, per-run detail + logs, pipelines) regenerated on run events and served on loopback by `carve docs serve`. No live updates, no auth, no lineage view. The polished operational UI is the hosted product. See [ui](../capabilities/ui.md).
 
 **Step**
-The unit of execution inside a pipeline. v0.1 has three step types — `dlt`, `dbt`, `sql` — each with `id`, `depends_on`, and a `[steps.failure_mode]` (`fail`/`warn`/`continue`/`retry`/`skip_downstream`). `dlt`/`dbt` steps reference a component by name; `sql` steps reference a file + connection. See [pipelines](../capabilities/pipelines.md).
+The unit of execution inside a pipeline. There are three step types — `dlt`, `dbt`, `sql` — each with `id`, `depends_on`, and a `[steps.failure_mode]` (`fail`/`warn`/`continue`/`retry`/`skip_downstream`). `dlt`/`dbt` steps reference a component by name; `sql` steps reference a file + connection. See [pipelines](../capabilities/pipelines.md).
 
 **Subagent**
 A specialist agent the orchestrator delegates a scoped task to, running in its own isolated context and returning a summary (the context-isolation mechanism that keeps the main loop bounded). The DLT engineer, pipeline engineer, recovery engineer, explorer, and the review subagents (dlt-qa, dlt-security) are subagents. See [harness](../capabilities/harness.md).

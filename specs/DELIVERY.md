@@ -1,10 +1,10 @@
 # Carve — Delivery plan
 
-**What to build, in what order, given what's already built.** This is the temporal layer ([`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)): it sequences work into dependency-ordered, foundation-first increments and carries the version/phase identity. The durable design lives elsewhere and is **not** organized by phase — [`PRD.md`](./PRD.md) (what/why/who), [`ARCHITECTURE.md`](./ARCHITECTURE.md) (the technical model), and the capability specs (today under [`capabilities/`](./capabilities/); they describe *how a capability works*, version-independently).
+**What to build, in what order, given what's already built.** This is the temporal layer ([`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)): it sequences work into dependency-ordered, foundation-first increments and carries the phase/increment identity (and the release tag at the end). The durable design lives elsewhere and is **not** organized by phase — [`PRD.md`](./PRD.md) (what/why/who), [`ARCHITECTURE.md`](./ARCHITECTURE.md) (the technical model), and the capability specs (today under [`capabilities/`](./capabilities/); they describe *how a capability works*, version-independently).
 
 This is a **living, delta-aware** document. It plans *changes and additions* to the current codebase, not greenfield builds. As increments land, update the *Current state* section and check off exit criteria; as priorities shift, re-sequence increments here — without touching the capability specs.
 
-> **Note.** Specs live in [`capabilities/<area>`](./capabilities/) (durable design); increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` or `PROJECT_PLAN.md` — is the source of truth for sequencing and scope. The concrete **file manifest for each slice is not stored** — it is generated at build time (see *How a slice is built*, below).
+> **Note.** Specs live in [`capabilities/<area>`](./capabilities/) (durable design); increments below reference them by capability name. `DELIVERY.md` — not `capabilities/README.md` — is the source of truth for sequencing and scope. The concrete **file manifest for each slice is not stored** — it is generated at build time (see *How a slice is built*, below).
 
 ---
 
@@ -124,17 +124,17 @@ Everything else (specs 02–19) is **designed but unbuilt**. The foundational AI
 
 ## Increment 6 — Reference & release
 
-**Goal.** Correct reference docs and the `v0.1.0` tag.
+**Goal.** Correct reference docs and the initial release tag.
 
 **In scope**
 - **Reference docs** — cli-reference / config-schema / glossary / governance kept in lock-step via completeness tests — [reference-docs](./capabilities/reference-docs.md) *(content rewritten 2026-06; this increment adds the completeness tests against built code)*
-- **Release** — tag `v0.1.0`.
+- **Release** — tag the initial release (the semver version is chosen at release time).
 
 **Depends on.** Everything (reference derives from the built surface).
 
-**Delta.** The reference content is already regenerated to the v0.1 model; this increment adds the build-time completeness tests (every Typer command in cli-reference; every init-scaffolded file in config-schema) and pins the few **planned** CLI commands (`run --watch/--resume`, `runs list/show/tail`, `auth login`, `metrics` CLI spelling) by giving each an owning slice or cutting it.
+**Delta.** The reference content is already regenerated to the current model; this increment adds the build-time completeness tests (every Typer command in cli-reference; every init-scaffolded file in config-schema) and pins the few **planned** CLI commands (`run --watch/--resume`, `runs list/show/tail`, `auth login`, `metrics` CLI spelling) by giving each an owning slice or cutting it.
 
-**Exit criteria (v0.1.0).** `carve init → plan → build → run → deploy → scheduled-run-on-cron` works end-to-end against a real Snowflake account, and the same loop works via REST and MCP. Completeness tests green.
+**Exit criteria (initial release).** `carve init → plan → build → run → deploy → scheduled-run-on-cron` works end-to-end against a real Snowflake account, and the same loop works via REST and MCP. Completeness tests green.
 
 ---
 
@@ -145,7 +145,7 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
                                                                               │
                                           Incr 4: 09 10 11 12 19  ◀───────────┤
                                           Incr 5: 14 17           ◀───────────┘
-                                          Incr 6: 13 + v0.1.0 tag (after all)
+                                          Incr 6: 13 + release tag (after all)
 ```
 
 - **Foundation-first.** The harness (15/16) and control-plane layout (03) gate everything AI- and component-shaped; nothing real ships before them.
@@ -153,13 +153,13 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
 - **Deploy + recovery after a pipeline can run** (they act on built/running pipelines).
 - **Reference + release last** (derives from the built surface) — the ADR's reasoning for why reference docs ship last.
 
-## Capabilities pending sequencing / post-v0.1
+## Capabilities pending sequencing
 
 Specs that exist but aren't yet placed in an increment — the next sequencing pass (Increments 1–6 above were drawn *before* the dbt deep-dive + the adversarial PRD/ARCH/use-cases audit added the specs below):
 
 - **Added since the increments were drawn — awaiting placement.** Several are **M1.1-shipped or foundational** (likely a retroactive Increment 0, *not* deferred): [`plan-build`](./capabilities/plan-build.md) (the change lifecycle — Plan/Build entities, synthesis, drift; M1.1-shipped), [`model-auth`](./capabilities/model-auth.md) (provider credentials — API key + Claude-subscription OAuth; M1.1-shipped), [`observability`](./capabilities/observability.md) (agent/run telemetry tables + `carve metrics` + OTel), [`connect`](./capabilities/connect.md) (on-demand provisioning — engine install + pin, warehouse/source connect), [`dbt-execution`](./capabilities/dbt-execution.md) (run dbt across backends — needed *before* authoring, since orchestration-only shops run dbt without writing it).
 - **dbt authoring** — [`dbt-engineer`](./capabilities/dbt-engineer.md) (AI authoring of models/tests/sources + dbt-qa); follows dlt authoring + dbt-execution.
 - **Lineage depth:** `sql`-step producer tracking ([lineage](./capabilities/lineage.md) *Out of scope*). (Column-level lineage may arrive *via the Fusion dbt engine* rather than Carve — see [dbt-execution](./capabilities/dbt-execution.md).)
-- **Retrieval:** [`semantic-search`](./capabilities/semantic-search.md) — embedding/semantic search (now specced; post-v0.1).
-- **Concurrency:** concurrent subagent fan-out (v0.1 is sequential/sync).
+- **Retrieval:** [`semantic-search`](./capabilities/semantic-search.md) — embedding/semantic search (now specced; a later increment).
+- **Concurrency:** concurrent subagent fan-out (the initial cut is sequential/sync).
 - **The planned CLI commands** if not pinned in increment 6.

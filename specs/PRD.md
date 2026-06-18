@@ -16,7 +16,7 @@ The whole warehouse lifecycle in one place, authored by intent, accessible from 
 
 Carve combines four things that most data tools keep separate:
 
-1. **An AI harness for data work** — a Claude-Code-style agentic engine that builds and deploys components: a main orchestration loop that delegates to domain subagents (a DLT engineer with qa/security reviewers, a pipeline engineer, a recovery engineer, an explorer; a dbt engineer in v0.2), armed with terminal-grade tools, running behind a permission system, that verifies its work by executing it. Fully extensible — bring your own agents, skills, MCP servers, CLIs, and hooks.
+1. **An AI harness for data work** — a Claude-Code-style agentic engine that builds and deploys components: a main orchestration loop that delegates to domain subagents (a DLT engineer with qa/security reviewers, a pipeline engineer, a recovery engineer, an explorer; a dbt engineer is a later increment), armed with terminal-grade tools, running behind a permission system, that verifies its work by executing it. Fully extensible — bring your own agents, skills, MCP servers, CLIs, and hooks.
 2. **A control plane — a narrow, opinionated runtime** — scheduled execution of `dlt` + `dbt` + `sql` pipelines composed from components referenced by name, with multi-worker job claiming, structured logs, retries, and alerts. Deliberately *not* a general-purpose orchestrator: no asset graphs, no arbitrary DAGs, no plugin operators.
 3. **A programmable surface — CLI, REST API, and MCP server** — every action available to Carve's own agents is available to any external agent, chat tool, or script. The local web UI is just one client among many.
 4. **A hosted product for teams that don't want to operate it themselves** — managed control plane, polished cloud UI, collaboration, SSO, push-button deploy
@@ -33,7 +33,7 @@ The opinion: for the 80% of warehouse work that's well-trodden territory (ingest
 
 **Tertiary persona — the agent developer.** Building their own data-stack agent or platform. Wants a programmable backend that can plan/build/run pipelines via API or MCP, so they don't have to reinvent the dlt + dbt code generation, the runtime, and the observability. They consume Carve via the REST API or MCP server, not the CLI or web UI. This persona didn't exist in the old PRD; it does now because Carve is headless by default.
 
-**Anti-persona — the platform team at a 10,000-person enterprise.** Carve is not designed for the long tail of enterprise platform requirements (multi-cluster orchestration, fine-grained RBAC across thousands of resources, integration with proprietary identity providers, SLA contracts beyond what the hosted product offers, custom asset-graph orchestration). Those teams will be better served by Airflow, Dagster, or — eventually — a Carve enterprise tier. v0.x targets the SMB-to-mid-market segment.
+**Anti-persona — the platform team at a 10,000-person enterprise.** Carve is not designed for the long tail of enterprise platform requirements (multi-cluster orchestration, fine-grained RBAC across thousands of resources, integration with proprietary identity providers, SLA contracts beyond what the hosted product offers, custom asset-graph orchestration). Those teams will be better served by Airflow, Dagster, or — eventually — a Carve enterprise tier. Carve targets the SMB-to-mid-market segment.
 
 ## 3. The core loop
 
@@ -44,8 +44,8 @@ Intent → Plan → Build → Run → Deploy → Schedule → Observe
 ```
 
 1. **Intent** — a user or external agent expresses a goal in natural language ("onboard Salesforce", "make `stg_orders` incremental", "add freshness checks to all marts"). Intent enters via CLI, REST API, MCP server, or web UI.
-2. **Plan** — Carve's orchestrator (the harness's main loop) classifies and decomposes the goal, delegates to the right domain subagents (DLT engineer, pipeline engineer; dbt engineer in v0.2), gathers component context, and synthesizes a structured plan with file diffs and cost estimates. The plan is reviewable, iterable (`plan --refine`), and a durable artifact in its own right.
-3. **Build** — once the plan is approved, the subagents generate the code into the relevant component: dlt sources and resources, dbt models and tests (v0.2), the SQL glue between them, and the `pipelines/<name>.toml` that composes them. They **verify by executing** (`dlt pipeline run`, `dbt build`/`test`) until green. Output lands in the working tree, not committed yet.
+2. **Plan** — Carve's orchestrator (the harness's main loop) classifies and decomposes the goal, delegates to the right domain subagents (DLT engineer, pipeline engineer; dbt engineer is a later increment), gathers component context, and synthesizes a structured plan with file diffs and cost estimates. The plan is reviewable, iterable (`plan --refine`), and a durable artifact in its own right.
+3. **Build** — once the plan is approved, the subagents generate the code into the relevant component: dlt sources and resources, dbt models and tests (a later increment), the SQL glue between them, and the `pipelines/<name>.toml` that composes them. They **verify by executing** (`dlt pipeline run`, `dbt build`/`test`) until green. Output lands in the working tree, not committed yet.
 4. **Run** — the user (or agent, or scheduler) executes the composed pipeline against the dev target. Iteration is cheap — re-run, refine, re-run, until the rows look right.
 5. **Deploy** — once dev iteration is done, deploy promotes the component(s) plus the control-plane composition from dev to prod via a **configurable handoff** (files → commit → push → PR; default PR). A change spanning a separate-repo component and the control-plane repo produces **linked PRs** (ingest-first ordering). For the hosted product, deploy adds a push-button variant with audit log alongside the PR path.
 6. **Schedule** — once merged, the control plane fires runs against prod on the configured cadence. The schedule is **data**: a pipeline's optional `[seed_schedule]` block seeds the schedules table at first registration, and thereafter the live schedule is changed instantly via `carve schedule` (CLI/API/UI), audited — not via a code change or PR. Workers claim jobs from the Postgres queue, retry on transient failure, and emit alerts.
@@ -57,13 +57,13 @@ Steps 1–3 are LLM-mediated (the subagents do the reasoning, grounded in real t
 
 ## 4. Scope
 
-### 4.1 In scope for v0.1 (the control plane + the DLT component-engineer + composition + the AI harness)
+### 4.1 In scope (the control plane + the DLT component-engineer + composition + the AI harness)
 
-v0.1 bundles the control plane (the runtime that references components by name), the DLT component-engineer, multi-step composition, and the AI harness into one release so the first version demonstrates the full Carve loop end to end: the AI harness builds and deploys a dlt component, the control plane composes/schedules/executes a multi-step pipeline, observability lands in the local UI / REST API / MCP server. Orchestration-only mode (bring your own dlt/dbt/sql) is fully in scope across all three step types.
+Carve bundles the control plane (the runtime that references components by name), the DLT component-engineer, multi-step composition, and the AI harness so the product demonstrates the full Carve loop end to end: the AI harness builds and deploys a dlt component, the control plane composes/schedules/executes a multi-step pipeline, observability lands in the local UI / REST API / MCP server. Orchestration-only mode (bring your own dlt/dbt/sql) is fully in scope across all three step types. (The delivery plan sequences this scope into increments — see [`DELIVERY.md`](./DELIVERY.md).)
 
 - **The AI harness**: a Claude-Code-style agentic engine — subagent delegation, terminal-grade tools (`edit`, `bash`, `glob`, `grep`, `web_fetch`, `web_search`), permission modes (`read_only`/`plan`/`build`/`deploy`) with allowlists + sandboxed bash, and the verify-by-execution loop
-- **v0.1 subagents**: orchestrator (main loop), DLT engineer (+ dlt-qa / dlt-security review subagents, phased in), pipeline engineer, recovery engineer (diagnose-then-delegate), explorer (`ask`). The dbt engineer is v0.2.
-- **Declarative extensibility**: bring-your-own agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks, and MCP (consume + expose) — all in v0.1
+- **Subagents**: orchestrator (main loop), DLT engineer (+ dlt-qa / dlt-security review subagents, phased in), pipeline engineer, recovery engineer (diagnose-then-delegate), explorer (`ask`). The dbt engineer is a later increment.
+- **Declarative extensibility**: bring-your-own agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks, and MCP (consume + expose)
 - **AI-driven dlt authoring**: the DLT engineer generates dlt sources/resources/pipelines into a named component, plus `.dlt/secrets.toml` and `.dlt/config.toml`
 - **SQL dialect-aware tool layer**: `sqlglot`-backed transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution (Snowflake first-class; others via `sqlglot`) — a cross-cutting tool every subagent uses, plus a thin SQL specialist
 - **Curated Carve connector/skill library** (`SKILL.md` packs), including ports of popular Airbyte sources rewritten as native dlt
@@ -87,29 +87,29 @@ v0.1 bundles the control plane (the runtime that references components by name),
 - **Documentation site**
 - **Apache 2.0** license, **DCO** sign-off from day one
 
-### 4.2 Out of scope for v0.1
+### 4.2 Out of scope (deferred to a later increment)
 
-- **The dbt engineer subagent** — comes in v0.2. v0.1 users hand-write dbt models; v0.1's control plane can still *schedule* `dbt build` as a step inside a composed pipeline even though the harness can't yet *author* models.
-- **The hosted product** — separate release timeline; v0.1 is OSS-only.
+- **The dbt engineer subagent** — a later increment. Until then, users hand-write dbt models; the control plane can still *schedule* `dbt build` as a step inside a composed pipeline even though the harness can't yet *author* models.
+- **The hosted product** — separate release timeline; the initial scope is OSS-only.
 - **Polished cloud UI, multi-user auth, SSO/RBAC, audit log, push-button deploy with approval, premium integrations, hosted secrets** — paid-product features.
 - **Multi-LLM-provider support** — Anthropic-only; abstraction prepared but unused.
 - **Visual pipeline builder** — TOML/YAML/code authoring, agent-first.
 - **Looker, Tableau, other BI integrations**.
 - **Reverse-ETL integrations** (Hightouch, Census).
-- **Embedding-based semantic schema search** — likely lands in v0.2 or later alongside the dbt engineer's broader context needs.
-- **Custom step types beyond `dlt`/`dbt`/`sql`** — `shell`, `http`, `python`, `agent`, `approval` come after v0.1 once the step-type abstraction has hardened against three real consumers.
-- **In-process custom-skill SDK and custom step-type SDK** — note this is *only* the in-process Python SDKs (the `@skill`-decorated path, the step-type extension SDK). **Declarative extensibility ships in v0.1**: bring-your-own agents (`carve/agents/*.md`), `SKILL.md` skill packs, hooks, and MCP (both directions) are all in scope (§6.11–6.12). Users who need custom skill behavior in v0.1 expose it via an MCP server or a `SKILL.md` pack; the in-process SDKs land once the built-ins stabilize.
+- **Embedding-based semantic schema search** — likely a later increment alongside the dbt engineer's broader context needs.
+- **Custom step types beyond `dlt`/`dbt`/`sql`** — `shell`, `http`, `python`, `agent`, `approval` come later once the step-type abstraction has hardened against three real consumers.
+- **In-process custom-skill SDK and custom step-type SDK** — note this is *only* the in-process Python SDKs (the `@skill`-decorated path, the step-type extension SDK). **Declarative extensibility ships in scope**: bring-your-own agents (`carve/agents/*.md`), `SKILL.md` skill packs, hooks, and MCP (both directions) are all in scope (§6.11–6.12). Users who need custom skill behavior expose it via an MCP server or a `SKILL.md` pack; the in-process SDKs land once the built-ins stabilize.
 
 ### 4.3 Future, not now
 
 The architecture is designed to support these without rewriting:
 
-- **The hosted product** (v1.x): multi-tenant control plane, polished cloud UI, SSO/OAuth/RBAC, service accounts, audit log, push-button deploy with approval, hosted secrets, premium integrations (PagerDuty, Datadog)
+- **The hosted product**: multi-tenant control plane, polished cloud UI, SSO/OAuth/RBAC, service accounts, audit log, push-button deploy with approval, hosted secrets, premium integrations (PagerDuty, Datadog)
 - **Multi-LLM-provider support** (OpenAI, Google, local models)
 - **Marketplace of community-contributed dlt sources and skill packs**
 - **Federation between multiple Carve control planes**
-- **In-process custom step-type SDK** for users to plug their own step types into the control plane (the declarative + MCP extension paths ship in v0.1)
-- **In-process custom-skill SDK** (the `@skill`-decorated Python path) for custom agent skills (the `SKILL.md` + MCP skill paths ship in v0.1)
+- **In-process custom step-type SDK** for users to plug their own step types into the control plane (the declarative + MCP extension paths ship earlier)
+- **In-process custom-skill SDK** (the `@skill`-decorated Python path) for custom agent skills (the `SKILL.md` + MCP skill paths ship earlier)
 - **Additional first-class destinations** (BigQuery, Databricks, Redshift) elevated from "dlt-supports-it-best-effort" to "Carve-maintainer-tested"
 
 ## 5. Key design decisions
@@ -132,7 +132,7 @@ Specifically: Carve never modifies the user's `dbt_project.yml`, `profiles.yml`,
 
 The user can run Carve in three configurations:
 
-1. **Authoring + orchestration** (greenfield or mixed): Carve's agents generate new dlt pipelines and dbt models (when v0.2 ships), and Carve's runtime schedules them.
+1. **Authoring + orchestration** (greenfield or mixed): Carve's agents generate new dlt pipelines and dbt models (the dbt engineer is a later increment), and Carve's runtime schedules them.
 2. **Orchestration only** (full brownfield): the user authored their own dlt and dbt; Carve detects them, registers them, and lets the user compose them into scheduled pipelines via plan/build without generating any new EL or transform code. This is the natural mode for teams already using dltHub Pro or another dlt-management tool.
 3. **Mix**: Carve authors some pipelines and orchestrates user-authored ones alongside them.
 
@@ -168,7 +168,7 @@ Carve's runtime schedules and executes pipelines made of `dlt`, `dbt`, and `sql`
 
 This narrowness is a feature. Most warehouse pipelines don't need a general DAG framework — they need "run dlt, then dbt, then a SQL file, on a cron, with retries and alerts." That's what Carve does. Teams that need conditional branching or arbitrary DAGs are better served by Dagster or Airflow.
 
-If users hit a wall on these capabilities, the answer is "use a real orchestrator alongside Carve" — Carve exposes its own runs via webhooks and a REST API, so it composes cleanly with whatever orchestrator a user already runs. We may add some capabilities post-v0.1, but each one eats the simplicity dividend, and we treat that cost as real.
+If users hit a wall on these capabilities, the answer is "use a real orchestrator alongside Carve" — Carve exposes its own runs via webhooks and a REST API, so it composes cleanly with whatever orchestrator a user already runs. We may add some capabilities later, but each one eats the simplicity dividend, and we treat that cost as real.
 
 ### 5.7 Multi-worker from day one
 
@@ -178,7 +178,7 @@ This matters because adding multi-worker semantics later is much more expensive 
 
 ### 5.8 Postgres from day one
 
-The state store is Postgres from v0.1, not SQLite. Three reasons:
+The state store is Postgres from the start, not SQLite. Three reasons:
 
 1. **Multi-worker (decision 5.7) requires concurrent writes**, which SQLite's WAL mode handles only at small worker counts. Postgres is built for this from the start.
 2. **The OSS-to-hosted migration becomes free**: hosted Carve runs on Postgres, and OSS Carve already runs on Postgres, so the migration is "change the connection string."
@@ -188,11 +188,11 @@ The cost is that Carve isn't quite as zero-config as a SQLite-backed CLI tool. W
 
 ### 5.9 Steps as the unit of execution
 
-A pipeline is a directed acyclic graph of steps. Each step has a type (`dlt`, `dbt`, `sql` in v0.1), a config, a list of dependencies, and a failure mode. Failure modes: `fail` (default — fail the pipeline), `warn` (record a warning, continue), `continue` (record the failure, continue), `retry` (retry N times then fail), `skip_downstream` (skip dependents, continue siblings).
+A pipeline is a directed acyclic graph of steps. Each step has a type (`dlt`, `dbt`, `sql`), a config, a list of dependencies, and a failure mode. Failure modes: `fail` (default — fail the pipeline), `warn` (record a warning, continue), `continue` (record the failure, continue), `retry` (retry N times then fail), `skip_downstream` (skip dependents, continue siblings).
 
 Steps within a pipeline run in parallel when their dependencies allow. Each step's output is structured (logs + status + named outputs) and can be referenced by downstream steps via Jinja templating.
 
-This generalizes the "pipeline = Python script" model to handle the common case of "run dlt, then dbt, then a SQL post-step that refreshes a search index." The step type set is intentionally small (3 types in v0.1) and grows slowly — adding a new type is a real commitment because it expands what the runtime claims to do.
+This generalizes the "pipeline = Python script" model to handle the common case of "run dlt, then dbt, then a SQL post-step that refreshes a search index." The step type set is intentionally small (3 types) and grows slowly — adding a new type is a real commitment because it expands what the runtime claims to do.
 
 ### Surface area
 
@@ -200,7 +200,7 @@ This generalizes the "pipeline = Python script" model to handle the common case 
 
 Carve is a backend with a programmable surface. The CLI, the local static-HTML UI, the polished cloud UI (paid), and external chat tools / agents are all clients of the same REST API and MCP server. There is no functionality that only the CLI can do, no functionality that only the cloud UI can do.
 
-This decision has two practical consequences. First, the REST API and MCP server are first-class deliverables in v0.1, not retrofits — every CLI command has a corresponding API endpoint and MCP tool, and they ship together. Second, Carve is consumable by external agents (Claude Desktop, Cursor, Claude Code, custom agents) on equal footing with humans. An agent driving Carve via MCP can plan a pipeline, refine it, build it, run it against dev, and open a deploy PR — the same loop a human runs at the CLI.
+This decision has two practical consequences. First, the REST API and MCP server are first-class deliverables, not retrofits — every CLI command has a corresponding API endpoint and MCP tool, and they ship together. Second, Carve is consumable by external agents (Claude Desktop, Cursor, Claude Code, custom agents) on equal footing with humans. An agent driving Carve via MCP can plan a pipeline, refine it, build it, run it against dev, and open a deploy PR — the same loop a human runs at the CLI.
 
 MCP also goes the other direction: Carve consumes external MCP servers as skills. The Snowflake MCP server, the dbt MCP server, the GitHub MCP server — all appear to Carve's agents as namespaced skills (`mcp:snowflake:query`, `mcp:github:open_pr`). This is what plugs Carve into the broader AI-tooling ecosystem instead of trying to be an island.
 
@@ -218,13 +218,13 @@ This is the dbt Labs / Sentry / Posthog model. We explicitly reject the open-cor
 
 Carve's AI layer is a **Claude-Code-style agentic harness specialized for data work**: a main agentic loop (the **orchestrator**) that **delegates to typed subagents**, armed with terminal-grade tools (`edit`, `bash`, `glob`, `grep`, `web_fetch`, `web_search`) plus domain skills, running behind a permission system, that **verifies its work by executing it**. The orchestrator doesn't do the deep work itself — it classifies and decomposes the goal, delegates to the right subagent(s) via a `delegate`/Task tool, and synthesizes the results into a reviewable plan or diff.
 
-A subagent is a *fresh loop with its own context window, tool set, and system prompt* that returns a **summary**, not its transcript. This one move buys both multi-agent specialization and context management: a deep read inside a subagent returns a summary to the orchestrator rather than flooding the main context. The v0.1 subagents are the **DLT engineer** (engineer = architect + build, with separate **dlt-qa** / **dlt-security** *review* subagents — fresh, adversarial context), the **pipeline engineer** (composes components by name), the **recovery engineer** (diagnose-then-delegate), and the **explorer** (the read-only `ask` verb). The **dbt engineer** is v0.2. This is the same engineer→parallel-reviewers→fix pattern Carve uses on itself, brought to users' pipelines. **SQL is not a subagent** — it is a cross-cutting, dialect-aware *tool layer* every subagent uses (§5.13, §6.12), plus a thin SQL specialist.
+A subagent is a *fresh loop with its own context window, tool set, and system prompt* that returns a **summary**, not its transcript. This one move buys both multi-agent specialization and context management: a deep read inside a subagent returns a summary to the orchestrator rather than flooding the main context. The subagents are the **DLT engineer** (engineer = architect + build, with separate **dlt-qa** / **dlt-security** *review* subagents — fresh, adversarial context), the **pipeline engineer** (composes components by name), the **recovery engineer** (diagnose-then-delegate), and the **explorer** (the read-only `ask` verb). The **dbt engineer** is a later increment. This is the same engineer→parallel-reviewers→fix pattern Carve uses on itself, brought to users' pipelines. **SQL is not a subagent** — it is a cross-cutting, dialect-aware *tool layer* every subagent uses (§5.13, §6.12), plus a thin SQL specialist.
 
 Permission modes (`read_only`/`plan`/`build`/`deploy`) line up with the lifecycle, and recovery's fixes flow through the same plan/build/PR path — no autonomous writes to prod. This keeps each subagent focused, independently testable, swappable, and bounded in token budget as the system grows.
 
 ### 5.13 Schema context is a retrieval problem
 
-Real warehouses have thousands of tables. Stuffing the catalog into LLM context is impossible and unnecessary. Carve solves this with layered retrieval: structured catalog queries against the destination `INFORMATION_SCHEMA` for facts, dbt manifest queries for dependencies, dlt schema queries for resource→table, grep for exact references, and embedding-based semantic search (post-v0.1) for fuzzy concepts like "customer churn metrics." Lineage and impact are **investigated** across the dbt manifest + dlt schema on demand, not read from a Carve-owned graph (lineage).
+Real warehouses have thousands of tables. Stuffing the catalog into LLM context is impossible and unnecessary. Carve solves this with layered retrieval: structured catalog queries against the destination `INFORMATION_SCHEMA` for facts, dbt manifest queries for dependencies, dlt schema queries for resource→table, grep for exact references, and embedding-based semantic search (a later increment) for fuzzy concepts like "customer churn metrics." Lineage and impact are **investigated** across the dbt manifest + dlt schema on demand, not read from a Carve-owned graph (lineage).
 
 The agent doesn't pick a layer. The agent picks a *skill* (or a terminal tool — `grep`, a `sqlglot`-validated query); skills are implemented using the appropriate layer. Context stays bounded through **subagent context-isolation**: a subagent does its own deep retrieval against these layers in its isolated window and returns a *summary* to the orchestrator — so no single context holds "the whole catalog, figure it out." Grounding the LLM in real tool output (introspection, lineage, `sqlglot` validation) over its own guesses is also the accuracy story.
 
@@ -240,13 +240,13 @@ A user fluent in dlt or dbt sees familiar files when they look in their workspac
 
 ### 5.15 Roles: Viewer, Creator, Admin (forward-looking)
 
-v0.1 is single-user; there is no role concept in OSS yet. When multi-user lands (in the hosted product, and possibly in OSS later), three roles cover ~99% of real use cases:
+Carve is single-user to start; there is no role concept in OSS yet. When multi-user lands (in the hosted product, and possibly in OSS later), three roles cover ~99% of real use cases:
 
 - **Viewer** — read-only access to pipelines, runs, logs
 - **Creator** — can plan, build, run, and deploy their own pipelines; cannot modify others'
 - **Admin** — can intervene in any pipeline, edit org-level settings, manage users
 
-Resist adding more roles until real customers ask. Fine-grained RBAC is an enterprise concern, not a v0.1 or v0.2 concern. The state store carries an `owner_user_id` field even in single-user mode (always `1`), so the schema is multi-user-ready when it lands.
+Resist adding more roles until real customers ask. Fine-grained RBAC is an enterprise concern, not a near-term concern. The state store carries an `owner_user_id` field even in single-user mode (always `1`), so the schema is multi-user-ready when it lands.
 
 ### 5.16 Apache 2.0 + DCO + private hosted repo
 
@@ -301,7 +301,7 @@ The most common Carve install is on top of one or both of: an existing dbt proje
 **Operating modes.** Per design decision 5.2, three configurations are supported — and **orchestration-only is a central adoption path, not a corner case**:
 
 1. **Authoring + orchestration** (build-with-Carve) — Carve's AI authors new dlt and dbt code into their components, and the control plane composes/schedules/monitors them.
-2. **Orchestration only** (bring-your-own) — the user wrote their own dlt and dbt; Carve references them by name and only composes them into scheduled, monitored pipelines, generating no new EL or transform code. The natural mode for the brownfield org with an existing dbt repo (its own CI/CD, its own team), and for teams using dltHub Pro or other dlt-management tools — a first-class path across all three step types from v0.1.
+2. **Orchestration only** (bring-your-own) — the user wrote their own dlt and dbt; Carve references them by name and only composes them into scheduled, monitored pipelines, generating no new EL or transform code. The natural mode for the brownfield org with an existing dbt repo (its own CI/CD, its own team), and for teams using dltHub Pro or other dlt-management tools — a first-class path across all three step types from the start.
 3. **Mix** — Carve authors some components and orchestrates user-authored ones alongside them.
 
 **Repo topology.** Three modes per backend, independently chosen:
@@ -332,7 +332,7 @@ Agents read this file as part of their context on every invocation. Users can ha
 
 - **The DLT engineer generates** new dlt sources/pipelines into a named dlt component in modes 1 and 3 (authoring + orchestration). Generated pipelines respect the brownfield dlt component's conventions (matching destinations, schema names, write-disposition defaults).
 - **The DLT engineer stays out** in mode 2 (orchestration only). Plan/build for "schedule my-existing-stripe-pipeline" creates a `pipelines/*.toml` entry that references the existing dlt component **by name** — no new dlt code is generated.
-- **The dbt engineer (v0.2)** follows the same split: authors models in modes 1 and 3; stays out in mode 2. (v0.1's control plane can still *schedule* `dbt build` against an existing dbt component even though the harness can't yet *author* models.)
+- **The dbt engineer (a later increment)** follows the same split: authors models in modes 1 and 3; stays out in mode 2. (The control plane can still *schedule* `dbt build` against an existing dbt component even though the harness can't yet *author* models.)
 - **Cross-backend source coupling**: when the DLT engineer generates a pipeline that should feed an existing dbt source, it consults the brownfield dbt component's `sources.yml` and matches conventions. If the source doesn't exist, the engineer generates a stub `sources.yml` entry alongside the dlt pipeline; in separate-repo mode this becomes a linked PR against the dbt repo.
 
 **Greenfield scaffolding.**
@@ -347,8 +347,8 @@ Acceptance:
 
 - Brownfield onboarding produces a `conventions.md` within 5 minutes of `carve init` on a real-world dlt and/or dbt project
 - The DLT engineer generates dlt pipelines that target existing dbt sources without modification in 80% of cases on first attempt
-- All three operating modes (authoring + orchestration, orchestration only, mix) are supported from v0.1
-- Same-repo, local-path, and remote-URL modes are supported symmetrically for both dlt and dbt from v0.1
+- All three operating modes (authoring + orchestration, orchestration only, mix) are supported from the start
+- Same-repo, local-path, and remote-URL modes are supported symmetrically for both dlt and dbt from the start
 - Mixed-topology installs (e.g., dbt same-repo + dlt remote-URL) work without restriction
 
 ### 6.3 Project memory
@@ -449,7 +449,7 @@ Equivalent MCP:
 
 ### 6.6 Build
 
-- `carve build <plan_id>` materializes a plan's task graph into files on disk: dlt sources/resources/pipeline configs, dbt models (when the dbt agent ships in v0.2), `pipelines/<name>.toml` entries.
+- `carve build <plan_id>` materializes a plan's task graph into files on disk: dlt sources/resources/pipeline configs, dbt models (when the dbt agent ships in a later increment), `pipelines/<name>.toml` entries.
 - Build checks the plan's config hash against current config; refuses to run against drifted config and prompts for re-plan.
 - Build is idempotent: re-running against the same plan produces byte-identical output (modulo LLM nondeterminism in regenerated content).
 - Builds are recorded in the state store as `Build` rows with a `manifest_json` listing every file written, line range, and file hash.
@@ -492,9 +492,9 @@ Equivalent MCP:
 Deploy promotes a built pipeline — the component(s) plus the control-plane composition — from dev to prod. There is no DDL-apply phase: dlt owns destination schema management (decision 5.1), so the old `carve el deploy` DDL-apply step **retires** (it shrinks at most to a thin target-readiness `verify`). Deploy is a **configurable handoff** — a spectrum of git mechanics, not a single fixed action.
 
 - `carve deploy <pipeline>` runs the configured handoff, which is one of **files** (write to the target tree only), **commit**, **push**, or **pr** — the default is **pr**, which opens a pull request against the default branch with the changed files staged. PR description includes plan summary, file diffs, build manifest, and impact analysis. The handoff mode is set per project/target (and overridable per invocation).
-- **Cross-repo linked PRs are first-class in v0.1.** When a change spans a separate-repo component (§6.2) and the control plane, `carve deploy` produces **linked PRs** (e.g. the dlt component repo for source/pipeline changes, the dbt repo for `sources.yml`, the control-plane repo for the composition), coordinated via the GitHub MCP server with **ingest-first ordering** so the destination is ready before transforms reference it.
+- **Cross-repo linked PRs are first-class.** When a change spans a separate-repo component (§6.2) and the control plane, `carve deploy` produces **linked PRs** (e.g. the dlt component repo for source/pipeline changes, the dbt repo for `sources.yml`, the control-plane repo for the composition), coordinated via the GitHub MCP server with **ingest-first ordering** so the destination is ready before transforms reference it.
 - `carve deploy --dry-run <pipeline>` previews the handoff (the PR set / commits) without performing it.
-- Carve does not modify production state directly; a merged PR triggers whatever CI the user has wired up. Carve does not own CI integration in v0.1 — users wire it via their existing GitHub Actions / GitLab CI / similar.
+- Carve does not modify production state directly; a merged PR triggers whatever CI the user has wired up. Carve does not own CI integration — users wire it via their existing GitHub Actions / GitLab CI / similar.
 - After merge, the control plane picks up the pipeline definition on reconcile; runs fire against prod on the **live schedule** (§6.9) — note the schedule itself is data, seeded once and thereafter changed via `carve schedule`, not by this deploy.
 - The hosted product adds a push-button deploy variant (via `POST /deploys` with `mode: "direct"`) that records the deploy in the audit log and supports plan-approval workflows. The PR handoff remains supported in hosted.
 - Equivalent REST:
@@ -515,7 +515,7 @@ Deploy promotes a built pipeline — the component(s) plus the control-plane com
 - The scheduler runs as part of `carve serve`; it does not require a separate process. It reads the live `schedules` table on startup and on its periodic loop.
 - Pause/resume disables a schedule without discarding the cron expression; resuming picks up at the next normal fire time, not a backfill.
 - Manual triggers via `carve run` (§6.7) enqueue alongside scheduled runs and use the same worker pool.
-- **Backfills are explicitly not supported in v0.1.** Per design decision 5.6 (narrow runtime), users who need to backfill historical periods do it manually via `carve run --target prod --param start_date=...` for each period.
+- **Backfills are explicitly not supported (deferred, sequenced in DELIVERY).** Per design decision 5.6 (narrow runtime), users who need to backfill historical periods do it manually via `carve run --target prod --param start_date=...` for each period.
 
 The tradeoff (decision 5.5): schedules reconstitute from the (backed-up) state store plus the code seed rather than from `git clone`. In exchange, an operator can pause a runaway pipeline in one command without opening a PR, and there is **no** code-vs-override TTL-precedence machinery — the live schedule is simply the single source of truth.
 
@@ -551,7 +551,7 @@ Equivalent MCP:
 
 A pipeline is declared in `pipelines/<name>.toml` — Carve's **binding contract**: it references each component **by name**, composes them into a step DAG, and may carry an optional `[seed_schedule]` block (§6.9, applied at first registration only — the live schedule is data). The body is an ordered set of `[[steps]]` tables that form the DAG.
 
-**Step types in v0.1**: `dlt`, `dbt`, `sql`. A `dlt` or `dbt` step references its component **by name**; the component locator resolves that name to a local path (simple mode) or a remote repo @ pinned ref (§6.2). Cross-component ordering (ingest-before-transform) falls out of the DAG.
+**Step types**: `dlt`, `dbt`, `sql`. A `dlt` or `dbt` step references its component **by name**; the component locator resolves that name to a local path (simple mode) or a remote repo @ pinned ref (§6.2). Cross-component ordering (ingest-before-transform) falls out of the DAG.
 
 - `dlt` step config: `component = "<name>"` (resolved by the component locator; in simple mode the name maps to `el/<name>/`), optional `write_disposition` override, optional resource selector
 - `dbt` step config: `component = "<name>"`, `command = "build" | "run" | "test"`, `select = "<dbt-selector>"`, optional `vars`
@@ -593,14 +593,14 @@ Authoring of pipeline TOML files is via plan/build (§6.4, §6.6) — not direct
 
 Carve's AI layer is the harness from decision 5.12: a main **orchestrator** loop that delegates to typed **subagents**. Agents are **declarative — markdown with frontmatter**, exactly like Claude Code: drop a `carve/agents/<name>.md` file and it becomes a routable subagent. This *is* the answer to keeping built and specified agents from drifting: there is no hardcoded dispatch to drift against.
 
-**v0.1 subagents** (the orchestrator is the main loop, not a file):
+**Subagents** (the orchestrator is the main loop, not a file):
 
 - **DLT engineer** — authors + runs dlt sources/pipelines into a named dlt component; verifies via `dlt pipeline run`.
 - **dlt-qa** / **dlt-security** (review) — fresh, adversarial review of the dlt diff (schema-contract, credential handling, data-loss modes), phased in (security-on-deploy, qa-on-build first).
 - **Pipeline engineer** — composes components by name into `pipelines/<name>.toml`; the control-plane runtime specialist.
-- **Recovery engineer** — diagnoses a failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer arrives in v0.2) through the same plan/build/PR path.
+- **Recovery engineer** — diagnoses a failure (grounded in dlt exception classes, schema diff, run logs), then **delegates the fix** to the DLT or SQL engineer (the dbt engineer is a later increment) through the same plan/build/PR path.
 - **Explorer** — the read-only `ask` verb (§6.5), elevated; citation-backed.
-- **dbt engineer** — **v0.2** (authors + runs dbt models/tests/sources), with a dbt-qa reviewer.
+- **dbt engineer** — **a later increment** (authors + runs dbt models/tests/sources), with a dbt-qa reviewer.
 
 SQL is **not** an agent — it is a cross-cutting dialect-aware tool layer every subagent uses (§6.12).
 
@@ -624,7 +624,7 @@ classifications: [new_pipeline, modify_pipeline, refactor_to_incremental]
 - Hot reload: dropping in or editing an agent file takes effect on the next invocation without restarting `carve serve`.
 - Subagent invocations are recorded in the state store with token usage and cost; a `delegate` call returns a *summary*, not the full transcript.
 
-**Built-in vs custom agents.** The v0.1 built-in subagents (DLT engineer, pipeline engineer, recovery engineer, explorer, and the review subagents) cannot be removed — they're load-bearing for the core lifecycle — but their `.md` definition (system prompt, model, tools, allowed paths, classifications) can be edited freely. Users can also create custom agents alongside the built-ins; the registry treats them as peers, and the orchestrator routes to them when their `description`/`classifications` match the goal.
+**Built-in vs custom agents.** The built-in subagents (DLT engineer, pipeline engineer, recovery engineer, explorer, and the review subagents) cannot be removed — they're load-bearing for the core lifecycle — but their `.md` definition (system prompt, model, tools, allowed paths, classifications) can be edited freely. Users can also create custom agents alongside the built-ins; the registry treats them as peers, and the orchestrator routes to them when their `description`/`classifications` match the goal.
 
 CLI commands and flags:
 
@@ -661,14 +661,14 @@ Creation of new agents is also reachable via plan/build (`carve plan "create a n
 
 ### 6.12 Skills
 
-Skills are how agents do things. Beneath them sits the terminal-grade base tool layer every subagent shares — `edit`, `bash` (allowlisted, sandboxed), `glob`, `grep`, `web_fetch`, `web_search` — plus the **dialect-aware SQL tool layer** (`sqlglot` transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution; Snowflake first-class, others via `sqlglot`), which is a cross-cutting capability rather than a standalone skill. Skills are the domain capabilities on top, from **four sources in v0.1**:
+Skills are how agents do things. Beneath them sits the terminal-grade base tool layer every subagent shares — `edit`, `bash` (allowlisted, sandboxed), `glob`, `grep`, `web_fetch`, `web_search` — plus the **dialect-aware SQL tool layer** (`sqlglot` transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution; Snowflake first-class, others via `sqlglot`), which is a cross-cutting capability rather than a standalone skill. Skills are the domain capabilities on top, from **four sources**:
 
 - **Built-in skills** ship with Carve, live in `src/carve/skills/`. They cannot be removed but their availability per agent is controlled by each agent's `tools` list.
-- **`SKILL.md` skill packs (in v0.1)** — declarative capability packs (`carve/skills/<name>/SKILL.md` + optional scripts/resources), progressive-disclosure, loaded on description-match. **The curated connector library *is* a skill library**: connectors, skills, and bring-your-own unify into one model. Drop a pack in `carve/skills/` and it's available; `carve skills` manages them.
+- **`SKILL.md` skill packs** — declarative capability packs (`carve/skills/<name>/SKILL.md` + optional scripts/resources), progressive-disclosure, loaded on description-match. **The curated connector library *is* a skill library**: connectors, skills, and bring-your-own unify into one model. Drop a pack in `carve/skills/` and it's available; `carve skills` manages them.
 - **MCP skills** come from external MCP servers declared in `carve/mcp_servers.toml`. Tools exposed by each MCP server appear as namespaced skills (`mcp:server:tool`). Adding or removing an MCP server adds or removes the corresponding skills. Carve also *exposes* an MCP server (the other direction, §6.13).
-- **In-process custom-skill SDK is deferred** (per §4.2 out-of-scope). In v0.1 there is no "user writes a Python file with a `@skill` decorator" path; that lands once the built-ins stabilize. Users who need custom skill behavior in v0.1 write a `SKILL.md` pack or expose it via an external MCP server — both fully supported.
+- **In-process custom-skill SDK is deferred** (per §4.2 out-of-scope). There is no "user writes a Python file with a `@skill` decorator" path yet; that lands once the built-ins stabilize. Users who need custom skill behavior write a `SKILL.md` pack or expose it via an external MCP server — both fully supported.
 
-**Hooks (in v0.1).** Policy/automation injected without forking Carve, declared in `carve/hooks.toml`: `pre/post tool`, `pre-commit`, `on run.failed`, `pre-deploy`. Examples — run `sqlfluff lint` before committing dbt SQL, block writes to a prod schema, notify Slack on deploy or on `run.failed`. Hooks are how a team enforces its standards across every agent invocation.
+**Hooks.** Policy/automation injected without forking Carve, declared in `carve/hooks.toml`: `pre/post tool`, `pre-commit`, `on run.failed`, `pre-deploy`. Examples — run `sqlfluff lint` before committing dbt SQL, block writes to a prod schema, notify Slack on deploy or on `run.failed`. Hooks are how a team enforces its standards across every agent invocation.
 
 Skills declare:
 
@@ -679,7 +679,7 @@ Skills declare:
 
 Skills receive automatic result caching within a run: identical skill calls in the same run return cached results. Results exceeding a configurable size cap are truncated with a flag (agents are expected to be specific in follow-up calls).
 
-**Creating and removing skills in v0.1.** Built-in skills are added or removed by Carve maintainers via Carve releases — users do not create or remove them. **`SKILL.md` packs** are created by dropping a `carve/skills/<name>/SKILL.md` directory into the project (also reachable via plan/build per decision 5.3) and removed by deleting it; they appear/disappear in `skills list` on hot reload. MCP-provided skills are added by adding an MCP server (`mcp-servers add`) and removed by removing the server (`mcp-servers remove`); the namespaced skills appear/disappear in `skills list` accordingly. The only deferred path is the in-process `@skill` Python SDK (§4.2).
+**Creating and removing skills.** Built-in skills are added or removed by Carve maintainers via Carve releases — users do not create or remove them. **`SKILL.md` packs** are created by dropping a `carve/skills/<name>/SKILL.md` directory into the project (also reachable via plan/build per decision 5.3) and removed by deleting it; they appear/disappear in `skills list` on hot reload. MCP-provided skills are added by adding an MCP server (`mcp-servers add`) and removed by removing the server (`mcp-servers remove`); the namespaced skills appear/disappear in `skills list` accordingly. The only deferred path is the in-process `@skill` Python SDK (§4.2).
 
 CLI commands and flags:
 
@@ -717,7 +717,7 @@ Per design decision 5.10, the CLI, REST API, MCP server, and local Web UI are al
 
 **CLI (`carve`).** Built on `typer`. Output formats: `--output table` (default), `--output json` (piping default when stdout isn't a TTY), `--output yaml`. Global flags: `--config-dir`, `--verbose`, `--quiet`, `--no-color`. Stable exit codes for CI: `0` success, `1` user error, `2` runtime error, `3` config error, `4` drift detected. The CLI talks to `carve serve` over HTTP; a subset of commands (`carve plan`, `carve build`) can run standalone for one-shot use. Server lifecycle: `carve serve`, `carve serve --workers N`, `carve serve --port`, `carve serve --host`, `carve worker`, `carve worker --workers N`, `carve docs serve`.
 
-**REST API.** FastAPI; OpenAPI schema at `/api/openapi.json`, Swagger UI at `/api/docs`. Endpoints under `/api/v1/...`; v0.1 commits to v1 stability. Auth: API key in `Authorization: Bearer <token>`. v0.1 single-user token generated by `carve init` and stored in `.carve/token`; hosted adds SSO/OAuth/RBAC (§5.16). Errors follow `application/problem+json`. Write endpoints support `Idempotency-Key`. Live streams via WebSocket and SSE. Webhooks signed with HMAC.
+**REST API.** FastAPI; OpenAPI schema at `/api/openapi.json`, Swagger UI at `/api/docs`. Endpoints under `/api/v1/...`; Carve commits to v1 stability. Auth: API key in `Authorization: Bearer <token>`. The single-user token is generated by `carve init` and stored in `.carve/token`; hosted adds SSO/OAuth/RBAC (§5.16). Errors follow `application/problem+json`. Write endpoints support `Idempotency-Key`. Live streams via WebSocket and SSE. Webhooks signed with HMAC.
 
 **MCP server.** Standard Anthropic MCP protocol over stdio (default) or WebSocket (`--transport ws`). Auto-discovered by Claude Desktop and Cursor when registered. Exposes one tool per CLI command; tool schemas mirror REST request schemas. Same token as REST. The MCP server is a thin adapter over the REST API — no business logic lives in the MCP layer.
 
@@ -738,7 +738,7 @@ Every run, every step, every agent invocation, and every skill call is recorded 
 - Step-level status (queued, running, succeeded, failed, skipped) with timestamps
 - Structured per-step logs with level, source, message
 - Trigger source (manual, scheduled, API, MCP)
-- Owner user ID (always `1` in v0.1)
+- Owner user ID (always `1` while single-user)
 - For agent invocations: model, prompt tokens, completion tokens, tool calls made
 - For skill calls: skill name, input hash, output (subject to size cap), duration
 
@@ -746,7 +746,7 @@ Every run, every step, every agent invocation, and every skill call is recorded 
 
 **Webhooks.** Declared in `runtime.toml` per-event-type. Events: `run.queued`, `run.started`, `run.succeeded`, `run.failed`, `step.failed`, `plan.created`, `build.completed`, `deploy.opened`. Payloads are versioned and documented.
 
-**Alerts.** Slack and email webhooks ship in v0.1 as canned event-to-message mappers. PagerDuty / Datadog with payload formatters are paid-product integrations (§5.11).
+**Alerts.** Slack and email webhooks ship as canned event-to-message mappers. PagerDuty / Datadog with payload formatters are paid-product integrations (§5.11).
 
 CLI commands and flags:
 
@@ -805,7 +805,7 @@ Equivalent MCP: `runs_list(pipeline, status, since, target, limit)`, `run_show(r
 - dbt-core 1.7+
 - Docker 20+ (for bundled docker-compose path)
 - Linux and macOS supported; Windows on best-effort
-- Anthropic SDK with current Claude models (Sonnet, Opus, Haiku); other LLM providers post-v0.1
+- Anthropic SDK with current Claude models (Sonnet, Opus, Haiku); other LLM providers later
 
 ### 7.5 Resource consumption
 
@@ -814,11 +814,11 @@ Equivalent MCP: `runs_list(pipeline, status, since, target, limit)`, `run_show(r
 - Generated workspaces (cloned dbt repos in separate-repo mode) are cached and capped at 5GB by default; oldest evicted first.
 - Disk usage for logs: ~100KB per run after compression; 10K runs = ~1GB.
 
-## 8. Success metrics for v0.1.0
+## 8. Success metrics for the initial release
 
 ### 8.1 Adoption metrics
 
-- 1,000+ GitHub stars within 90 days of v0.1.0
+- 1,000+ GitHub stars within 90 days of launch
 - 200+ confirmed installations via opt-in telemetry
 - 50+ external pull requests within 90 days
 - 30+ external MCP integrations confirmed (Claude Desktop / Cursor / Claude Code users driving Carve)
@@ -833,7 +833,7 @@ Equivalent MCP: `runs_list(pipeline, status, since, target, limit)`, `run_show(r
 ### 8.3 Quality metrics
 
 - Generated dlt pipelines pass `dlt pipeline check` 99% of the time
-- Generated dbt models (once v0.2 ships) pass `dbt parse` 99% of the time
+- Generated dbt models (once the dbt engineer ships) pass `dbt parse` 99% of the time
 - Plan/build matches plan preview 95% of the time (no surprise behavior at build)
 - Multi-step pipelines complete successfully on first scheduled run 80% of the time
 
@@ -858,7 +858,7 @@ The canonical AI-for-code risk. Mitigations:
 
 ### 9.2 Schema context blows up the LLM context window
 
-Mitigated by the layered retrieval architecture (decision 5.13). The orchestrator pre-scopes context. Specialist agents work on small focused inputs. Catalog queries are bounded; embedding search (post-v0.1) returns pointers, not full content.
+Mitigated by the layered retrieval architecture (decision 5.13). The orchestrator pre-scopes context. Specialist agents work on small focused inputs. Catalog queries are bounded; embedding search (a later increment) returns pointers, not full content.
 
 ### 9.3 dlt or dbt-core ship breaking changes
 
@@ -928,7 +928,7 @@ Most major design questions are resolved in [`specs/_strategy/2026-06-control-pl
 - Whether the local static HTML UI uses pure file regeneration or a tiny read-only FastAPI app reading from the state store
 - The exact set of webhook event payload schemas (will firm up as we write the runtime spec)
 - Whether `carve serve` in OSS auto-detects a `DATABASE_URL` env var (Heroku-style) for external Postgres
-- The MCP transport default for v0.1 (stdio-only first vs. stdio + WebSocket from day one)
+- The MCP transport default (stdio-only first vs. stdio + WebSocket from day one)
 
 ## 12. Appendix — naming and brand
 
@@ -936,6 +936,6 @@ Most major design questions are resolved in [`specs/_strategy/2026-06-control-pl
 - GitHub org: `carve-data` (placeholder; check availability before claiming)
 - Canonical tagline: **"Build, schedule, and monitor pipelines — all with AI."** Earlier candidates (kept for reference): "Agent-native data engineering," "The warehouse lifecycle, authored by intent," "dlt + dbt with agents and a runtime"
 - Brand vocabulary: agents *chisel*, skills are *blades*, builds are *carvings*. Use sparingly — don't overdose on the metaphor.
-- Color, logo, marketing site: deferred to a branding pass closer to v0.1 launch.
+- Color, logo, marketing site: deferred to a branding pass closer to launch.
 
 **Acceptance:** `carve deploy` produces a PR within 60 seconds for a typical pipeline; refuses to run against drifted config.

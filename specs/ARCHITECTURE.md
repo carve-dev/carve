@@ -55,7 +55,7 @@ Three properties of this picture worth naming:
 
 ### 2.1 Interfaces
 
-Three interfaces ship in v0.1, all backed by the same FastAPI service:
+Three interfaces ship, all backed by the same FastAPI service:
 
 - **REST API** — `/api/v1/...` with OpenAPI schema at `/api/openapi.json`. Auth via `Authorization: Bearer <token>` header. Errors as `application/problem+json`. WebSocket and SSE for live streams.
 - **MCP server** — Standard Anthropic MCP protocol over stdio (default) or WebSocket. Each MCP tool is a thin adapter over a REST endpoint; the tool schema mirrors the endpoint's request schema. No business logic in the MCP layer.
@@ -69,7 +69,7 @@ The hosted overlay adds a **polished cloud UI** as a fourth interface, plus a pu
 
 The heart of Carve. Carve is a **control plane** that references independently-versioned dlt/dbt **components** by name (§10.1) rather than containing them; `carve.toml` is the control-plane config (see [the control-plane decision](_strategy/2026-06-control-plane.md)). Six subcomponents:
 
-- **Agent layer** — Anthropic SDK reasoning loop, orchestration agent, specialist agents (extract-load, runtime; dbt specialist in v0.2). Token budget enforcement, skill-call caching, structured plan output.
+- **Agent layer** — Anthropic SDK reasoning loop, orchestration agent, specialist agents (extract-load, runtime; the dbt specialist is a later increment). Token budget enforcement, skill-call caching, structured plan output.
 - **Plan/Build store** — Plans persisted as `.carve/plans/<id>.json` plus index rows in Postgres. Builds persisted as `Build` rows referencing on-disk artifacts (dlt pipelines, dbt models, `pipelines/*.toml`). Both are immutable once created; refinement creates child plans.
 - **State store (Postgres)** — SQLAlchemy 2.0 declarative models. Tables include `pipelines`, `schedules`, `schedule_changes`, `tokens`, `plans`, `builds`, `deploys`, `jobs`, `runs`, `step_runs`, `logs`, `workers`, `events`, `workspaces` (full schema in §9). Indexed for the common queries; concurrent writes safe under multi-worker (decision 5.7). The store holds the **control plane's** running state — it references components by name (§10.1); it never contains their code.
 - **Event bus** — In-process publish-subscribe in OSS; replaceable by Redis Streams in the hosted product without changing subscribers. Events: `run.queued`, `run.started`, `step.*`, `run.completed`, `agent.invoked`, `skill.called`.
@@ -352,7 +352,7 @@ Carve has one orchestration agent (the main loop) and a set of specialist **suba
 - **Pipeline engineer** — composes `pipelines/<name>.toml` (components by name, the step DAG, `[seed_schedule]`).
 - **Recovery engineer** — diagnoses a failure (grounded), then **delegates** the fix to the right engineer.
 - **Explorer** — the read-only investigative agent (the `ask` verb).
-- **dbt engineer (v0.2)** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
+- **dbt engineer (a later increment)** — authors dbt models/tests/sources (+ a dbt-qa reviewer).
 
 Per the **engineer + review-subagent** pattern (the `/build-spec` fan-out brought to users' pipelines), each domain has an *engineer* (architect + build) plus *qa/security review* subagents. **SQL is a cross-cutting tool layer** ([spec 18](capabilities/sql.md)), used by every agent, not an agent itself.
 
@@ -364,7 +364,7 @@ Given a user goal, the orchestrator:
 
 1. **Classifies the goal** — new pipeline, modification, config change, schedule change, etc. Classification determines which skills to call.
 2. **Gathers impact context** — catalog queries, dbt manifest queries, file grep, lineage investigation (dbt manifest + dlt schema, [lineage](capabilities/lineage.md)).
-3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ dbt engineer in v0.2).
+3. **Picks + `delegate`s to subagent(s)** — "modify stg_orders to be incremental" delegates to the dbt engineer only; "onboard Salesforce" delegates to the DLT engineer + pipeline engineer (+ the dbt engineer, a later increment).
 4. **Hands each a starting bundle** — the goal slice, relevant file contents, conventions, impacted dependencies; the subagent gathers anything else within its own isolated context.
 5. **Generates a structured Plan** — JSON-schema-validated, with task graph, file diffs, cost estimate.
 
@@ -472,7 +472,7 @@ Declarative agent files can be edited while `carve serve` is running. The next i
 
 ### 5.7 User-provided agents and skills
 
-**Custom agents.** Users can create custom agents alongside the built-ins, in v0.1.
+**Custom agents.** Users can create custom agents alongside the built-ins.
 
 - `carve agents create <name>` scaffolds a new `carve/agents/<name>.md` (markdown + frontmatter) with minimal config
 - `carve agents create <name> --template <existing>` clones an existing agent (often `dlt-engineer` or `pipeline-engineer` as the starting point)
@@ -483,7 +483,7 @@ Declarative agent files can be edited while `carve serve` is running. The next i
 
 Custom agents follow the same reasoning loop (§5.3) and the same plan/build/deploy lifecycle as built-ins. They appear in `agents list`, are reachable via REST and MCP equivalents, and respect the same guardrail and token-budget machinery.
 
-**Custom skills (v0.1: via MCP only).** The Python custom-skill SDK (in-process `@skill`-decorated functions) is deferred per PRD §4.2 out-of-scope. The v0.1 supported path for "add a skill that does X" is: **register an external MCP server that provides it**.
+**Custom skills (via MCP only).** The Python custom-skill SDK (in-process `@skill`-decorated functions) is deferred per PRD §4.2 out-of-scope. The supported path for "add a skill that does X" is: **register an external MCP server that provides it**.
 
 - The user runs their own MCP server, written in any language (Python via `mcp-python`, TypeScript via `@modelcontextprotocol/sdk`, Go, Rust, etc.)
 - They register it via `carve mcp-servers add <name> --url <url>`
@@ -493,7 +493,7 @@ Custom agents follow the same reasoning loop (§5.3) and the same plan/build/dep
 
 This buys users full extensibility — any language, any logic, any backing service — without committing Carve to a Carve-specific custom-skill SDK that would have to be maintained, secured, sandboxed, and versioned. The hosted product can additionally expose private per-tenant MCP servers that are shared across users in an org.
 
-Post-v0.1, an in-process Python skill SDK may ship if real demand emerges. The MCP-server path will remain supported indefinitely either way.
+In a later increment, an in-process Python skill SDK may ship if real demand emerges. The MCP-server path will remain supported indefinitely either way.
 
 ### 5.8 The curated dlt source library: copy on use
 
@@ -525,7 +525,7 @@ The agent layer never reads the full warehouse catalog or the full dbt manifest 
 2. **dbt manifest queries** — The dbt project's `target/manifest.json` is the source of truth for dbt structure. Skills like `list_models`, `model_columns`, `model_dependencies`, `tests_on_model` load the manifest (cached by mtime) and answer structured questions.
 3. **File grep** — When an agent needs "where is column `customer_id` referenced," a ripgrep-backed skill (`grep_dbt_models`, `grep_dlt_code`) scans the project tree. Bounded by max match count (default 50) and per-match truncation.
 4. **Lineage investigation** — Carve maintains *no* lineage graph (§6.2). The explorer investigates dbt's manifest (model DAG) + dlt's schema (resource→table, via the `dlt_schema` skill) + the code on demand ([lineage](capabilities/lineage.md)), correlating dlt tables to dbt sources by relation name in-context. Results are entity pointers into the native artifacts, not full content.
-5. **Embedding search (post-v0.1)** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
+5. **Embedding search (a later increment)** — For fuzzy concepts ("customer churn metrics"). An embedding index over model descriptions, column comments, and pipeline docstrings; returns pointers + similarity scores.
 
 The agent doesn't pick a layer. The agent picks a *skill*; skills are implemented using the appropriate layer. The orchestrator's classification step decides which skills to call.
 
@@ -538,7 +538,7 @@ Carve maintains **no** lineage graph. dbt's `manifest.json` already *is* model-l
 - **cross-boundary** — the agent correlates a dlt destination table with the dbt source that reads it **by relation name** (confirmable with a `sql` `INFORMATION_SCHEMA` check) in its own context; there is no persisted stitch.
 - **code** — `grep`/`read_file` over `sources.yml`, model SQL, and dlt source code fill the gaps.
 
-Because the explorer runs in an isolated context and returns a cited summary, it pulls the relevant *slice* per question rather than holding a whole graph. This **reverses an earlier design** (a Carve-owned `lineage_nodes`/`lineage_edges` store rebuilt on every build): dbt and dlt already maintain this lineage authoritatively, so Carve uses it rather than duplicating it into derived state that can go stale. Column-level lineage is a v0.2 concern (the agent can read model SQL on demand today).
+Because the explorer runs in an isolated context and returns a cited summary, it pulls the relevant *slice* per question rather than holding a whole graph. This **reverses an earlier design** (a Carve-owned `lineage_nodes`/`lineage_edges` store rebuilt on every build): dbt and dlt already maintain this lineage authoritatively, so Carve uses it rather than duplicating it into derived state that can go stale. Column-level lineage is deferred to a later increment (the agent can read model SQL on demand today).
 
 ### 6.3 Caching and freshness
 
@@ -547,7 +547,7 @@ Because the explorer runs in an isolated context and returns a cited summary, it
 | Catalog queries       | 60 seconds             | Time-based                                  |
 | dbt manifest          | until change           | File mtime watch                            |
 | File grep             | per-invocation         | None — re-runs each agent invocation        |
-| Embedding (post-v0.1) | until index rebuild    | Manual `carve embeddings rebuild`           |
+| Embedding (later)     | until index rebuild    | Manual `carve embeddings rebuild`           |
 
 In-process cache in the FastAPI server (OSS); Redis-backed in the hosted product so multiple API replicas share.
 
@@ -612,7 +612,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 **Inputs**: plan id, current project state.
 
-**Outputs**: `Build` row with `manifest_json` listing every file written; files on disk (`el/<name>/`, `pipelines/<name>.toml`, `.dlt/*.toml`, dbt models in v0.2); pipeline's `current_build_id` updated.
+**Outputs**: `Build` row with `manifest_json` listing every file written; files on disk (`el/<name>/`, `pipelines/<name>.toml`, `.dlt/*.toml`, dbt models in a later increment); pipeline's `current_build_id` updated.
 
 **Side effects**: reads + writes scoped to allowed paths from the plan; invokes specialist agents with pre-scoped context; records `agents_invocations` and `skill_calls`.
 
@@ -639,7 +639,7 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 ### 7.5 Deploy
 
-> Reconciled to [deploy deploy](capabilities/deploy.md) (control-plane model). Deploy promotes **components** + the control-plane repo via a configurable **handoff**; the cross-repo **linked-PR** flow ships in v0.1.
+> Reconciled to [deploy deploy](capabilities/deploy.md) (control-plane model). Deploy promotes **components** + the control-plane repo via a configurable **handoff**; the cross-repo **linked-PR** flow is part of the deploy capability.
 
 **Inputs**: `carve deploy <pipeline>`, `--target`, `--handoff files|commit|push|pr` (default `pr`), `--amend`, `--draft`, `--reconcile-pins`. (Replaces the pre-positioning `--mode pr|direct`; hosted's direct-to-prod is part of its managed merge/rollout layer.)
 
@@ -744,7 +744,7 @@ Tables grouped by domain. Postgres features used: partial unique indexes (§4.2)
 ### 9.1 Project state
 
 - `pipelines(name PK, current_build_id, default_target, created_at, updated_at)`
-- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, paused_by NULL, pause_reason NULL, timezone, last_fired_at, next_fires_at)` — **the schedule is DATA**, created + owned by [runtime](capabilities/runtime.md): the definition reconciler ([pipelines](capabilities/pipelines.md)) seeds the row once from a pipeline's optional `[seed_schedule]` block at first registration; thereafter the scheduler reads it as the source of truth and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it live. `paused` is the boolean gate the scheduler skips on (`WHERE paused`); `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin** so the recovery engine auto-resumes only what *it* paused — a `paused_by = 'user'` pause is never auto-resumed by a resolving deploy ([recovery](capabilities/recovery.md)). There is **no `paused-by-code`**: `[seed_schedule]` cannot seed a pause ([pipelines](capabilities/pipelines.md) rejects `paused`/`enabled` keys), so a pipeline is either seeded with a live cron or registered unscheduled. The `id` PK matches the scheduler loop's `schedule.id` usage; the `UNIQUE` on `pipeline` enforces one schedule per pipeline in v0.1 (droppable if multi-schedule `[[schedule]]` ever lands — deferred, use-cases UC2).
+- `schedules(id PK, pipeline FK UNIQUE, cron, target, paused, paused_by NULL, pause_reason NULL, timezone, last_fired_at, next_fires_at)` — **the schedule is DATA**, created + owned by [runtime](capabilities/runtime.md): the definition reconciler ([pipelines](capabilities/pipelines.md)) seeds the row once from a pipeline's optional `[seed_schedule]` block at first registration; thereafter the scheduler reads it as the source of truth and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it live. `paused` is the boolean gate the scheduler skips on (`WHERE paused`); `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin** so the recovery engine auto-resumes only what *it* paused — a `paused_by = 'user'` pause is never auto-resumed by a resolving deploy ([recovery](capabilities/recovery.md)). There is **no `paused-by-code`**: `[seed_schedule]` cannot seed a pause ([pipelines](capabilities/pipelines.md) rejects `paused`/`enabled` keys), so a pipeline is either seeded with a live cron or registered unscheduled. The `id` PK matches the scheduler loop's `schedule.id` usage; the `UNIQUE` on `pipeline` enforces one schedule per pipeline (droppable if multi-schedule `[[schedule]]` ever lands — deferred, use-cases UC2).
 - `schedule_changes(id BIGSERIAL PK, pipeline, change_kind, before JSONB, after JSONB, actor_token_id NULL, source, reason NULL, changed_at, tenant_id)` — audit log for every schedule mutation ([runtime](capabilities/runtime.md)); under the control-plane model this **replaces git history for schedule edits** (the schedule is data, not code). `source ∈ {cli, api, mcp, ui, seed, reseed, recovery}` (`recovery` = an automatic auto-pause/auto-resume; `actor_token_id` is NULL for those and for the code seed).
 - `tokens(id PK, name, hashed_token, scopes, created_by, created_at, last_used_at)`
 
@@ -1080,5 +1080,5 @@ Decisions to prevent scope creep and keep the architecture honest:
 - **No data catalog product.** Carve indexes schema for retrieval, not for analyst discoverability.
 - **No BI tooling.** Carve builds the warehouse; doesn't visualize it.
 - **No reverse-ETL.** Carve writes to the warehouse; doesn't sync to operational systems.
-- **No custom step type SDK in v0.1.** Built-ins only. Likely post-v0.1.
-- **No in-process custom skill SDK in v0.1.** Built-ins + MCP-imported skills only. Likely post-v0.1; the MCP path remains supported indefinitely.
+- **No custom step type SDK.** Built-ins only. A later increment, if at all.
+- **No in-process custom skill SDK.** Built-ins + MCP-imported skills only. A later increment, if at all; the MCP path remains supported indefinitely.

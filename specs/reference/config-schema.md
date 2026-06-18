@@ -1,6 +1,6 @@
 # Reference — Configuration schema
 
-The canonical reference for every file Carve reads or writes in v0.1. The executable source of truth is the Pydantic models in `src/carve/`; this document is the human-readable companion. For the control-plane model behind `carve.toml`, see [layout](../capabilities/layout.md) and [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md).
+The canonical reference for every file Carve reads or writes. The executable source of truth is the Pydantic models in `src/carve/`; this document is the human-readable companion. For the control-plane model behind `carve.toml`, see [layout](../capabilities/layout.md) and [`_strategy/control-plane-reference-model.md`](../_strategy/control-plane-reference-model.md).
 
 ## File layout
 
@@ -121,7 +121,7 @@ path = "/path/to/ingest-stripe"  # required when mode == "separate-local"
 
 ## `carve/connections.toml`
 
-Named targets (connections). Each carries a **dialect** (Snowflake + DuckDB first-class in v0.1; Postgres/BigQuery/Databricks/SQL Server via `sqlglot`, introspection hardened post-v0.1, [18](../capabilities/sql.md)) and is role-scoped (read vs write/deploy). Credentials are referenced, never inlined.
+Named targets (connections). Each carries a **dialect** (Snowflake + DuckDB first-class; Postgres/BigQuery/Databricks/SQL Server via `sqlglot`, introspection hardened in a later increment, [18](../capabilities/sql.md)) and is role-scoped (read vs write/deploy). Credentials are referenced, never inlined.
 
 ```toml
 [targets.dev]
@@ -145,7 +145,7 @@ Credential indirection: `${ENV_VAR}` (environment) or `{ file = "/path" }` (Dock
 
 ## `carve/runtime.toml`
 
-Tunes the runtime. (This replaces the pre-v0.1 `runner.toml`; there is no `backend = docker/k8s` axis — v0.1 is a single Postgres-backed queue + worker pool.)
+Tunes the runtime. (This replaces the earlier `runner.toml`; there is no `backend = docker/k8s` axis — the runtime is a single Postgres-backed queue + worker pool.)
 
 ```toml
 [scheduler]
@@ -274,7 +274,7 @@ target = "prod"
 
 [[steps]]
 id = "ingest_stripe"
-type = "dlt"                     # dlt | dbt | sql  (only these three in v0.1)
+type = "dlt"                     # dlt | dbt | sql  (only these three step types)
 component = "stripe_charges"     # NAME → el/stripe_charges/ (simple) or remote repo @ ref (multi)
 depends_on = []
 [steps.failure_mode]

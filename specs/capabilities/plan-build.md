@@ -66,5 +66,5 @@ Every Plan carries the `config_hash` it was generated against. **Build refuses t
 
 ## Open questions
 
-- **Impact-analysis depth.** How rich the v0.1 impact analysis is (file diffs + directly-affected pipelines, vs. a fuller downstream blast-radius via [lineage](./lineage.md) investigation) — a phasing call for [DELIVERY](../DELIVERY.md).
+- **Impact-analysis depth.** How rich the initial impact analysis is (file diffs + directly-affected pipelines, vs. a fuller downstream blast-radius via [lineage](./lineage.md) investigation) — a phasing call for [DELIVERY](../DELIVERY.md).
 - **Runtime-estimate source.** The first-run/subsequent estimate needs the engineers' `expected_outputs` to carry duration hints; confirm that contract with [dlt-engineer](./dlt-engineer.md)/[dbt-engineer](./dbt-engineer.md).

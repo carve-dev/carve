@@ -1,13 +1,13 @@
 # Semantic search: embedding-based retrieval over the project
 
-> **Fuzzy, concept-level retrieval** — "where are our customer-churn metrics?" — that exact catalog/manifest/grep lookups can't answer. An embedding index over model descriptions, column comments, and pipeline/source docstrings, surfaced as a `semantic_search` skill that returns ranked entity pointers. It's the fifth retrieval layer (ARCHITECTURE §6.1), complementing the deterministic layers the [explorer](./ask.md) already uses. *Phasing annotation:* **post-v0.1** — it lands later (likely alongside the dbt engineer's broader context needs); v0.1 retrieval is catalog + manifest + dlt schema + grep + investigation. Documented now as durable design so it isn't a floating "deferred" reference owned by no one.
+> **Fuzzy, concept-level retrieval** — "where are our customer-churn metrics?" — that exact catalog/manifest/grep lookups can't answer. An embedding index over model descriptions, column comments, and pipeline/source docstrings, surfaced as a `semantic_search` skill that returns ranked entity pointers. It's the fifth retrieval layer (ARCHITECTURE §6.1), complementing the deterministic layers the [explorer](./ask.md) already uses. *Phasing annotation:* **a later increment** — it lands later (likely alongside the dbt engineer's broader context needs); the deterministic retrieval (catalog + manifest + dlt schema + grep + investigation) ships first. Documented now as durable design so it isn't a floating "deferred" reference owned by no one.
 
 ## Status
 
-- **Status:** Drafting (durable design; **post-v0.1** phasing)
+- **Status:** Drafting (durable design; **a later increment** — sequenced in DELIVERY)
 - **Depends on:** [ask](./ask.md) (the explorer that would call the skill), [extensibility](./extensibility.md) (it ships as a built-in callable skill), [lineage](./lineage.md) / [sql](./sql.md) (the dbt manifest + warehouse catalog it indexes), [state-store](./state-store.md) (where the index/embeddings persist).
 - **Used by:** [ask](./ask.md) (the explorer's fuzzy-lookup layer), potentially the [dbt-engineer](./dbt-engineer.md) (finding related models by concept).
-- **Lineage:** net-new. The "embedding search (post-v0.1)" layer referenced — and *deferred* — in five specs (ask, lineage, memory, extensibility, reference) but owned by none; this gives it a home.
+- **Lineage:** net-new. The "embedding search (a later increment)" layer referenced — and *deferred* — in five specs (ask, lineage, memory, extensibility, reference) but owned by none; this gives it a home.
 
 ## Goal
 
@@ -43,15 +43,15 @@ The index is rebuilt explicitly (`carve embeddings rebuild`) — it's not auto-i
 
 - A `semantic_search` skill answers concept-level queries with ranked entity pointers, bounded per §6.4, available to the explorer.
 - The index is built/refreshed via `carve embeddings rebuild` over model/column/source/pipeline metadata.
-- Documented as durable design with explicit **post-v0.1** phasing — no longer a deferred reference owned by no one.
+- Documented as durable design with explicit **later-increment** phasing (sequenced in DELIVERY) — no longer a deferred reference owned by no one.
 
 ## Design notes
 
-- **Why its own (thin) capability vs. an `ask` annotation?** It introduces a real subsystem — an embedding index/store, an embedding-provider config, and a rebuild command — beyond the explorer's deterministic skill calls. The corpus rule ("version-deferred ≠ spec-exempt") says it should have a home with its phasing annotation rather than living as five scattered "post-v0.1" mentions.
+- **Why its own (thin) capability vs. an `ask` annotation?** It introduces a real subsystem — an embedding index/store, an embedding-provider config, and a rebuild command — beyond the explorer's deterministic skill calls. The corpus rule ("version-deferred ≠ spec-exempt") says it should have a home with its phasing annotation rather than living as five scattered "later increment" mentions.
 - **Why manual rebuild.** Auto-reindexing on every catalog change is expensive and rarely worth it; explicit rebuild (or incremental) matches how embedding indexes are kept fresh in practice.
 
 ## Open questions
 
 - **Embedding provider.** The model provider's embeddings vs. a bundled local embedding model (cost/offline/privacy trade-off) — a config + dependency decision.
 - **Index location.** Postgres (pgvector) vs. a local index file vs. (hosted) a shared index — interacts with the OSS-vs-hosted seam.
-- **Phasing.** Which post-v0.1 increment; likely with the dbt engineer's context needs ([DELIVERY](../DELIVERY.md)).
+- **Phasing.** Which increment; likely with the dbt engineer's context needs ([DELIVERY](../DELIVERY.md)).

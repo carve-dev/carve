@@ -7,7 +7,7 @@
 - **Status:** Drafting
 - **Depends on:** [pipelines](./pipelines.md) (the `dbt` step type + step DAG), [runtime](./runtime.md) (the executor + **worker placement/labeling** — see *local placement*), [sql](./sql.md) (the dialect-aware connection Carve already holds — backs the snowflake-native trigger), [layout](./layout.md) (the dbt component config carries the backend), [connect](./connect.md) (lazy engine provisioning + pin on first use).
 - **Used by:** [pipelines](./pipelines.md) (every `dbt` step dispatches here), [lineage](./lineage.md) (reads the manifest the backend exposes), [recovery](./recovery.md) (a failed dbt step's diagnosis).
-- **Lineage:** net-new. Replaces the implicit "Carve always shells out to dbt-core" assumption (ARCHITECTURE §4.1/§8) and supersedes the retired "dbt Cloud as a step backend — out of v0.x" punt in PROJECT_PLAN.
+- **Lineage:** net-new. Replaces the implicit "Carve always shells out to dbt-core" assumption (ARCHITECTURE §4.1/§8) and supersedes the earlier "dbt Cloud as a step backend — out of scope" punt.
 
 ## Goal
 

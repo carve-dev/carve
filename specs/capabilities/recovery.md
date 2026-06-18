@@ -19,9 +19,9 @@ When a scheduled run fails (retries exhausted), Carve **diagnoses the failure wi
 
 ## Out of scope
 
-- **Auto-deploying fixes** without human review (crosses the no-autonomous-writes line; may revisit post-v0.1 for trivial type-widening with explicit allowlisting).
+- **Auto-deploying fixes** without human review (crosses the no-autonomous-writes line; may revisit in a later increment for trivial type-widening with explicit allowlisting).
 - **Cross-pipeline failure correlation** / an "incident commander" (deferred).
-- **The dlt exception adapter's exhaustive coverage** — v0.1 pins the common categories (below); novel classes are surfaced, not auto-fixed.
+- **The dlt exception adapter's exhaustive coverage** — the common categories (below) are pinned; novel classes are surfaced, not auto-fixed.
 
 ## Reconciliation with the shipped POC
 
@@ -57,7 +57,7 @@ Forward-declared nullable FKs (plans exist; deploys per spec 14) follow the same
 2. **Auto-pause.** The runtime's `auto_pause_recovery` mutator (spec 07) sets the schedule `paused, paused_by = 'recovery'` immediately — **unless a user has already paused it** (`paused_by = 'user'`), in which case the human's pause is left untouched and only the diagnosis proceeds. A `schedule.paused` event fires with `source = 'recovery'`. (There is no `paused-by-code`: `[seed_schedule]` cannot seed a pause — spec 08 — so the only origins are `user` and `recovery`.)
 3. **Diagnose (read-only, grounded).** The recovery engineer runs in a **read-only permission mode** (spec 15): it reads the failed run's logs, classifies the exception (`classify.py`), and computes a per-resource **schema diff** (`schema_diff.py` — dlt's destination cached schema vs. the current source schema, where the **current source schema is read via the source pack's `describe_object` introspection skill**, [dlt-engineer](./dlt-engineer.md)). It **degrades gracefully**: no cached schema → "manual review required," surface logs, no proposed plan.
 4. **Record.** An `Investigation` row is written (`status=proposed`) with the markdown diagnosis + category; an `incident.diagnosed` event fires (Slack/webhook).
-5. **Delegate the fix (when code-fixable).** Recovery calls `delegate(<engineer>, fix_task, context)` — DLT engineer for a dlt-source fix, DBT engineer (v0.2) for a model fix, SQL specialist for a query fix. The engineer returns a **proposed Plan** (file diffs) linked to the Investigation (`proposed_plan_id`). **No write to prod** — the Plan is reviewable and flows through the normal `build → deploy/PR` path.
+5. **Delegate the fix (when code-fixable).** Recovery calls `delegate(<engineer>, fix_task, context)` — DLT engineer for a dlt-source fix, DBT engineer (a later increment) for a model fix, SQL specialist for a query fix. The engineer returns a **proposed Plan** (file diffs) linked to the Investigation (`proposed_plan_id`). **No write to prod** — the Plan is reviewable and flows through the normal `build → deploy/PR` path.
 6. **Resolve.** When the resolving deploy lands (the deploy carries the `investigation_id`, spec 14), the Investigation → `resolved` (`resolved_by_deploy_id`) and the schedule **auto-resumes only if it is still `paused_by = 'recovery'`** (`auto_resume_recovery`, spec 07). If a user paused it in the interim (`paused_by = 'user'`), auto-resume is **suppressed** — the Investigation still resolves, but the schedule stays paused until a human resumes it; `schedule.resumed` fires only when an auto-resume actually happens. If the analyst dismisses ("won't fix"), → `dismissed`.
 
 ### Classification (grounded in dlt's real hierarchy)
@@ -111,4 +111,4 @@ REST/MCP parity per specs 09/10. Recurring-run display capped (10 + "… and N m
 
 - **Investigation migration number.** *Implementation default.* Next sequential; `down_revision` = current head at build time.
 - **`target` source on the Investigation.** *Implementation default.* From the failed run's target.
-- **Delegation in the runtime context → RESOLVED.** Recovery runs inside `carve serve`; it `delegate`s **synchronously** and persists the proposed Plan (no live worker contention) — consistent with spec 15's v0.1 sequential + sync execution model.
+- **Delegation in the runtime context → RESOLVED.** Recovery runs inside `carve serve`; it `delegate`s **synchronously** and persists the proposed Plan (no live worker contention) — consistent with spec 15's sequential + sync execution model.

@@ -1,6 +1,6 @@
 # OSS packaging: bundled docker-compose for Postgres + external-Postgres option
 
-> Delivers the first-run UX implied by [positioning #12](../_strategy/2026-05-positioning.md), [ARCHITECTURE §5.7](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 2](../PROJECT_PLAN.md): one-command Postgres for self-hosters, with a clean override for users who already operate Postgres.
+> Delivers the first-run UX implied by [positioning #12](../_strategy/2026-05-positioning.md), and [ARCHITECTURE §5.7](../ARCHITECTURE.md): one-command Postgres for self-hosters, with a clean override for users who already operate Postgres.
 
 ## Status
 
@@ -35,7 +35,7 @@ Carve is a Python package. Supported install paths:
 - `pipx install carve` (isolated, recommended for end users who don't manage Python envs themselves)
 - `uv tool install carve` (modern recommended path)
 
-The CLI entry point is `carve` (Typer-based; see [v0.1 spec set item 12 — ask](./ask.md) and the rest of the surface for what's exposed).
+The CLI entry point is `carve` (Typer-based; see [ask](./ask.md) and the rest of the surface for what's exposed).
 
 After install, the user has a `carve` binary on PATH. No additional setup is needed until they run `carve init` in a project.
 
@@ -160,16 +160,16 @@ Carve doesn't wrap any of these — they're standard Docker Compose commands. Th
 ## Design notes
 
 - **Why Postgres-only in the compose bundle (not Carve too)?** Three reasons. (1) Carve is a Python CLI tool that the user installs with `pip`/`pipx`/`uv tool`; running it natively avoids the complexity of mounting the user's project directory into a container that runs dlt/dbt subprocesses against it. (2) Debugging is dramatically easier when Carve runs natively — `carve serve` outputs go straight to the terminal; no `docker logs` required. (3) Hosted is the right answer for users who want a fully-managed runtime; building a polished Carve-in-Docker OSS image would compete with the hosted product without the operational benefits.
-- **Why `postgres:16`?** Latest LTS major version at v0.1 time, stable, widely available. Pin to a major version (not `latest`) so existing installs don't get surprise updates. Bump in a future release when 17 stabilizes.
+- **Why `postgres:16`?** Latest LTS major version at authoring time, stable, widely available. Pin to a major version (not `latest`) so existing installs don't get surprise updates. Bump in a future release when 17 stabilizes.
 - **Why `127.0.0.1` binding?** Security default; the bundled Postgres should never be exposed to the network. Users who actually need network access (e.g., running Postgres on a different machine than `carve serve`) should use `--external-postgres` and put their Postgres behind real auth.
 - **Why slug-prefixed container names?** Lets the user run multiple Carve projects on the same host without `container_name` collisions. Docker Compose's default project-name behavior also handles this, but explicit naming is friendlier for `docker ps`.
-- **Why not Helm / K8s manifests in v0.1?** Per [ARCHITECTURE §15](../ARCHITECTURE.md), K8s is supported in hosted but not a Carve-native abstraction in OSS. A community-contributed Helm chart can land later if there's demand; it's not a v0.1 blocker.
+- **Why not Helm / K8s manifests?** Per [ARCHITECTURE §15](../ARCHITECTURE.md), K8s is supported in hosted but not a Carve-native abstraction in OSS. A community-contributed Helm chart can land later if there's demand; it's not a blocker.
 
 ## Open questions
 
 > Tagged per the scheme in spec 01.
 
 - **Postgres 16 vs 15.** *Implementation default.* Go with 16; rollback to 15 if any test infrastructure incompatibility surfaces. Document the supported version in `docs/installation.md`.
-- **Whether to ship a Makefile or `just` recipes for the common Docker commands.** *Implementation default.* Skip in v0.1; the three commands (`docker compose up -d`, `docker compose down`, `carve serve`) are short and well-known. Revisit if user feedback says it's friction.
+- **Whether to ship a Makefile or `just` recipes for the common Docker commands.** *Implementation default.* Skip for now; the three commands (`docker compose up -d`, `docker compose down`, `carve serve`) are short and well-known. Revisit if user feedback says it's friction.
 - **Behavior when Docker is not installed and `--external-postgres` was not passed.** *Implementation default.* `carve init` detects the absence of `docker compose` on PATH and prints a friendly message: "Docker not detected. Either install Docker Desktop / `docker compose`, or re-run with `--external-postgres "postgresql+psycopg://..."` pointing at your existing Postgres." Exits with code 3 (config error).
 - **Whether the bundled compose includes any other services.** *Implementation default.* No — Postgres only. Adding services (Redis for the hosted event bus, an init container for first-run migrations, a healthcheck companion) accumulates complexity without OSS benefit. Hosted bundles its own thing.

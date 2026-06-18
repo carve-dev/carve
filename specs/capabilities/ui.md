@@ -1,6 +1,6 @@
 # Static HTML UI: regenerated-per-run, modeled on `dbt docs`
 
-> Ships the minimal local web UI for OSS self-hosters. Deliberately limited so the upgrade hook to the polished cloud UI stays clear. Per [PRD §6.13 interfaces](../PRD.md), [PRD design decision 5.10 OSS feature-complete; hosted operationally distinct](../PRD.md), [ARCHITECTURE §8.4 local static HTML UI](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 11](../PROJECT_PLAN.md).
+> Ships the minimal local web UI for OSS self-hosters. Deliberately limited so the upgrade hook to the polished cloud UI stays clear. Per [PRD §6.13 interfaces](../PRD.md), [PRD design decision 5.10 OSS feature-complete; hosted operationally distinct](../PRD.md), and [ARCHITECTURE §8.4 local static HTML UI](../ARCHITECTURE.md).
 
 ## Status
 
@@ -25,7 +25,7 @@ After this spec lands, a user can `open http://127.0.0.1:8766` (or `carve docs o
 
 - Live updates (no WebSocket, no SSE in the rendered page; the user reloads to see new state)
 - Authentication beyond loopback-only binding (deliberately no login UI; this is local-machine OSS)
-- Lineage view rendering (deferred — lineage is investigated on demand via [lineage](./lineage.md), not stored; there is no Carve graph to render, and the static UI stays run-history + logs until post-v0.1)
+- Lineage view rendering (deferred — lineage is investigated on demand via [lineage](./lineage.md), not stored; there is no Carve graph to render, and the static UI stays run-history + logs until a later increment)
 - Cost / token usage dashboards (basic metrics surfaced via `/metrics/*` REST endpoints; cloud UI gets the polished version)
 - Pipeline / step authoring UI (users author via `carve plan` / `carve build`)
 - Anything fancy (the cloud UI in hosted has the polish; this exists to be honestly minimal)
@@ -214,7 +214,7 @@ The pipeline detail page renders `pipelines/<name>.md` as Markdown if it exists.
 
 ## Open questions
 
-- **Whether to include a "step graph" visualization beyond the indented-list rendering.** *Implementation default.* No graph rendering library in v0.1; the indented-list works and avoids pulling in d3/cytoscape/vis-network etc. If users find the list confusing, add a simple SVG-based graph later. Cloud UI gets the polished interactive graph.
+- **Whether to include a "step graph" visualization beyond the indented-list rendering.** *Implementation default.* No graph rendering library for now; the indented-list works and avoids pulling in d3/cytoscape/vis-network etc. If users find the list confusing, add a simple SVG-based graph later. Cloud UI gets the polished interactive graph.
 - **Whether the UI should also surface the OpenAPI schema (e.g., embed Swagger UI).** *Implementation default.* No; `/api/docs` from the REST server already serves Swagger UI. The static UI links to it from the agents/skills/footer pages.
-- **Whether to support a custom theme (CSS override).** *Implementation default.* Not in v0.1; theming requests get tracked as a post-v0.1 enhancement. Users who really want different styling can override `.carve/ui/static/carve.css` directly (their override survives regen because the asset copy is idempotent — same content = no write).
-- **Whether to render runs in archive tables (older than the active window).** *Implementation default.* No in v0.1; the active runs table is sufficient for the dashboard. Surfacing archived runs requires query-by-pipeline-and-date which is a different UX. Hosted gets it; OSS users with archive needs use the REST `/metrics/runs?since=` endpoint.
+- **Whether to support a custom theme (CSS override).** *Implementation default.* Not now; theming requests get tracked as a later enhancement. Users who really want different styling can override `.carve/ui/static/carve.css` directly (their override survives regen because the asset copy is idempotent — same content = no write).
+- **Whether to render runs in archive tables (older than the active window).** *Implementation default.* No for now; the active runs table is sufficient for the dashboard. Surfacing archived runs requires query-by-pipeline-and-date which is a different UX. Hosted gets it; OSS users with archive needs use the REST `/metrics/runs?since=` endpoint.

@@ -69,13 +69,13 @@ Exit criteria ({from DELIVERY}):
   {check each increment exit criterion against what was built — met / not met}
 
 Next:
-  {if complete: review, run integration tests, commit; if this was the last increment, the v0.1.0 tag criteria in DELIVERY apply}
+  {if complete: review, run integration tests, commit; if this was the last increment, the initial-release tag criteria in DELIVERY apply}
   {if stopped: address {capability}, then re-run /build-increment {increment} or resume with /build-spec {next-capability}}
 ```
 
 ### 6. Tagging (manual, not automated)
 
-`/build-increment` does **not** create git tags. The `v0.1.0` tag criteria live in `DELIVERY.md` (Increment 6 — *carve init → plan → build → run → deploy → scheduled-run works end-to-end against real Snowflake, via REST + MCP*). The user tags by hand after reviewing.
+`/build-increment` does **not** create git tags. The initial-release tag criteria live in `DELIVERY.md` (Increment 6 — *carve init → plan → build → run → deploy → scheduled-run works end-to-end against real Snowflake, via REST + MCP*). The user tags by hand after reviewing.
 
 ## Constraints
 

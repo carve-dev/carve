@@ -111,9 +111,9 @@ Two operational shapes underlie every use case below:
 
 ### Resolved decisions
 
-- **OAuth orchestration is deferred to post-v0.1**, matching dlt's stance — dlt doesn't ship a unified OAuth UX either; per-source auth tokens are obtained out-of-band and dropped into `.dlt/secrets.toml`. Carve documents the manual flow per source. Post-v0.1 may add a side-channel browser flow as a Carve value-add where dlt doesn't.
+- **OAuth orchestration is deferred to a later increment**, matching dlt's stance — dlt doesn't ship a unified OAuth UX either; per-source auth tokens are obtained out-of-band and dropped into `.dlt/secrets.toml`. Carve documents the manual flow per source. A later increment may add a side-channel browser flow as a Carve value-add where dlt doesn't.
 - **`carve init` populates `carve/conventions.md`** with sensible defaults (e.g., `raw_<source>` schema prefix, lower_snake_case columns, merge disposition default). The agent reads from the file — single source of truth, no hardcoded defaults in agent code.
-- **`carve env set / list / unset` ship in v0.1** as an interactive surface over `.env`. `set` accepts a value via masked stdin; `list` shows names only (never values); `unset` removes. MCP-equivalent for chat-driven flows.
+- **`carve env set / list / unset` ship** as an interactive surface over `.env`. `set` accepts a value via masked stdin; `list` shows names only (never values); `unset` removes. MCP-equivalent for chat-driven flows.
 - **Plan output shows exact LLM cost** (we know it precisely) and **estimated runtime time** (first run / subsequent runs) — no dollar estimate for warehouse compute. Time is what the analyst actually wants to know; warehouse-cost estimation is too variable to deliver responsibly.
 
 ### Open questions
@@ -230,7 +230,7 @@ Schedule mutation is gated by the `schedule` RBAC scope (held by `admin` and `me
 ### Open questions
 
 - **What if the UC1 PR hasn't been merged yet?** Amend the existing PR (cleaner git history but confuses reviewers mid-review) or open a second PR (more churn but each PR is one logical change)? Probably: amend if same logical work being iterated; new branch if UC1 already merged. Worth a CLI flag.
-- **Multiple schedules per pipeline.** Some pipelines want "every hour business hours, every 4 hours at night." Not in v0.1; flag as deferred. Future shape: a list of schedule rows per pipeline.
+- **Multiple schedules per pipeline.** Some pipelines want "every hour business hours, every 4 hours at night." Deferred to a later increment. Future shape: a list of schedule rows per pipeline.
 
 ---
 
@@ -351,7 +351,7 @@ Carve mirrors dlt's `--refresh` modes one-to-one — no Carve-invented aliases. 
 
 ### Open questions
 
-- **CDC vs cursor-based incremental.** Salesforce supports Change Data Capture streaming, but dlt's verified Salesforce source does **not** — it is cursor-based (`SystemModstamp` + merge disposition), and dlt ships no SaaS CDC source at all (only DB replication, e.g. Postgres `pg_replication`). v0.1: cursor-based only. Salesforce CDC would require custom native-source code consuming Salesforce's Streaming/CDC API and is a post-v0.1 enhancement. *(Verified against dlt 1.27.2 + dlt docs, 2026-06-12.)*
+- **CDC vs cursor-based incremental.** Salesforce supports Change Data Capture streaming, but dlt's verified Salesforce source does **not** — it is cursor-based (`SystemModstamp` + merge disposition), and dlt ships no SaaS CDC source at all (only DB replication, e.g. Postgres `pg_replication`). Cursor-based only for now. Salesforce CDC would require custom native-source code consuming Salesforce's Streaming/CDC API and is a later-increment enhancement. *(Verified against dlt 1.27.2 + dlt docs, 2026-06-12.)*
 - **Pipeline-level vs. step-level incremental.** dlt's incremental is per-resource (inside the dlt source code). The pipeline TOML doesn't really know about it. This is fine but means `carve pipelines show` has to introspect dlt's destination-side state table to display per-resource cursors. Implementation detail worth pinning before specifying the CLI.
 
 ---
@@ -424,7 +424,7 @@ We chose a type change as the failure scenario because it's what dlt's recommend
 21. **Deploy-event handler:** Investigation `inv_abc123` transitions to `resolved` (with `resolved_by_deploy_id`); the paused schedule auto-resumes via the same `schedules`-row mutation (audited in `schedule_changes`).
 22. **`schedule.resumed` event fires.** Slack: "✅ salesforce auto-resumed — fix from inv_abc123 deployed." Next scheduled tick runs normally.
 
-### What categories of failures get auto-diagnosed in v0.1?
+### What categories of failures get auto-diagnosed?
 
 Bounded list. The recovery engineer's value depends on staying within what it can reliably classify.
 
@@ -446,9 +446,9 @@ Classification uses dlt's actual exception hierarchy — the recovery engineer u
 
 ### Design decisions surfaced
 
-- **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT or SQL engineer subagent (the dbt engineer arrives in v0.2), whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
+- **The recovery engineer is a diagnose-then-delegate subagent** (per [`_strategy/2026-06-ai-harness.md`](_strategy/2026-06-ai-harness.md) and spec 17). Triggered on retries-exhausted `run.failed`, pre-scoped to one failed run, it runs **read-only** (grounded in dlt exception classes, the schema diff, run logs) to produce a diagnosis (markdown) — then **delegates the fix** to the DLT or SQL engineer subagent (the dbt engineer is a later increment), whose authored change surfaces as a proposed Plan via the normal Plan entity. The recovery engineer never writes component code itself; the delegated fix flows through the same plan/build/deploy path as any other change.
 - **New state-store entity: `Investigation`** with columns `id, triggering_run_id, diagnosis_md, proposed_plan_id NULL, status, created_at, resolved_by_plan_id NULL, resolved_by_deploy_id NULL, recurring_run_ids JSONB`. Status set: `proposed | acknowledged | resolved | dismissed`.
-- **Carve never auto-deploys a fix.** The proposed Plan is reviewable; it goes through build/deploy/PR like any other change. **Human in the loop is a hard v0.1 invariant.** The hosted product's plan-approval workflows extend it but don't replace it.
+- **Carve never auto-deploys a fix.** The proposed Plan is reviewable; it goes through build/deploy/PR like any other change. **Human in the loop is a hard invariant.** The hosted product's plan-approval workflows extend it but don't replace it.
 - **Retries-then-pause-then-diagnose.** Each step has `retries = N` (default 3, configurable per-step in pipeline TOML). When retries exhaust on a single run, the runtime auto-pauses the schedule immediately — the same `schedules`-row mutation as a manual `carve schedule pause`, audited in `schedule_changes` with `paused_by = recovery` (distinct from a human's `paused_by = user`; there is no seed-time pause — `[seed_schedule]` can't pause, spec 08). If the schedule was **already paused by a human**, recovery leaves it untouched and just diagnoses. The recovery engineer diagnoses in parallel and posts a follow-up notification when the proposed solution is ready.
 - **Auto-resume on deploy of the resolving change.** Plans/Builds/Deploys carry an `investigation_id` through the chain. When the deploy lands and prod restarts with the new code, the matching investigation transitions to `resolved` and the schedule auto-resumes — **only if it is still `paused_by = recovery`**; a human pause in the interim is preserved (the investigation still resolves, but the schedule stays paused until a person resumes it). If the fix doesn't work, the next scheduled run re-enters the retries-pause-diagnose cycle.
 - **Recovery engineer runs on dev-target failures too**, with the same flow. Pause logic applies if a dev schedule exists; ad-hoc dev runs just get diagnosed without anything to pause. Per-pipeline opt-out available via `[recovery] enabled = false`.
@@ -471,9 +471,9 @@ Classification uses dlt's actual exception hierarchy — the recovery engineer u
 
 ### What's NOT in this use case (deferred)
 
-- **Auto-deploying fixes without human review.** Considered and rejected. Crosses the no-autonomous-writes line; human-in-the-loop is a v0.1 invariant. May revisit post-v0.1 as opt-in for trivial categories (e.g., pure type-widening) with explicit per-pipeline allowlisting.
+- **Auto-deploying fixes without human review.** Considered and rejected. Crosses the no-autonomous-writes line; human-in-the-loop is an invariant. May revisit in a later increment as opt-in for trivial categories (e.g., pure type-widening) with explicit per-pipeline allowlisting.
 - **Cross-pipeline failure correlation** ("3 pipelines failed at the same time, common root cause = Snowflake outage"). Useful but adds substantial complexity. Defer.
-- **A separate "incident commander" agent** for coordinated multi-pipeline outages. Overkill for v0.1.
+- **A separate "incident commander" agent** for coordinated multi-pipeline outages. Overkill for now.
 
 ---
 
@@ -557,7 +557,7 @@ Carve does not attempt to correlate the Account changes as a rename — dlt has 
 **Post-resolution backfills (analyst-initiated, separate from the resolution)**
 
 20. **Analyst:** `carve run salesforce --target prod --refresh drop_data --resources leads`. Confirmation prompt: "this will drop state and reload all rows from source. Type 'salesforce' to confirm" (UC3 decision; member-invokable). Worker runs a full reload of the lead resource. Historical Leads now have `LeadScore__c` populated.
-21. **For Account historical fill (`industry` → `industrysector`):** Out of scope for this incident. The follow-up dbt PR opened in step 13 adds a staging-layer alias mapping historical `industry` values to the new `industrysector` column. Belongs in dbt territory (v0.2 specifies the dbt-side ergonomics).
+21. **For Account historical fill (`industry` → `industrysector`):** Out of scope for this incident. The follow-up dbt PR opened in step 13 adds a staging-layer alias mapping historical `industry` values to the new `industrysector` column. Belongs in dbt territory (a later increment specifies the dbt-side ergonomics).
 22. **For Opportunity column archival:** Analyst manually runs `ALTER TABLE prod_db.raw_sfdc.opportunities DROP COLUMN legacy_forecast_category` (or renames to `_legacy_*` for archival) outside of Carve. Carve neither suggests nor executes the DDL — same hard rule as dlt: destination column lifecycle is the analyst's.
 
 ### Design decisions surfaced
@@ -594,6 +594,6 @@ Future stories to walk through, roughly in priority order:
 - **Schema drift in a source** — Salesforce adds a column; what does Carve do at the next scheduled run?
 - **Audit / observability** — "what shipped to prod last week, and who triggered each manual run?"
 - **Rollback a bad deploy** — merged PR introduced a regression; how does the team revert in prod?
-- **Add a dbt model** that depends on the Salesforce data from UC1 (v0.2 territory but worth designing for)
+- **Add a dbt model** that depends on the Salesforce data from UC1 (a later increment, but worth designing for)
 - **Multi-step pipeline** — pipeline composes dlt + dbt + sql with cross-step outputs
 - **Brownfield adoption** — existing dbt + dlt project, first `carve init`, convention inference

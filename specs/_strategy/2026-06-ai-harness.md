@@ -30,10 +30,10 @@ The orchestrator is the **main loop**; everything else is a delegated subagent. 
 | **Orchestrator** | classify + decompose goal, delegate, synthesize into a reviewable plan/diff | main loop; doesn't do deep work itself |
 | **DLT engineer** | author + run dlt sources/pipelines into a named component | connector skill-library + the customer repo for context; verifies via `dlt pipeline run` |
 | **DLT qa / security** (review) | adversarial review of the dlt diff | schema-contract, credential handling, data-loss modes |
-| **DBT engineer** (**v0.2**) | author + run dbt models/tests/sources | dlt + dbt repo context; verifies via `dbt build`/`test` |
-| **DBT qa** (review, v0.2) | test/coverage/convention review | |
+| **DBT engineer** (**later increment**) | author + run dbt models/tests/sources | dlt + dbt repo context; verifies via `dbt build`/`test` |
+| **DBT qa** (review, later increment) | test/coverage/convention review | |
 | **Pipeline engineer** | compose components **by name** into `pipelines/<name>.toml` | the control-plane runtime specialist (spec 08) |
-| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT or SQL engineer (dbt engineer in v0.2) | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
+| **Recovery engineer** | diagnose a failure (grounded: dlt exception classes, schema diff, run logs), then **delegate the fix** to the DLT or SQL engineer (dbt engineer in a later increment) | the meta-agent that resolves the orphaned recovery POC; drops the dead `el-deploy` invocation contexts |
 | **Explorer** | read-only Q&A: how/where/why, lineage, logic, definitions, tests, "where does this data come from" | the `ask` verb (spec 12), elevated; citation-backed |
 
 **SQL is a cross-cutting capability, not a silo:** a **dialect-aware tool layer** every subagent uses (snowflake / duckdb / postgres / bigquery / databricks / sqlserver) — `sqlglot` for transpile/validate, per-dialect `INFORMATION_SCHEMA` introspection, permission-gated execution (read vs write, DDL prompts) — plus a thin **SQL specialist** for "explain / write / modify this query." **Connect/onboarding** (the `carve connect` first-magical-moment) is a capability the orchestrator wields, not a standing agent.
@@ -97,22 +97,22 @@ on = "run.failed"; run = "notify-slack"
 - **Permission modes (enum):** `read_only | plan | build | deploy`, each with an allowlist + a bash sandbox policy; the active mode is set by the verb (`ask`→read_only, `plan`→plan, …) or by the chat-driven session.
 - **Base tools:** `edit` (string-replace), `bash` (allowlisted, sandboxed), `glob`, `grep`, `web_fetch`, `web_search`.
 
-## v0.1 cut (staged — the full vision ships over v0.1 → v0.2)
+## Initial cut (staged — the full vision lands across increments; the delivery plan sequences them)
 
-- **Harness (v0.1, foundation):** subagent delegation + terminal toolset (`edit`/`bash`/`grep`/`web`) + permission modes/allowlists/sandbox + the verification loop. Build this first.
-- **Agents (v0.1, declarative):** orchestrator, DLT engineer, pipeline engineer, explorer (`ask`), recovery engineer (delegating). QA/security review subagents phased in (start: security-on-deploy, qa-on-build).
-- **DBT engineer:** **v0.2** (matches the existing dbt-authoring deferral).
-- **Extensibility (v0.1):** declarative agents + skills + MCP-consume. Hooks + MCP-expose close behind.
-- **SQL (v0.1):** dialect-aware tool layer (Snowflake first; others via `sqlglot`) + thin specialist.
-- **Per-agent model tiering (v0.1):** pricing support already exists; wire selection.
+- **Harness (foundation):** subagent delegation + terminal toolset (`edit`/`bash`/`grep`/`web`) + permission modes/allowlists/sandbox + the verification loop. Build this first.
+- **Agents (declarative):** orchestrator, DLT engineer, pipeline engineer, explorer (`ask`), recovery engineer (delegating). QA/security review subagents phased in (start: security-on-deploy, qa-on-build).
+- **DBT engineer:** **a later increment** (matches the existing dbt-authoring deferral).
+- **Extensibility:** declarative agents + skills + MCP-consume. Hooks + MCP-expose close behind.
+- **SQL:** dialect-aware tool layer (Snowflake first; others via `sqlglot`) + thin specialist.
+- **Per-agent model tiering:** pricing support already exists; wire selection.
 
 ## Spec plan (the spec-out)
 
-New specs (numbering provisional; some v0.1, some v0.2):
+New specs (numbering provisional; the delivery plan assigns each to an increment):
 
 1. **Agent harness** — the subagent loop, delegation tool, terminal tool layer, permission modes/allowlists/sandbox, the verification loop. (Foundational; everything else builds on it. Revises the M1 loop rather than replacing `loop.py`.)
 2. **Extensibility** — declarative agents (`carve/agents/*.md`) + skills (`SKILL.md` packs, incl. the connector→skill library) + hooks + MCP (both directions) + `carve agents/skills` CLI.
-3. **Recovery engineer** — diagnose-then-delegate; reconcile the orphaned POC; drop the dead deploy invocation contexts; the `Investigation` entity (control-plane-era model, UC4/UC5). *(The v0.1 recovery decision the AI-map flagged.)*
+3. **Recovery engineer** — diagnose-then-delegate; reconcile the orphaned POC; drop the dead deploy invocation contexts; the `Investigation` entity (control-plane-era model, UC4/UC5). *(The early recovery decision the AI-map flagged.)*
 4. **SQL dialect-aware layer** — `sqlglot`-backed transpile/validate, per-dialect introspection, permission-gated exec, thin SQL specialist.
 
 Revisions:
@@ -126,5 +126,5 @@ Revisions:
 
 - **Interactive (Claude-Code-style chat) vs batch (plan/build/PR) modes** — both ship; the chat mode is the magical experience, the batch mode the audited/CI path. Pin how the permission model spans both.
 - **Sync vs async loop** — confirm `loop.py` composes with the async `carve serve` runtime (subagents may want concurrency).
-- **Review fan-out scope for v0.1** — which reviewers (security/qa/dbt/snowflake) ship when; full fan-out vs a staged start.
-- **Sandboxing depth for bash** — OS sandbox vs container vs allowlist-only for v0.1.
+- **Review fan-out scope for the first cut** — which reviewers (security/qa/dbt/snowflake) ship when; full fan-out vs a staged start.
+- **Sandboxing depth for bash** — OS sandbox vs container vs allowlist-only for the first cut.

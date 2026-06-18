@@ -1,5 +1,7 @@
 # Carve — Project Plan
 
+> **⚠️ Retired 2026-06-18 — archived for historical reference; no longer authoritative.** This pillar-based plan is superseded. The durable "shape of Carve" (the product pillars, guiding principles, deferred scope) lives in [`../PRD.md`](../PRD.md) and [`../ARCHITECTURE.md`](../ARCHITECTURE.md); the live, delta-aware build sequence lives in [`../DELIVERY.md`](../DELIVERY.md). Retired per [`../_strategy/2026-06-spec-structure.md`](../_strategy/2026-06-spec-structure.md). Cross-links in the body below are relative to this file's original `specs/` location and may not resolve from the archive.
+
 > Last major revision 2026-05-19, aligned to [`_strategy/2026-05-positioning.md`](./_strategy/2026-05-positioning.md), [`_strategy/spec-audit.md`](./_strategy/spec-audit.md), [`PRD.md`](./PRD.md), and [`ARCHITECTURE.md`](./ARCHITECTURE.md). For the prior version, see [`_archive/PROJECT_PLAN-pre-2026-05-positioning.md`](./_archive/PROJECT_PLAN-pre-2026-05-positioning.md).
 
 > **Superseded for sequencing by [`DELIVERY.md`](./DELIVERY.md)** (2026-06-17, per [`_strategy/2026-06-spec-structure.md`](./_strategy/2026-06-spec-structure.md)). The live, dependency-ordered, delta-aware build sequence now lives in `DELIVERY.md`; this plan's durable "shape of Carve" framing remains useful and folds into PRD/ARCHITECTURE. Kept until the spec corpus migrates to capability-organized specs.

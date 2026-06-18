@@ -9,6 +9,13 @@ Specs that informed Carve's design but are not authoritative anymore. They live 
 | [`milestone-2-real-product/`](milestone-2-real-product/) | Archived (2026-05-07) | The original "real product" milestone, restructured into Pillars 1-4. Five specs were formally accepted (M2-01, M2-02, M2-03, M2-07, M2-10); the rest reached varying degrees of draft. See the README inside for the per-spec disposition into pillars. |
 | [`milestone-3-polish/`](milestone-3-polish/) | Archived (2026-05-07) | The original "polish for adoption" milestone, restructured into Pillars 3-4 plus a future UI milestone. Most specs map cleanly into pillar territory; see the README inside for the per-spec disposition. |
 
+## Retired top-level docs
+
+Superseded top-level planning/spec docs, kept for historical trace:
+
+- [`PROJECT_PLAN-pillars.md`](PROJECT_PLAN-pillars.md) — the pillar-based delivery plan (P1–P4 + hosted product), superseded for sequencing by [`../DELIVERY.md`](../DELIVERY.md) and retired 2026-06-18 under the [three-tier spec structure](../_strategy/2026-06-spec-structure.md); its durable "shape of Carve" framing folds into PRD/ARCHITECTURE.
+- [`PROJECT_PLAN-pre-2026-05-positioning.md`](PROJECT_PLAN-pre-2026-05-positioning.md), [`PRD-pre-2026-05-positioning.md`](PRD-pre-2026-05-positioning.md), [`ARCHITECTURE-pre-2026-05-positioning.md`](ARCHITECTURE-pre-2026-05-positioning.md) — the pre-positioning originals, archived when the 2026-05 positioning rewrite landed.
+
 ## Why archive instead of delete
 
 Three reasons:

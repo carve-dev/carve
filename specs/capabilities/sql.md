@@ -18,13 +18,13 @@ One dialect-aware SQL capability, used everywhere:
 4. **Permission-gated execution** (spec 15): reads on the **read role**; writes / DDL only in `build`/`deploy` mode on the **write role**, with a prompt on destructive DDL.
 5. A thin **SQL specialist** subagent for "explain this query / write me this / make this incremental."
 
-v0.1 ships **Snowflake + DuckDB first-class** (DuckDB powers local dev + tests); postgres/bigquery/databricks/sqlserver via `sqlglot` + adapter stubs, hardened post-v0.1 (matches the "Snowflake-tested, others via dlt/dbt natively" stance).
+Carve ships **Snowflake + DuckDB first-class** (DuckDB powers local dev + tests); postgres/bigquery/databricks/sqlserver via `sqlglot` + adapter stubs, hardened later (matches the "Snowflake-tested, others via dlt/dbt natively" stance).
 
 ## Out of scope
 
 - A Carve-owned SQL **execution engine** — we shell to the warehouse, we don't compute. The `sql` step stays "thin operational glue" (spec 08).
-- **dbt model authoring** (v0.2) — the SQL specialist writes ad-hoc/step SQL, not dbt models.
-- First-class hardening of bigquery/databricks/sqlserver (post-v0.2; v0.1 is Snowflake + DuckDB).
+- **dbt model authoring** — the SQL specialist writes ad-hoc/step SQL, not dbt models.
+- First-class hardening of bigquery/databricks/sqlserver (deferred; Snowflake + DuckDB are first-class).
 
 ## Behavior
 
@@ -51,7 +51,7 @@ The read-vs-write **role** comes from the target config (Carve already models de
 ### Dialects
 
 - **Snowflake** — first-class (generalizes the M1 connector). **DuckDB** — first-class (local dev + the test substrate; lets the whole stack run without a warehouse).
-- **postgres / bigquery / databricks / sqlserver** — `sqlglot` transpile/validate works now; introspection adapters are stubs hardened post-v0.1. The agent can *author* dialect-correct SQL for all six today; *running* is fully tested on Snowflake + DuckDB.
+- **postgres / bigquery / databricks / sqlserver** — `sqlglot` transpile/validate works now; introspection adapters are stubs hardened later. The agent can *author* dialect-correct SQL for all six today; *running* is fully tested on Snowflake + DuckDB.
 
 ### The SQL specialist (thin)
 
@@ -80,6 +80,6 @@ A declarative subagent (`sql-specialist.md`) for explicit SQL tasks — "explain
 
 ## Open questions
 
-- **Connections schema for non-Snowflake dialects.** *Implementation default.* Generalize `connections.toml` per dialect; Snowflake + DuckDB shapes in v0.1, others additive.
+- **Connections schema for non-Snowflake dialects.** *Implementation default.* Generalize `connections.toml` per dialect; Snowflake + DuckDB shapes first, others additive.
 - **Result-size caps for `run`.** *Implementation default.* Reuse the skill-category caps (default 100/200 rows, `truncated` flag); large reads paginate.
-- **How much the SQL specialist overlaps the dbt engineer (v0.2).** *Cross-reference.* The specialist handles ad-hoc/step SQL; dbt models are the v0.2 dbt engineer's. Keep the boundary explicit when v0.2 lands.
+- **How much the SQL specialist overlaps the dbt engineer.** *Cross-reference.* The specialist handles ad-hoc/step SQL; dbt models are the dbt engineer's. Keep the boundary explicit when dbt authoring lands.

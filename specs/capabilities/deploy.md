@@ -1,8 +1,8 @@
 # `carve deploy`: component git-promotion via a configurable handoff (files → commit → push → PR), with cross-repo linked PRs
 
-> Delivers PROJECT_PLAN acceptance step 7 and the deploy steps in use-cases UC1/UC2/UC4. `carve deploy` promotes the code a build wrote — for one or more **components** plus the control-plane composition — into version control, by default as reviewable PR(s), via a **configurable handoff**. Decision recorded 2026-06-12 (default handoff `pr`; `gh` PR mechanism).
+> Delivers the deploy acceptance — a build's code promoted to version control as a PR — and the deploy steps in use-cases UC1/UC2/UC4. `carve deploy` promotes the code a build wrote — for one or more **components** plus the control-plane composition — into version control, by default as reviewable PR(s), via a **configurable handoff**. Decision recorded 2026-06-12 (default handoff `pr`; `gh` PR mechanism).
 >
-> **Revised 2026-06-16 for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)): deploy promotes **named components** (resolved per [layout](./layout.md)) + the control-plane repo, and the **cross-repo linked-PR flow ships in v0.1** (ADR resolved #4) — no longer deferred. The target DDL-readiness axis shrinks to a thin `carve target verify` (no table DDL — dlt owns that); the old `carve el deploy --from/--to` retires.
+> **Revised 2026-06-16 for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)): deploy promotes **named components** (resolved per [layout](./layout.md)) + the control-plane repo, and the **cross-repo linked-PR flow is in scope** (ADR resolved #4) — no longer deferred. The target DDL-readiness axis shrinks to a thin `carve target verify` (no table DDL — dlt owns that); the old `carve el deploy --from/--to` retires.
 
 ## Status
 
@@ -44,7 +44,7 @@ ARCHITECTURE specifies a `Deploy` flow (§7.5) and `deploys` table (§9.4) from 
 
 - **`--mode pr|direct` → `--handoff files|commit|push|pr`.** Old `direct` (direct-to-prod) was hosted-only; the handoff enum is strictly richer and the OSS ceiling is `pr`.
 - **Status `{opened, merged, failed, cancelled}` → `{succeeded, degraded, failed}`.** OSS does **not** track PR merge state (the CD-engine boundary); `handoff_reached` records where a leg stopped. `merged_at` dropped.
-- **`linked_deploy_id` is now USED** (not reserved): it joins the per-repo `deploys` rows of one cross-repo deploy. The separate-remote dual-PR flow ships in v0.1.
+- **`linked_deploy_id` is now USED** (not reserved): it joins the per-repo `deploys` rows of one cross-repo deploy. The separate-remote dual-PR flow is in scope.
 - **`config_hash` drift refusal (exit 4) KEPT** (§7.6) — a safety check, not CD.
 - **PR mechanism neutralized** — §7.5's "GitHub MCP" → the configured `pr_command` (default `gh`).
 
@@ -107,7 +107,7 @@ Degradation (each announced): `pr` with no remote → `commit` (`status=degraded
 
 ### Single-repo deploy (simple mode / separate-local)
 
-When the build touched only one working tree (simple mode, or all components `same-repo`/`separate-local`), deploy is one PR: stage the build's declared file set, branch, push, open one PR. This is the common path and the v0.1 acceptance flow.
+When the build touched only one working tree (simple mode, or all components `same-repo`/`separate-local`), deploy is one PR: stage the build's declared file set, branch, push, open one PR. This is the common path and the primary acceptance flow.
 
 ### Cross-repo deploy (linked PRs)
 
@@ -123,7 +123,7 @@ The flow (`cross_repo.py`):
 4. **Link + order.** Every PR body cross-links the others and carries an explicit **merge-order** note computed from the pipeline DAG (ingest-first): merge upstream **component** PRs first (their code, and after a run their loaded columns, must exist), then the **control-plane** PR last (it references the now-merged refs). `linked_deploy_id` joins the per-repo `deploys` rows to the control-plane (lead) row.
 5. **Carve opens + links + advises — it does not merge or enforce.** The human merges in order; each repo's branch protection / CI gates independently. No waiting, no merge-state polling, no cross-repo rollback. A failed PR step on one leg degrades that leg (`status=degraded`) and the ordering note tells the user what to finish manually; the other legs' PRs still open.
 
-**Pin-to-merged-commit caveat.** A pinned bump targets the component PR's *head* commit. If the component repo **squash-merges** (rewriting the SHA), the bumped pin won't match the merged commit. v0.1 handles this two ways: (a) the PR body recommends a SHA-preserving merge (merge-commit or rebase) for Carve-linked component PRs; (b) `carve deploy --reconcile-pins <pipeline>` re-bumps pins to the components' current branch-HEAD commits after merge. Squash-without-reconcile is flagged in the PR body. (See open questions — branch-tracking components sidestep this entirely.)
+**Pin-to-merged-commit caveat.** A pinned bump targets the component PR's *head* commit. If the component repo **squash-merges** (rewriting the SHA), the bumped pin won't match the merged commit. This is handled two ways: (a) the PR body recommends a SHA-preserving merge (merge-commit or rebase) for Carve-linked component PRs; (b) `carve deploy --reconcile-pins <pipeline>` re-bumps pins to the components' current branch-HEAD commits after merge. Squash-without-reconcile is flagged in the PR body. (See open questions — branch-tracking components sidestep this entirely.)
 
 ### Staging the build's file set (not `git add -A`)
 
@@ -197,7 +197,7 @@ Per ARCHITECTURE §7.6, deploy computes the build's `config_hash` and **refuses 
 ## Acceptance
 
 - **Single-repo wedge:** `carve build <plan>` → `carve deploy salesforce` with no config → one `carve/<plan>-<slug>` branch pushed + one PR via `pr_command`; one `deploys` row (`handoff_reached=pr`, `status=succeeded`); a `deploy.pr_opened` event when the bus is present.
-- **Cross-repo linked PRs (v0.1):** a coordinated change spanning a `separate-remote` component repo + the control-plane repo opens **linked PRs** (one per repo), cross-linked with an ingest-first merge-order note; pinned components get a `ref` bump in the control-plane PR, branch-tracking ones don't; `linked_deploy_id` joins the rows. Carve opens and links; it does **not** merge or wait.
+- **Cross-repo linked PRs:** a coordinated change spanning a `separate-remote` component repo + the control-plane repo opens **linked PRs** (one per repo), cross-linked with an ingest-first merge-order note; pinned components get a `ref` bump in the control-plane PR, branch-tracking ones don't; `linked_deploy_id` joins the rows. Carve opens and links; it does **not** merge or wait.
 - **Team with CD:** `[deploy.targets.prod] handoff = "push"` → every leg pushes a branch + prints the compare URL; no provider call.
 - **Full hand-off:** `handoff = "files"` → Carve touches no git.
 - **Graceful degrade:** absent `pr_command` binary → push + manual-PR instruction; `status=degraded`, not failed; other legs unaffected.
@@ -208,7 +208,7 @@ Per ARCHITECTURE §7.6, deploy computes the build's `config_hash` and **refuses 
 ## Design notes
 
 - **Why configurable handoff?** `files`/`commit`/`push`/`pr` are points on one line; config picks the point. Newcomer gets the full wedge with zero config; the team with CD sets one line. Flexibility without a strategy-plugin system.
-- **Why ship linked-PR cross-repo deploy in v0.1 (not defer)?** It's the brownfield separate-repo story — the bigger adoption prize — and it's what graduation surfaces. Crucially it's *not* a CD engine: Carve **opens + links + orders**, the human merges. The hard parts we explicitly do **not** do (merge, wait, enforce order, roll back) are the CD-engine line. Name-based indirection + per-component pins (spec 03/08) make the control-plane PR a clean pin-bump rather than a content rewrite.
+- **Why ship linked-PR cross-repo deploy now (not defer)?** It's the brownfield separate-repo story — the bigger adoption prize — and it's what graduation surfaces. Crucially it's *not* a CD engine: Carve **opens + links + orders**, the human merges. The hard parts we explicitly do **not** do (merge, wait, enforce order, roll back) are the CD-engine line. Name-based indirection + per-component pins (spec 03/08) make the control-plane PR a clean pin-bump rather than a content rewrite.
 - **Why the OSS ceiling is `pr` (no merge/rollout)?** Narrow runtime, not a CD engine. Merge is human/branch-protection; rollout is the user's CI (recommended template). This also draws the OSS/hosted line: hosted's "push-button deploy + approvals" is the managed merge→rollout layer.
 - **Why retire `carve el deploy`'s DDL-apply?** dlt owns destination table schema (ARCHITECTURE §7.5: no DDL applied). The remaining real job — the destination *container* (role/grants/connectivity) dlt assumes pre-exists — shrinks to a thin `carve target verify`, out of the "deploy" namespace so two verbs stop colliding.
 - **Why reference + pin components rather than vendoring them?** This is the control-plane model: deploy promotes a component's *own* repo and bumps a pin in the control plane. It mirrors how the runtime resolves components, and it's what makes the linked-PR set coherent (one pin-bump PR ties the set together).
@@ -219,8 +219,8 @@ Per ARCHITECTURE §7.6, deploy computes the build's `config_hash` and **refuses 
 
 > Tagged per the scheme in spec 01.
 
-- **Pin-to-merged-commit under squash-merge.** *Implementation default, with a known edge.* A pinned bump targets the component PR head; squash-merge rewrites the SHA so the pin won't match. v0.1: recommend SHA-preserving merge for linked component PRs **and** ship `carve deploy --reconcile-pins`. Branch-tracking components avoid the issue entirely (no pin). Revisit a tag-based or merge-webhook reconcile post-v0.1 if squash shops hit friction.
-- **Per-leg handoff override.** *Implementation default.* v0.1 applies one `handoff` to all legs. A future `[components.<name>] deploy_handoff` could let a component repo with its own CD use `push` while the control-plane repo uses `pr`. Defer until asked.
+- **Pin-to-merged-commit under squash-merge.** *Implementation default, with a known edge.* A pinned bump targets the component PR head; squash-merge rewrites the SHA so the pin won't match. Resolution: recommend SHA-preserving merge for linked component PRs **and** ship `carve deploy --reconcile-pins`. Branch-tracking components avoid the issue entirely (no pin). Revisit a tag-based or merge-webhook reconcile later if squash shops hit friction.
+- **Per-leg handoff override.** *Implementation default.* One `handoff` currently applies to all legs. A future `[components.<name>] deploy_handoff` could let a component repo with its own CD use `push` while the control-plane repo uses `pr`. Defer until asked.
 - **Auth model: scopes, not roles.** *Resolved, pending confirm.* Gate on a `deploy` scope (rest-api), not the use-cases `member`/`read-only` narrative; `triggered_by_token_id` forward-declared.
 - **`pr_command` injection surface.** *Implementation default.* `shlex.split` once, `shell=False`, leading-`-` values refused, `--flag=value` form. Locked in tests.
 - **CI rollout template — ship or docs-only.** *Implementation default.* A documented `.github/workflows/carve-rollout.yml` in `docs/deploy.md`, not a generated artifact.

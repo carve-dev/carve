@@ -64,5 +64,5 @@ Configured in `carve/runtime.toml` (`[observability.otel]`). When enabled, **eac
 
 ## Open questions
 
-- **Warehouse-cost accounting in `metrics costs`.** Token→USD is exact; warehouse credits depend on the dialect/backend exposing cost (Snowflake `QUERY_HISTORY` does — ties to [dbt-execution](./dbt-execution.md)/[sql](./sql.md)). How far to go in v0.1 vs. report tokens-only.
+- **Warehouse-cost accounting in `metrics costs`.** Token→USD is exact; warehouse credits depend on the dialect/backend exposing cost (Snowflake `QUERY_HISTORY` does — ties to [dbt-execution](./dbt-execution.md)/[sql](./sql.md)). How far to go initially vs. report tokens-only.
 - **Phasing.** OTel export is plausibly later than the core recording + `carve metrics`; a [DELIVERY](../DELIVERY.md) call.

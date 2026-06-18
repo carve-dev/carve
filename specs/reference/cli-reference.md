@@ -1,8 +1,8 @@
 # Reference — CLI
 
-The authoritative reference for the `carve` command surface in v0.1. For programmatic / agent consumption, prefer the auto-generated OpenAPI schema (`GET /api/openapi.json`, spec 09) or the MCP tool listing (`tools/list`, spec 10) — the CLI, REST, and MCP surfaces are kept at parity.
+The authoritative reference for the `carve` command surface. For programmatic / agent consumption, prefer the auto-generated OpenAPI schema (`GET /api/openapi.json`, spec 09) or the MCP tool listing (`tools/list`, spec 10) — the CLI, REST, and MCP surfaces are kept at parity.
 
-> **Status:** matches the v0.1 spec set. A few commands are marked **(planned)** — referenced by the quick-reference or an upstream spec but without a defining body yet; they are called out inline. The completeness test (spec 13) asserts every Typer-registered command appears here once the CLI is built.
+> **Status:** matches the capability specs. A few commands are marked **(planned)** — referenced by the quick-reference or an upstream spec but without a defining body yet; they are called out inline. The completeness test (spec 13) asserts every Typer-registered command appears here once the CLI is built.
 
 ## Global flags
 
@@ -263,7 +263,7 @@ carve docs regen [--page <name>]
 carve docs open
 ```
 
-Serves the minimal local UI (run history, per-run detail + logs, pipelines) on loopback, regenerated on run events ([ui](../capabilities/ui.md)). No lineage view in v0.1.
+Serves the minimal local UI (run history, per-run detail + logs, pipelines) on loopback, regenerated on run events ([ui](../capabilities/ui.md)). No lineage view (deferred to a later increment).
 
 ## Auth & metrics
 
@@ -279,9 +279,9 @@ carve metrics costs --since 30d
 
 **(planned / thin):** `carve auth login` (OAuth to a Claude subscription) is referenced but not yet specified as a command — M1.1 configures auth via `auth_mode` in `models.toml`. `carve auth token mint`/`revoke` map to REST `POST`/`DELETE /api/v1/tokens`; only `rotate` has a defined CLI form today. The `carve metrics` subcommand spelling is defined by the quick-reference; the underlying data is the metrics router (spec 09).
 
-## Not in v0.1
+## Deferred (a later increment)
 
-- `carve target verify` — a small follow-up spec; the deploy pre-flight (spec 14) is the v0.1 readiness check.
+- `carve target verify` — a small follow-up spec; the deploy pre-flight (spec 14) is the current readiness check.
 - `carve el deploy`, `carve doctor`, `carve config`, `carve scaffold`, `carve dbt <passthrough>`, the old `carve mcp` group — **removed/retired**; superseded as noted above.
 - Backfills, `carve run --step/--from/--backfill` — out of scope ([pipelines](../capabilities/pipelines.md)).
 

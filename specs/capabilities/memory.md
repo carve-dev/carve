@@ -1,6 +1,6 @@
 # Project memory: standards, decisions, conventions, sidecars
 
-> Ships the runtime read/edit/refresh machinery for the memory files that [`init`](./init.md) scaffolds. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §5.4 pre-scoped context](../ARCHITECTURE.md), and [PROJECT_PLAN spec set item 6](../PROJECT_PLAN.md).
+> Ships the runtime read/edit/refresh machinery for the memory files that [`init`](./init.md) scaffolds. Per [PRD §5.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), and [ARCHITECTURE §5.4 pre-scoped context](../ARCHITECTURE.md).
 
 ## Status
 
@@ -20,15 +20,15 @@ Provide the runtime side of project memory:
 5. **The `carve memory append-decision` helper** that does the right thing for the common "record a decision" workflow without forcing the user through the full plan/build cycle for an append-only addition
 6. **The write policy enforcement**: memory file modifications (other than append-decision) go through the standard plan/build flow; agents never autonomously rewrite memory
 
-After this spec lands, every other v0.1 spec that needs memory access uses the loader provided here; no spec implements its own memory reading.
+After this spec lands, every other spec that needs memory access uses the loader provided here; no spec implements its own memory reading.
 
 ## Out of scope
 
 - The initial scaffolding of memory files (lives in spec 05)
 - The convention-inference engine itself (lives in spec 05 — this spec calls into it)
-- Embedding-based semantic search over memory files (post-v0.1)
+- Embedding-based semantic search over memory files (a later increment)
 - A web UI for editing memory (the static HTML UI from spec 11 renders memory read-only; edits happen via CLI, REST, MCP, or `$EDITOR`)
-- A separate "memory index" in Postgres for fast queries (file-based with mtime cache is sufficient for v0.1 — see Design notes)
+- A separate "memory index" in Postgres for fast queries (file-based with mtime cache is sufficient — see Design notes)
 
 ## Behavior
 
@@ -217,7 +217,7 @@ def attach_memory_to_context(task_context: dict, *, classification, pipeline_tar
     return task_context
 ```
 
-`_slice_or_full` returns the full conventions document by default. If a future version of the orchestrator wants to slice conventions to only the relevant sections (e.g., dbt sections for a dbt-only goal), the hook is the place to do it; v0.1 returns the full document since conventions are not large.
+`_slice_or_full` returns the full conventions document by default. If a future version of the orchestrator wants to slice conventions to only the relevant sections (e.g., dbt sections for a dbt-only goal), the hook is the place to do it; for now it returns the full document since conventions are not large.
 
 This hook is invoked by the orchestrator after classification + impact-context gathering, before specialist dispatch.
 
@@ -291,12 +291,12 @@ In the hosted product's Redis-backed cache, invalidation is a pub/sub message th
 - **Why a Postgres table for memory writes (via the `plan_id` requirement) but not for memory reads?** Because writes need an audit trail and a review gate; reads need to be fast. Plan/Build rows in Postgres provide the audit + review gate without needing memory itself in the database.
 - **Why is `append_decision` exempt from the plan/build requirement?** Because the cost-of-friction calculus is different. Recording a decision is low-risk (it's information, not code); requiring plan/build would push users away from recording decisions at all, which is worse than recording them with slightly less ceremony. Standards changes get the heavier process because they directly change agent behavior.
 - **Why mtime caching instead of a real cache invalidation protocol?** Simplicity. mtime is what dbt does for its manifest cache; it's well-understood and reliable for single-process OSS. The hosted product's Redis-backed variant uses real pub/sub invalidation because mtime breaks down across replicas.
-- **Why no embedding search over memory in v0.1?** Memory is small (rare for a single file to exceed 50KB; full bundle stays well under the agent's context budget). Embedding search becomes useful when memory grows large enough that targeted retrieval matters; defer until that happens.
+- **Why no embedding search over memory?** Memory is small (rare for a single file to exceed 50KB; full bundle stays well under the agent's context budget). Embedding search becomes useful when memory grows large enough that targeted retrieval matters; defer until that happens.
 - **Why isn't there a "memory query" skill that agents can call?** Because we want memory in pre-scoped context, not as a discovery skill that agents can choose to call. Forcing memory into the bundle every time means agents can never miss it; making it a skill creates the risk that agents skip it and ignore the team's standards. Pre-scoping is the safer default.
 
 ## Open questions
 
 - **Should `decisions.md` entries be reverse-chronological (newest first) or chronological?** *Implementation default.* Newest first — matches changelog conventions and means recently-relevant entries are easier to find when reading top-down. The `append_decision` helper inserts at the top of the entries section (below the file's header).
-- **Should `standards.md` have any imposed structure (e.g., section headers per backend)?** *Implementation default.* No imposed structure in v0.1; the template provides examples but doesn't enforce. The agent reads the whole file as free-form text. If users start writing very large standards files, we can add structure later.
+- **Should `standards.md` have any imposed structure (e.g., section headers per backend)?** *Implementation default.* No imposed structure for now; the template provides examples but doesn't enforce. The agent reads the whole file as free-form text. If users start writing very large standards files, we can add structure later.
 - **What happens if a user-edited file has malformed markdown?** *Implementation default.* The loader returns the file as-is; agents receive the raw text and the LLM is robust to malformed markdown. No validation step. Worth revisiting if it causes issues in practice.
 - **Should `carve memory show --pipeline <name>` print the full bundle that would be loaded, or just the memory subset?** *Implementation default.* Just the memory subset (conventions + standards + that pipeline's sidecar + any decisions mentioning the pipeline). Full pre-scoped context including catalog queries etc. is much larger and noisier; users who want it can call the REST `/bundle` endpoint with `?full=true` (which is a different consumer's concern).
