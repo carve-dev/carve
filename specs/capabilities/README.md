@@ -10,6 +10,8 @@ The durable, **version-independent** design of each Carve capability — the low
 - [`layout.md`](./layout.md) — control-plane `carve.toml`, `[components.<name>]`, the component locator, repo topology, simple-mode discovery
 - [`harness.md`](./harness.md) — the AI harness: subagent delegation, terminal tools, the permission gate, verify-by-execution
 - [`extensibility.md`](./extensibility.md) — declarative agents, skill packs, hooks, MCP (both directions)
+- [`model-auth.md`](./model-auth.md) — model-provider credentials (Anthropic API key + Claude-subscription OAuth, `models.toml`)
+- [`plan-build.md`](./plan-build.md) — the change lifecycle: Plan/Build entities, plan synthesis (cost/runtime/impact), `--refine`, config-hash drift
 
 **Components & composition**
 - [`sql.md`](./sql.md) — the dialect-aware SQL tool layer + thin specialist
@@ -30,6 +32,8 @@ The durable, **version-independent** design of each Carve capability — the low
 - [`ui.md`](./ui.md) — the static HTML UI
 - [`ask.md`](./ask.md) — the explorer (`carve ask`)
 - [`lineage.md`](./lineage.md) — lineage by investigation (no Carve store)
+- [`observability.md`](./observability.md) — agent/run telemetry tables, `carve metrics` rollups, OpenTelemetry export
+- [`semantic-search.md`](./semantic-search.md) — embedding-based concept retrieval + `carve embeddings rebuild` *(post-v0.1)*
 
 **Deploy & recovery**
 - [`deploy.md`](./deploy.md) — `carve deploy` configurable handoff + cross-repo linked PRs
