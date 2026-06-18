@@ -48,6 +48,9 @@ The next run reads the pinned config and does no provisioning — `connect` fire
 
 - **Explicit:** `carve connect` (and `carve connect <warehouse|source>`) — the first-magical-moment command a user can run directly ("connect my Snowflake / my Stripe").
 - **Implicit:** the orchestrator triggers `connect` mid-task when a step needs a connection/backend/engine that isn't set up — the user never has to know it ran, except that the thing now works and the config now records it.
+- **`carve env set | list | unset`** — the credential-entry surface `connect` drives (and a user can run directly): `set` takes a value via **masked stdin** and writes it to `.env`; `list` shows names only (**never values**); `unset` removes one. The MCP-equivalent exists for chat-driven flows. This is how secrets are entered *without* pasting them into chat — [init](./init.md) only scaffolds `.env.example`; `carve env`/`connect` write the real `.env`.
+
+**Version detection.** When `connect` provisions or resolves an engine, it also **detects the installed dbt/dlt version and warns if it's outside Carve's tested range**, recording the resolved version in config (the pin). Adapting *generated code* to that version is the engineers' job ([dlt-engineer](./dlt-engineer.md) / [dbt-engineer](./dbt-engineer.md)); detect-and-warn-and-pin is `connect`'s.
 
 ### Power-user escape hatch
 

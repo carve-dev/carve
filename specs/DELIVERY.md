@@ -153,12 +153,13 @@ M1 / M1.1 / 01  ──▶  Incr 1: 02 03 15 16  ──▶  Incr 2: 18 04 08  ─
 - **Deploy + recovery after a pipeline can run** (they act on built/running pipelines).
 - **Reference + release last** (derives from the built surface) — the ADR's reasoning for why reference docs ship last.
 
-## Post-v0.1 (not yet sequenced)
+## Capabilities pending sequencing / post-v0.1
 
-Tracked here so they aren't lost, deliberately unsequenced until v0.1 lands:
+Specs that exist but aren't yet placed in an increment — the next sequencing pass (Increments 1–6 above were drawn *before* the dbt deep-dive + the adversarial PRD/ARCH/use-cases audit added the specs below):
 
-- **dbt capabilities** (now specced; awaiting increment placement — the next sequencing decision): [`dbt-execution`](./capabilities/dbt-execution.md) — run dbt as a step across backends (local bundled/external + managed snowflake-native / dbt-cloud / remote); needed *before* authoring, since orchestration-only shops run dbt without writing it. [`dbt-engineer`](./capabilities/dbt-engineer.md) — AI authoring of models/tests/sources (+ dbt-qa). [`connect`](./capabilities/connect.md) — on-demand provisioning (engine install + pin, warehouse/source connect).
+- **Added since the increments were drawn — awaiting placement.** Several are **M1.1-shipped or foundational** (likely a retroactive Increment 0, *not* deferred): [`plan-build`](./capabilities/plan-build.md) (the change lifecycle — Plan/Build entities, synthesis, drift; M1.1-shipped), [`model-auth`](./capabilities/model-auth.md) (provider credentials — API key + Claude-subscription OAuth; M1.1-shipped), [`observability`](./capabilities/observability.md) (agent/run telemetry tables + `carve metrics` + OTel), [`connect`](./capabilities/connect.md) (on-demand provisioning — engine install + pin, warehouse/source connect), [`dbt-execution`](./capabilities/dbt-execution.md) (run dbt across backends — needed *before* authoring, since orchestration-only shops run dbt without writing it).
+- **dbt authoring** — [`dbt-engineer`](./capabilities/dbt-engineer.md) (AI authoring of models/tests/sources + dbt-qa); follows dlt authoring + dbt-execution.
 - **Lineage depth:** `sql`-step producer tracking ([lineage](./capabilities/lineage.md) *Out of scope*). (Column-level lineage may arrive *via the Fusion dbt engine* rather than Carve — see [dbt-execution](./capabilities/dbt-execution.md).)
-- **Retrieval:** embedding/semantic search (ARCHITECTURE §6.1 layer 5).
+- **Retrieval:** [`semantic-search`](./capabilities/semantic-search.md) — embedding/semantic search (now specced; post-v0.1).
 - **Concurrency:** concurrent subagent fan-out (v0.1 is sequential/sync).
 - **The planned CLI commands** if not pinned in increment 6.

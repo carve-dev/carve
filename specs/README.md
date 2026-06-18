@@ -34,7 +34,7 @@ Underpinning all four: the **AI harness** — a Claude-Code-style agentic engine
 
 ### The capability specs
 
-The durable design lives in [`capabilities/`](./capabilities/) — **19 capability specs**, drafted/revised to the control-plane + AI-harness model. See [`capabilities/README.md`](./capabilities/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
+The durable design lives in [`capabilities/`](./capabilities/) — **one spec per capability area**, drafted/revised to the control-plane + AI-harness model. See [`capabilities/README.md`](./capabilities/README.md) for the full list, per-spec status, and the foundational reading order (specs **15 agent-harness** and **16 extensibility** are the AI foundation everything runs on). The pre-2026-05 Pillar 1 / Pillar 1.1 specs were archived (their content carried forward) — see [`_archive/`](./_archive/).
 
 ### Foundation (M1, M1.1) — already shipped
 
@@ -72,5 +72,5 @@ If you're contributing to a specific area:
 ## Status
 
 - **M1 and M1.1 are shipped.** Code is in `src/`. ~300 tests passing; spec 01 (state store → Postgres) landed.
-- **The 19 capability specs are drafted/revised** to the control-plane + AI-harness model ([`capabilities/`](./capabilities/)); the foundation harness specs (15/16) have been adversarially reviewed and hardened. The build sequence is in [`DELIVERY.md`](./DELIVERY.md); implementing it is the active phase.
+- **The capability specs are drafted/revised** to the control-plane + AI-harness model ([`capabilities/`](./capabilities/)); the foundation harness specs (harness/extensibility) have been adversarially reviewed and hardened. The build sequence is in [`DELIVERY.md`](./DELIVERY.md); implementing it is the active phase.
 - **The two foundational decisions** are captured in [`_strategy/2026-06-control-plane.md`](./_strategy/2026-06-control-plane.md) and [`_strategy/2026-06-ai-harness.md`](./_strategy/2026-06-ai-harness.md).

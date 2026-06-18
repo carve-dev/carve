@@ -354,6 +354,15 @@ class DltStepExecutor:
 
 The `sql` step type is deliberately limited to single-file, single-target execution — no multi-file SQL "pipelines" within a step. That's what step composition is for.
 
+### Run flags: `--resume` and `--refresh`
+
+`carve run` (M1.1 + [runtime](./runtime.md)) takes two flags whose semantics this spec's step DAG defines:
+
+- **`--resume <run_id>`** re-runs only the **failed steps and their dependents** from a prior run — the subgraph computed via `PipelineDAG.downstream_of` over the failed set, executed as a new *resuming* run (the `Run` row is [runtime](./runtime.md)'s; the failed-subgraph computation is this spec's). Steps that already succeeded are skipped.
+- **`--refresh <mode>`** maps **1:1 to dlt's refresh modes** (`drop_data` | `drop_resources` | `drop_sources`) and is passed through to the `dlt` step executor (no effect on `dbt`/`sql` steps). Against a **prod** target it requires a typed-name confirmation (`--yes` for admins/CI) and is **audited** (actor + reason); that confirmation/audit pattern is [runtime](./runtime.md)'s. This is the supported "reload history" path — first-class backfills remain out of scope.
+
+(Live log streaming for `carve run --watch` is the [rest-api](./rest-api.md)'s WS/SSE surface.)
+
 ### Pipeline engineer subagent
 
 The pipeline-composition specialist is a **declarative subagent** on the harness (spec 15), defined in the spec-16 markdown-frontmatter format and shipped as a built-in at `src/carve/core/agents/builtin/pipeline-engineer.md`. The orchestrator (the harness main loop) `delegate`s pipeline-composition tasks to it; it runs as a fresh, context-isolated loop and returns a summary (the new/changed `pipelines/<name>.toml` + a validation result), not its full transcript. A user may override it by dropping a `carve/agents/pipeline-engineer.md` of the same name (spec 16).

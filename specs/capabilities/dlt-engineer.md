@@ -248,6 +248,10 @@ The curated connector library *is* a skill library (spec 16): each `src/carve/so
 - **`dlt_library.lookup(query: str)`** → fuzzy search across names + descriptions; returns top-5 with confidence scores. Used by the orchestrator during context-bundle assembly to set `dlt_library_match`.
 - **`dlt_library.copy(name: str, dest_path: Path, customization: dict)`** → lays the curated source pack from `src/carve/sources/<name>/` into `<dest_path>`, applies customization (destination, schema, credentials env-var names), and writes the provenance header. Returns the list of files written. (The agent then customizes further via `edit` and verifies via the loop.)
 
+**Per-source introspection skills.** Each curated source pack also exposes source-specific introspection skills — `<source>_list_objects()` and `<source>_describe_object(name)` (e.g. `salesforce_list_objects` / `salesforce_describe_object`). The orchestrator uses them during planning to confirm requested objects exist; **[recovery](./recovery.md) uses `describe_object` to read the current source schema for its schema diff.** They ship as part of the pack (alongside its `SKILL.md` + source code), not as standalone built-ins.
+
+**Version adaptation.** The engineer adapts generated dlt code to the **detected dlt version** (resolved/pinned via [connect](./connect.md)) — e.g. avoiding APIs not present in the project's pinned dlt. (Detect-and-warn-on-out-of-range lives in [connect](./connect.md); adapting the *generated code* to the detected version is the engineer's.)
+
 ### Skill: `rest_api_explore`
 
 A bounded HTTP exploration tool. Given a base URL and optional auth config, the skill makes a limited number of probing requests:
