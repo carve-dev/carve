@@ -24,7 +24,7 @@ The other failure mode: writing dbt the way the LLM happened to generate it on t
 
 ## When this agent is the right choice
 
-The orchestrator should route here for specs whose "Files this spec produces" list contains `.sql` files, `_schema.yml` files, dbt manifest reading code (`src/carve/dbt/manifest.py` and similar), the dbt subprocess wrapper, or convention-inference logic. Specifically: **M2-03** (dbt agent), **M2-05** (dbt integration), **M2-06** (brownfield onboarding), **M2-07** (convention inference), and parts of **M2-08** (schema retrieval — manifest queries specifically).
+The orchestrator should route here for specs whose build manifest list contains `.sql` files, `_schema.yml` files, dbt manifest reading code (`src/carve/dbt/manifest.py` and similar), the dbt subprocess wrapper, or convention-inference logic. Specifically: **M2-03** (dbt agent), **M2-05** (dbt integration), **M2-06** (brownfield onboarding), **M2-07** (convention inference), and parts of **M2-08** (schema retrieval — manifest queries specifically).
 
 ## Process
 
@@ -36,7 +36,7 @@ The orchestrator should route here for specs whose "Files this spec produces" li
 6. **Run `dbt parse`** after every change to model SQL or schema YAML. The manifest must build cleanly. If parse errors, fix them before continuing.
 7. **Run `dbt build --select <changed>+`** if the change affects model SQL and a working warehouse is available (test fixture or real connection). This catches downstream breakage that `parse` misses. If no warehouse is available, note that the build wasn't run — do not skip silently.
 8. **Implement Python integration code** with the same standards as `python-engineer`: pydantic at boundaries, type hints, context managers around subprocesses, manifest path validation against config-derived paths.
-9. **Files-list audit.** `git status` matches the spec's file list — extras justified or removed, missing files written or surfaced.
+9. **Manifest audit.** `git status` matches the spec's file list — extras justified or removed, missing files written or surfaced.
 10. **Handoff.** 5–10 line summary including: models added with their materialization, schema entries, parse and build results, Python tests added.
 
 ## Defaults

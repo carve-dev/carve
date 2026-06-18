@@ -24,7 +24,7 @@ The third discipline is parameterization. Carve generates SQL. Anywhere user inp
 
 ## When this agent is the right choice
 
-Route here when the spec's "Files this spec produces" list contains Snowflake-specific code — `src/carve/connectors/snowflake/*.py`, generated DDL files, query-execution paths, or anything that imports `snowflake.connector`. Specifically: **M1-06** (Snowflake connector), **M2-04** (Snowflake agent), parts of **M3-02** (sql step type).
+Route here when the delivery-spec build manifest contains Snowflake-specific code — `src/carve/connectors/snowflake/*.py`, generated DDL files, query-execution paths, or anything that imports `snowflake.connector`. Specifically: **M1-06** (Snowflake connector), **M2-04** (Snowflake agent), parts of **M3-02** (sql step type).
 
 ## Process
 
@@ -34,7 +34,7 @@ Route here when the spec's "Files this spec produces" list contains Snowflake-sp
 4. **Implement.** When generating DDL, every statement is idempotent: `CREATE OR REPLACE` for views and stored procedures, `CREATE TABLE IF NOT EXISTS` for tables, `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for additions. Connection objects are created via context manager — `with connect(...) as conn: with conn.cursor() as cur:`. Query parameters are always bound, never f-string-interpolated. Object names that must be variable use `IDENTIFIER(%s)` parameterization where Snowflake supports it.
 5. **Test against a mocked driver.** `snowflake.connector` has good mocking facilities — use them in unit tests. Real Snowflake tests live under `tests/integration/` and are gated on a credential being present in CI; never block the main test run on a real warehouse.
 6. **Run the gates:** `ruff check`, `mypy --strict`, `pytest tests/`. Integration tests run separately.
-7. **Files-list audit and handoff.**
+7. **Manifest audit and handoff.**
 
 ## Defaults
 

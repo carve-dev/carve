@@ -1,6 +1,6 @@
 ---
 name: spec-update
-description: Re-sync a spec with the current state of the code, applying minor inline updates and proposing major updates for human review. Use this skill when a user has manually edited code outside the `/build-spec` flow and wants the spec brought back in line. Argument is a spec ID. Produces inline edits to the spec for minor drift, or a `_spec_update_proposal_{spec-id}.md` file for major drift.
+description: Re-sync a capability spec with the current state of the code, applying minor inline updates and proposing major updates for human review. Use this skill when a user has manually edited code outside the `/build-spec` flow and wants the spec brought back in line. Argument is a capability name. Produces inline edits to the capability spec for minor design drift, or a `_spec_update_proposal_{name}.md` file for major drift.
 ---
 
 # /spec-update
@@ -9,16 +9,16 @@ Invokes the `spec-keeper` agent directly, outside the `/build-spec` flow. Use th
 
 ## Argument
 
-A spec ID like `M1-04` or a path to a spec file.
+A capability name like `runtime`, or a path to a capability spec.
 
 ## Process
 
-1. **Resolve the spec.** Same resolution rules as `/build-spec`: ID → milestone-dir/file.md, or use the path directly.
+1. **Resolve the capability.** Same resolution as `/build-spec`: a capability name → `specs/capabilities/{name}.md`, or use the path directly.
 2. **Invoke `spec-keeper`** with the resolved spec.
 3. **Print the result** to stdout:
    - "No drift detected — spec and code agree." (and exit cleanly), or
-   - "Minor drift — applied inline updates to `specs/{milestone-dir}/{spec-file}.md`. Review with `git diff`.", or
-   - "Major drift — wrote proposal to `specs/{milestone-dir}/_spec_update_proposal_{spec-id}.md`. Review and apply by hand if accepted."
+   - "Minor drift — applied inline updates to `specs/capabilities/{name}.md`. Review with `git diff`.", or
+   - "Major drift — wrote proposal to `specs/capabilities/_spec_update_proposal_{name}.md`. Review and apply by hand if accepted."
 
 ## Constraints
 

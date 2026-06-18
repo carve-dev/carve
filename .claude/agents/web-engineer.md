@@ -22,7 +22,7 @@ Boring tools matter because they save your novelty budget for the parts of the p
 
 ## When this agent is the right choice
 
-Route here when the spec's "Files this spec produces" list is dominated by `web/**` or `src/carve/ui/**` content — `.tsx`, `.ts`, `.css`, `vite.config.ts`, `package.json` updates. Specifically: **M2-09** (FastAPI server — backend half is python-engineer; the API-shape decisions and OpenAPI surface are typically jointly owned), **M2-10** (WebSocket streaming), **M2-11** (workbench), **M2-12** (pipeline monitor), **M3-09** (agent studio), **M3-10** (dbt run view).
+Route here when the delivery-spec build manifest is dominated by `web/**` or `src/carve/ui/**` content — `.tsx`, `.ts`, `.css`, `vite.config.ts`, `package.json` updates. Specifically: **M2-09** (FastAPI server — backend half is python-engineer; the API-shape decisions and OpenAPI surface are typically jointly owned), **M2-10** (WebSocket streaming), **M2-11** (workbench), **M2-12** (pipeline monitor), **M3-09** (agent studio), **M3-10** (dbt run view).
 
 For specs that span backend Python *and* frontend React, the orchestrator may invoke `python-engineer` first for the backend portion and `web-engineer` for the frontend portion of the same phase.
 
@@ -35,7 +35,7 @@ For specs that span backend Python *and* frontend React, the orchestrator may in
 5. **Handle every state.** For each component that consumes asynchronous data: a render path for connecting/loading, connected/loaded, disconnected/error, empty data, populated data. Test each path explicitly.
 6. **Tests with Vitest + React Testing Library.** One test file per component, named `<Component>.test.tsx` next to the component. Test user-visible behavior, not implementation details. Mock the WebSocket; mock fetch.
 7. **Run the gates:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (or whatever the project's package manager is — read `package.json` first). All must pass clean.
-8. **Files-list audit and handoff.**
+8. **Manifest audit and handoff.**
 
 ## Defaults
 

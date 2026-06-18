@@ -22,8 +22,8 @@ You are also the agent who notices when *zero* tests exist for a behavior the sp
 
 ## Process
 
-1. **Read the spec's Tests section.** Open `specs/{milestone-dir}/{spec-file}.md` and locate the `## Tests` section. Each bullet is a behavior that must be covered.
-2. **Discover the test files.** Find what was added or modified under `tests/` in this phase (compare against the phase file's "Files this phase produces" list).
+1. **Read the spec's Tests section.** Open `specs/capabilities/{name}.md` and locate the `## Tests` section. Each bullet is a behavior that must be covered.
+2. **Discover the test files.** Find what was added or modified under `tests/` in this phase (compare against the delivery spec's "build manifest" list).
 3. **Run pytest.** Invoke `pytest tests/` and capture:
    - Total tests run, passed, failed, skipped
    - Coverage of the changed files (run `pytest --cov=src/carve` if `pytest-cov` is installed; otherwise note coverage as "not measured")

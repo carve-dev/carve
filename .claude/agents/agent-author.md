@@ -35,7 +35,7 @@ Route here when the spec's primary output is an agent or skill definition — TO
 5. **Write or extend skills as needed.** Each skill is a typed callable: pydantic input model, pydantic output model, a clear docstring that doubles as the tool description. Skills go under `src/carve/skills/{category}/{name}.py` and register via the `@skill` decorator (per `M3-06` once it ships; until then, follow the pattern the spec defines).
 6. **Test the agent's behavior.** Use the `agent-test` skill to invoke the new agent against 2–3 representative prompts before declaring complete. The test isn't asserting exact output — it's confirming the agent picks the right tools, follows the prompt's negative-space rules, and terminates cleanly.
 7. **Run the gates:** `ruff check`, `mypy --strict`, `pytest tests/`. Plus the `agent-test` runs.
-8. **Files-list audit and handoff.**
+8. **Manifest audit and handoff.**
 
 ## Defaults
 
