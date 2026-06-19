@@ -37,4 +37,4 @@ This repo contains **both** the tooling that *builds* Carve **and** *Carve itsel
 
 ## Status (pointer, not source of truth — see DELIVERY.md)
 
-Shipped: M1 + M1.1 baseline; state-store (Postgres); **Increment 1** so far = `layout` + `harness`. Next in Increment 1: `extensibility`, `model-auth`, `packaging`.
+Shipped: M1 + M1.1 baseline; state-store (Postgres); **Increment 1** so far = `layout` + `harness` + `extensibility`. Next in Increment 1: `model-auth`, then `packaging`.
