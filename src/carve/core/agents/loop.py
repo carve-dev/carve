@@ -39,11 +39,21 @@ from carve.core.agents.observer import AgentObserver, NullObserver
 from carve.core.agents.pricing import compute_cost_usd
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from carve.core.agents.cancel import CancellationToken
+    from carve.core.agents.permissions.gate import Approver, PermissionGate
+    from carve.core.agents.steering import SteeringQueue
     from carve.core.agents.tools import Tool
     from carve.core.skills.context import SkillContext
     from carve.core.skills.executor import CachedSkillExecutor
     from carve.core.skills.registry import SkillRegistry
     from carve.core.state.repository import Repository
+
+    # Hook fire-points (the declarative `hooks.toml` format is spec 16;
+    # the harness ships only these call sites). A hook receives the tool
+    # name + input and may raise to abort the call.
+    Hook = Callable[[str, dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +157,12 @@ class AgentLoop:
         skills: SkillRegistry | None = None,
         skill_executor: CachedSkillExecutor | None = None,
         skill_context: SkillContext | None = None,
+        gate: PermissionGate | None = None,
+        approver: Approver | None = None,
+        cancellation: CancellationToken | None = None,
+        steering: SteeringQueue | None = None,
+        pre_tool_hook: Hook | None = None,
+        post_tool_hook: Hook | None = None,
     ) -> None:
         self.client = client
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
@@ -185,9 +201,32 @@ class AgentLoop:
         # second invocation (rejected by the executor) never overwrites
         # the captured design.
         self.terminator_tool = terminator_tool
+        # The pre-execution permission gate. When set, the loop calls it
+        # *before* dispatching any tool (the authoritative boundary); a
+        # `deny` becomes an `is_error` tool_result and a
+        # `needs_user_input` becomes a surfaced no-execution outcome —
+        # neither reaches the tool executor. When None (legacy callers /
+        # M1) every tool runs as before.
+        self.gate = gate
+        self.approver = approver
+        # Cancellation + steering are checked *between turns* only, so an
+        # in-flight turn always completes cleanly. Both are no-ops when
+        # unset (the batch paths pass neither).
+        self.cancellation = cancellation
+        self.steering = steering
+        # Hook fire-points (spec 16 plugs the declarative format in here);
+        # the harness ships only the call sites. A hook may raise to abort.
+        self.pre_tool_hook = pre_tool_hook
+        self.post_tool_hook = post_tool_hook
         self.messages: list[dict[str, Any]] = []
         self.token_usage = TokenUsage()
         self._tool_calls_total = 0
+        # Harness-tracked log of files mutated by `edit`/`create_file`
+        # this run. The loop appends here on a *successful* write; the
+        # SubagentRunner reads it into DelegationResult.files_changed.
+        # The model never self-reports this — its terminator carries
+        # `outputs`, not the file list.
+        self.files_changed: list[str] = []
 
     # ------------------------------------------------------------------ run
 
@@ -196,6 +235,17 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_message})
 
         for turn in range(1, max_turns + 1):
+            # Between-turns checks (and before the first turn): a tripped
+            # cancellation token stops the loop cleanly; queued steering
+            # guidance is appended as a user message before the next API
+            # call. Both are no-ops when their handle is unset, so the
+            # batch paths are unaffected.
+            if self.cancellation is not None:
+                self.cancellation.raise_if_cancelled()
+            if self.steering is not None:
+                for guidance in self.steering.drain():
+                    self.messages.append({"role": "user", "content": guidance})
+
             self.observer.on_turn_start(turn)
             response = self._call_api()
             self.token_usage.add(response.usage)
@@ -337,13 +387,39 @@ class AgentLoop:
                 )
                 continue
 
+            # --- Gate first: the authoritative pre-execution boundary. ---
+            # Order is gate → pre_tool hook → execute → post_tool hook. A
+            # `deny` returns an is_error tool_result and a
+            # `needs_user_input` returns a surfaced no-execution outcome;
+            # in both cases the tool/skill executor is NOT called. When no
+            # gate is wired (M1/legacy), every call proceeds as before.
+            if self.gate is not None:
+                decision = self.gate.check(
+                    tool_name, dict(tool_input), approver=self.approver
+                )
+                if not decision.allowed:
+                    results.append(
+                        self._gate_blocked_result(tool_use_id, decision)
+                    )
+                    self.observer.on_tool_result(
+                        tool_name,
+                        ok=False,
+                        summary=f"{decision.outcome.value}: {decision.reason}",
+                        duration_ms=0,
+                    )
+                    continue
+
             start = time.perf_counter_ns()
             try:
+                if self.pre_tool_hook is not None:
+                    self.pre_tool_hook(tool_name, dict(tool_input))
                 if is_skill:
                     output = self._execute_skill(tool_name, dict(tool_input))
                 else:
                     assert tool is not None  # narrowed by `is_skill` branch above
                     output = tool.executor(dict(tool_input))
+                if self.post_tool_hook is not None:
+                    self.post_tool_hook(tool_name, dict(tool_input))
             except Exception as exc:
                 duration_ms = (time.perf_counter_ns() - start) // 1_000_000
                 results.append(
@@ -364,6 +440,10 @@ class AgentLoop:
                 continue
 
             duration_ms = (time.perf_counter_ns() - start) // 1_000_000
+            # Harness-tracked files_changed: a *successful* edit/create_file
+            # returns {"path": ...}; record it from the tool's own output,
+            # never from a model self-report.
+            self._track_file_change(tool_name, output)
             results.append(
                 {
                     "type": "tool_result",
@@ -378,6 +458,40 @@ class AgentLoop:
                 duration_ms=int(duration_ms),
             )
         return results
+
+    @staticmethod
+    def _gate_blocked_result(tool_use_id: str, decision: Any) -> dict[str, Any]:
+        """Build the tool_result for a gate `deny` / `needs_user_input`.
+
+        Both are returned to the model as an ``is_error`` result so it can
+        adapt (pick a different tool, narrow a path) or surface the
+        approval need — the executor never ran.
+        """
+        prefix = (
+            "Permission denied"
+            if decision.outcome.value == "deny"
+            else "Needs user approval"
+        )
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": f"{prefix}: {decision.reason}",
+            "is_error": True,
+        }
+
+    def _track_file_change(self, tool_name: str, output: Any) -> None:
+        """Append to ``files_changed`` when a write tool succeeded.
+
+        Only ``edit`` / ``create_file`` (and the legacy ``write_file``)
+        produce a tracked change. The path is read from the tool's
+        structured output, so the log reflects what was actually written.
+        """
+        if tool_name not in ("edit", "create_file", "write_file"):
+            return
+        if isinstance(output, dict):
+            path = output.get("path")
+            if isinstance(path, str) and path not in self.files_changed:
+                self.files_changed.append(path)
 
     def _execute_skill(self, name: str, kwargs: dict[str, Any]) -> Any:
         """Run skill `name` via `skill_executor` (or registry directly).

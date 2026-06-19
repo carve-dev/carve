@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from carve.core.agents.tools import Tool, ToolExecutionError, ToolInput, ToolResult
+from carve.core.agents.tools.secrets_denylist import is_secret_path, secret_path_reason
 
 
 @runtime_checkable
@@ -88,6 +89,12 @@ def make_read_file_tool(project_dir: Path) -> Tool:
         if not isinstance(path, str):
             raise ToolExecutionError("`path` must be a string.")
         target = _resolve_under_root(project_dir, path)
+        # Secret-path deny-list: refuse to read credential files in EVERY
+        # mode (incl. read_only). Checked on the *resolved* path so a
+        # symlink/`..` that lands on `.env` is caught too. This is an
+        # additional pre-read check on top of the project-root guard.
+        if is_secret_path(target) or is_secret_path(path):
+            raise ToolExecutionError(secret_path_reason(path))
         if not target.exists():
             raise ToolExecutionError(f"File not found: {path}")
         if not target.is_file():
