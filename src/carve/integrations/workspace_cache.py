@@ -65,6 +65,23 @@ class WorkspaceDirtyError(RuntimeError):
     """
 
 
+def _reject_option_shaped(field: str, value: str | None) -> None:
+    """Reject an option-shaped ``ref``/``branch`` before ``git checkout``.
+
+    A leading ``-`` (e.g. ``--orphan=…``) is parsed by git as a flag, not a
+    revision — option injection. ``git checkout <value> --`` does **not**
+    neutralize it (git parses the option before the trailing ``--``;
+    verified on git 2.52), so the value must be rejected, not escaped. This
+    mirrors the config-layer validator (``ComponentConfig._safe_ref_branch``)
+    as a cache-layer guard for direct callers of :func:`sync_workspace`.
+    """
+    if value is not None and value.startswith("-"):
+        raise WorkspaceSyncError(
+            f"unsafe {field} {value!r}: a revision must not start with '-' "
+            "(an option-shaped value would be parsed as a git flag)."
+        )
+
+
 def sync_workspace(
     name: str,
     url: str,
@@ -101,6 +118,8 @@ def sync_workspace(
     existing workspace has local modifications. ``name`` is used only in
     error messages.
     """
+    _reject_option_shaped("ref", ref)
+    _reject_option_shaped("branch", branch)
     workspace_path = paths.workspaces_dir / workspace_dirname(url, ref, branch)
 
     if not _is_git_repo(workspace_path):

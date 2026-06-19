@@ -211,6 +211,25 @@ def test_clone_with_option_shaped_url_does_not_execute_payload(
     assert not sentinel.exists(), "git --upload-pack payload executed"
 
 
+@pytest.mark.parametrize(
+    ("branch", "ref"),
+    [("--orphan=pwn", None), ("main", "--orphan=pwn")],
+    ids=["branch", "ref"],
+)
+def test_option_shaped_ref_or_branch_rejected_before_checkout(
+    paths: ProjectPaths, branch: str, ref: str | None
+) -> None:
+    """An option-shaped `ref`/`branch` is rejected before any git runs.
+
+    `git checkout --orphan=pwn` exits 0 and creates branch `pwn` (option
+    injection — git parses it as a flag, and `git checkout <value> --` does
+    NOT neutralize it). `sync_workspace` must raise rather than run the
+    checkout and desync the workspace.
+    """
+    with pytest.raises(WorkspaceSyncError):
+        sync_workspace("evil", "https://example.invalid/r.git", branch, paths, ref=ref)
+
+
 def test_git_subprocess_uses_hardened_env(
     remote: str, paths: ProjectPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:

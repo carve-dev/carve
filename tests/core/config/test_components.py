@@ -168,10 +168,22 @@ class TestComponentUrlValidation:
             ComponentConfig(type="dbt", mode="separate-remote", url=url)
 
     @pytest.mark.parametrize("field", ["ref", "branch"])
-    @pytest.mark.parametrize("value", ["--orphan=x", "-x", "--upload-pack=evil"])
-    def test_option_shaped_ref_or_branch_rejected(
-        self, field: str, value: str
-    ) -> None:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "--orphan=x",  # option-shaped (git-checkout injection)
+            "-x",
+            "--upload-pack=evil",
+            "foo bar",  # space (check-ref-format)
+            "foo~1",  # ~
+            "a..b",  # ..
+            "foo:bar",  # :
+            "foo.lock",  # trailing .lock
+            "@",  # bare @
+            "a//b",  # double slash
+        ],
+    )
+    def test_unsafe_ref_or_branch_rejected(self, field: str, value: str) -> None:
         with pytest.raises(ValidationError):
             ComponentConfig(
                 type="dbt",
@@ -179,6 +191,20 @@ class TestComponentUrlValidation:
                 url="https://github.com/org/repo.git",
                 **{field: value},
             )
+
+    @pytest.mark.parametrize("field", ["ref", "branch"])
+    @pytest.mark.parametrize("value", ["9f3a1c7e", "v2.0.1", "feature/foo-bar", "main"])
+    def test_valid_ref_or_branch_accepted(self, field: str, value: str) -> None:
+        # The strengthened validator must not over-reject real refs (SHA, tag,
+        # slashed branch). `ref` only on separate-remote; pass via `branch` or
+        # `ref` per the parametrized field.
+        c = ComponentConfig(
+            type="dbt",
+            mode="separate-remote",
+            url="https://github.com/org/repo.git",
+            **{field: value},
+        )
+        assert getattr(c, field) == value
 
 
 # ---------------------------------------------------------------------------

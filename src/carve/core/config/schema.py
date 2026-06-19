@@ -11,6 +11,7 @@ threading it through.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from pathlib import PurePosixPath
 
@@ -286,18 +287,31 @@ class ComponentConfig(BaseModel):
     @field_validator("ref", "branch")
     @classmethod
     def _safe_ref_branch(cls, value: str | None) -> str | None:
-        # Defense-in-depth: `ref`/`branch` flow into `git checkout <value>`
-        # as a positional, so an option-shaped value (e.g. `--orphan=…`)
-        # would be parsed as a git flag. Reject a leading `-` (mirrors the
-        # `url` transport allow-list), at config load before any git call.
+        # `ref`/`branch` flow into `git checkout <value>` as a positional, so
+        # an option-shaped value (`--orphan=…`) would be parsed as a git flag
+        # — option injection. `git checkout <value> --` does NOT neutralize it
+        # (git parses the option before the trailing `--`; verified), so the
+        # value must be *rejected*. Reject a leading `-`, and constrain to
+        # git's `check-ref-format` charset. Enforced at config load.
         if value is None:
             return value
-        if not value.strip():
-            raise ValueError("ref/branch must not be empty")
+        if not value or value != value.strip():
+            raise ValueError(f"ref/branch must be non-empty and unpadded; got {value!r}")
         if value.startswith("-"):
             raise ValueError(
                 f"ref/branch must not start with '-' (option-shaped); got {value!r}"
             )
+        if re.search(r"[\x00-\x20\x7f~^:?*\[\\]", value):
+            raise ValueError(f"ref/branch contains an illegal character; got {value!r}")
+        if (
+            ".." in value
+            or "@{" in value
+            or "//" in value
+            or value == "@"
+            or value.startswith("/")
+            or value.endswith(("/", ".", ".lock"))
+        ):
+            raise ValueError(f"ref/branch is not a valid git ref name; got {value!r}")
         return value
 
     @model_validator(mode="after")
