@@ -244,6 +244,61 @@ def test_user_non_frontmatter_file_is_still_logged(tmp_path: Path) -> None:
     )
 
 
+def test_out_of_tree_symlink_is_skipped_and_logged(tmp_path: Path) -> None:
+    """An agents-dir symlink whose target is out of tree is not loaded.
+
+    Containment: a planted ``evil.md -> <out-of-tree valid agent>`` would,
+    absent the check, be followed and registered under its declared name —
+    then dumped by ``carve agents show``. Discovery must skip-and-log it.
+    The target is a *valid, loadable* agent so the test exercises the worst
+    case (a successful body read), not merely a parse failure.
+    """
+    builtin_dir = tmp_path / "builtin"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir(parents=True, exist_ok=True)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    secret = _write(tmp_path / "outside", "secret.md", _USER_OVERRIDE)
+    (user_dir / "evil.md").symlink_to(secret)
+
+    discovery = AgentDiscovery.for_project(
+        agents_dir=user_dir, builtin_dir=builtin_dir
+    )
+    records = _capture("carve.core.agents.discovery", logging.WARNING)
+    registry = discovery.build_registry()
+
+    # The out-of-tree agent is NOT discovered/registered.
+    assert registry.names() == []
+    assert "dlt-engineer" not in registry
+    # The skip was logged with a containment reason (not silent).
+    assert any(
+        "evil.md" in rec.getMessage() and "outside" in rec.getMessage()
+        for rec in records
+    )
+
+
+def test_in_tree_symlink_is_allowed(tmp_path: Path) -> None:
+    """A symlink whose resolved target stays under the agents dir loads.
+
+    Pins the chosen boundary (contain to agents dir, not reject-all): the
+    real file lives in a subdir of the agents dir (not globbed itself) and a
+    top-level ``agent.md`` symlinks to it. Its resolved target is in-tree, so
+    it is allowed — in-tree symlink convenience is preserved.
+    """
+    builtin_dir = tmp_path / "builtin"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir(parents=True, exist_ok=True)
+    real = _write(user_dir / "shared", "real.md", _USER_OVERRIDE)
+    (user_dir / "agent.md").symlink_to(real)
+
+    discovery = AgentDiscovery.for_project(
+        agents_dir=user_dir, builtin_dir=builtin_dir
+    )
+    registry = discovery.build_registry()
+
+    assert "dlt-engineer" in registry
+    assert registry.resolve("dlt-engineer").system_prompt == "User override prompt."
+
+
 def _bump_mtime(path: Path) -> None:
     """Force the mtime forward so the (mtime, parsed) cache invalidates."""
     stat = path.stat()

@@ -133,10 +133,31 @@ class AgentDiscovery:
         directory = root.directory
         if not directory.is_dir():
             return []
+        root_resolved = directory.resolve()
         is_builtin = root.label == "builtin"
         agents: list[AgentFile] = []
         for path in sorted(directory.glob("*.md")):
             if not path.is_file():
+                continue
+            # Symlink containment: a glob entry may be a symlink, and both
+            # `is_file()` and the loader follow it. Require the *resolved*
+            # target to stay under this agents root, so a planted
+            # `evil.md -> /etc/...` (or any out-of-tree target) is not read or
+            # registered — closing the body-exfiltration path (the same file
+            # would otherwise be dumped by `carve agents show <declared-name>`).
+            # In-tree symlinks are allowed; an out-of-tree target is skipped
+            # and logged (same skip-and-log discipline as a malformed file).
+            # Checked before the frontmatter peek so an out-of-tree file is
+            # never even opened.
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root_resolved):
+                logger.warning(
+                    "Skipping agent file %s: resolved target %s is outside "
+                    "the agents directory %s (symlink containment).",
+                    path,
+                    resolved,
+                    root_resolved,
+                )
                 continue
             if is_builtin and not _has_frontmatter_fence(path):
                 # A built-in non-agent doc (e.g. README.md): skip quietly.

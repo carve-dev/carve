@@ -128,6 +128,131 @@ def test_agents_create_refuses_overwrite(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+# A file with a `---` fence but broken YAML: were it ever read by
+# `_load_error_for`, the load error (and possibly its content) would be
+# echoed to the console — the info-leak these guards close.
+_OUT_OF_TREE_SECRET = """\
+---
+OUT_OF_TREE_SECRET_MARKER: "unterminated
+---
+body
+"""
+
+
+def test_agents_show_rejects_traversal_name(tmp_path: Path) -> None:
+    """A `../../`-shaped name resolves outside the agents dir — not read.
+
+    `carve agents show ../../secret` must report the agent as unknown
+    rather than joining the name and loading (then echoing) a file outside
+    the agents directory.
+    """
+    # Plant a malformed file outside the user agents dir (which is
+    # `<tmp>/carve/agents`); `../../secret` from there lands at `<tmp>`.
+    (tmp_path / "secret.md").write_text(_OUT_OF_TREE_SECRET, encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["agents", "show", "../../secret", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    # Reported as unknown (name rejected) — NOT read-and-surfaced.
+    assert "No agent named" in result.output
+    assert "failed to load" not in result.output
+    assert "OUT_OF_TREE_SECRET_MARKER" not in result.output
+
+
+def test_agents_show_rejects_out_of_tree_symlink(tmp_path: Path) -> None:
+    """An in-dir symlink whose target is out of tree is not followed-and-read.
+
+    A safe-looking name (`evil`, no separators) that maps to a planted
+    symlink `evil.md -> <out-of-tree>` must still report unknown: the
+    post-resolve containment check rejects the resolved target.
+    """
+    agents_dir = tmp_path / "carve" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    secret = tmp_path / "outside_secret.md"  # outside agents_dir
+    secret.write_text(_OUT_OF_TREE_SECRET, encoding="utf-8")
+    (agents_dir / "evil.md").symlink_to(secret)
+
+    result = runner.invoke(
+        app, ["agents", "show", "evil", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "No agent named" in result.output
+    assert "failed to load" not in result.output
+    assert "OUT_OF_TREE_SECRET_MARKER" not in result.output
+
+
+def test_agents_create_rejects_traversal_name(tmp_path: Path) -> None:
+    """`create ../../evil` must not write a file outside the agents dir."""
+    result = runner.invoke(
+        app, ["agents", "create", "../../evil", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "Invalid agent name" in result.output
+    # Nothing written outside the user agents dir.
+    assert not (tmp_path / "evil.md").exists()
+
+
+def test_agents_create_refuses_symlink_target(tmp_path: Path) -> None:
+    """A planted (dangling) symlink at the target is not written through.
+
+    The name is clean (`trap`), so the name guard passes; the write-side
+    containment must still refuse to follow a symlink out of tree. A
+    *dangling* link is the sharp case: `target.exists()` reports absent, so
+    only the `is_symlink()` check stops `write_text` from creating the
+    out-of-tree target.
+    """
+    agents_dir = tmp_path / "carve" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.md"  # does NOT exist → dangling link
+    (agents_dir / "trap.md").symlink_to(outside)
+
+    result = runner.invoke(
+        app, ["agents", "create", "trap", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "symlink" in result.output
+    # write_text did not follow the link out of tree.
+    assert not outside.exists()
+
+
+# A valid, loadable agent placed OUT of tree: were discovery to follow an
+# in-dir symlink to it, `list` would show it and `show <name>` would dump
+# this body — the exfiltration the containment check closes.
+_OUT_OF_TREE_AGENT = """\
+---
+name: leaked-agent
+description: An out-of-tree agent that must not be discovered.
+max_mode: read_only
+---
+DISCOVERY_BODY_MARKER should never appear in CLI output.
+"""
+
+
+def test_agents_discovery_does_not_follow_out_of_tree_symlink(
+    tmp_path: Path,
+) -> None:
+    """A symlinked out-of-tree agent is neither listed nor shown (no leak)."""
+    agents_dir = tmp_path / "carve" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    secret = tmp_path / "leaked.md"  # outside the agents dir
+    secret.write_text(_OUT_OF_TREE_AGENT, encoding="utf-8")
+    (agents_dir / "evil.md").symlink_to(secret)
+
+    listed = runner.invoke(
+        app, ["agents", "list", "--project-dir", str(tmp_path)]
+    )
+    assert "leaked-agent" not in listed.output
+    assert "DISCOVERY_BODY_MARKER" not in listed.output
+
+    shown = runner.invoke(
+        app, ["agents", "show", "leaked-agent", "--project-dir", str(tmp_path)]
+    )
+    assert shown.exit_code == 1
+    assert "No agent named" in shown.output
+    assert "DISCOVERY_BODY_MARKER" not in shown.output
+
+
 @pytest.mark.parametrize("subcmd", ["list", "show", "create"])
 def test_agents_help_is_available(subcmd: str) -> None:
     result = runner.invoke(app, ["agents", subcmd, "--help"])

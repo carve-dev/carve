@@ -148,10 +148,30 @@ def create_agent(
     ),
 ) -> None:
     """Scaffold a new agent ``.md`` under the user agents dir."""
+    # `name` is joined as `{name}.md` under the user agents dir and then
+    # written; reject a traversal-shaped name before the join so
+    # `create ../../evil` can't write outside the tree (the write-sink
+    # sibling of the `show` read guard below).
+    if not _is_safe_agent_name(name):
+        console.print(
+            f"[red]Invalid agent name {name!r}.[/red] A name may not contain "
+            "a path separator, '..', a leading '-', or surrounding whitespace."
+        )
+        raise typer.Exit(code=1)
     root = project_dir.resolve()
     user_dir = _agents_dir(root)
     user_dir.mkdir(parents=True, exist_ok=True)
     target = user_dir / f"{name}.md"
+    # Containment layer 2 (write side): the name is already separator-free,
+    # so `target` is a direct child of the agents dir — the only way a write
+    # escapes is a planted symlink at that path. A fresh scaffold is never a
+    # symlink; refuse one (incl. a *dangling* link, which `.exists()` reports
+    # absent yet `write_text` would follow out of tree).
+    if target.is_symlink():
+        console.print(
+            f"[red]{target} is a symlink; refusing to write through it.[/red]"
+        )
+        raise typer.Exit(code=1)
     if target.exists():
         console.print(f"[red]{target} already exists.[/red]")
         raise typer.Exit(code=1)
@@ -190,6 +210,25 @@ def _template_from(
     raise typer.Exit(code=1)
 
 
+def _is_safe_agent_name(name: str) -> bool:
+    """Reject a CLI ``name`` that could escape the agents directory.
+
+    ``name`` is joined as ``{name}.md`` under the user/built-in agents dir
+    (``carve agents show <name>`` / ``create <name>``). A value with a path
+    separator, a ``..`` segment, a leading ``-`` (option-shaped), a NUL
+    byte, or surrounding whitespace could resolve outside that dir or be
+    mis-parsed — refuse it before the join. Mirrors the
+    ``PathsConfig._project_relative`` validator; the caller's post-resolve
+    containment check is the second layer that also catches an in-dir
+    symlink whose target is out of tree.
+    """
+    if not name or name.strip() != name:
+        return False
+    if name.startswith("-"):
+        return False
+    return not any(token in name for token in ("/", "\\", "..", "\x00"))
+
+
 def _load_error_for(user_dir: Path, name: str) -> str | None:
     """Return the load-error message for a ``{name}.md`` that failed to load.
 
@@ -200,8 +239,20 @@ def _load_error_for(user_dir: Path, name: str) -> str | None:
     ``None`` when no candidate file exists (a genuinely unknown agent) or
     the file loads fine (not the cause of the miss).
     """
+    # Containment layer 1: a traversal-shaped name (separator, `..`, leading
+    # `-`, NUL) is never a plain `{name}.md` in the agents dir — treat it as
+    # unknown rather than joining `../../secret` and reading out of tree.
+    if not _is_safe_agent_name(name):
+        return None
     for directory in (user_dir, BUILTIN_AGENTS_DIR):
-        candidate = (directory / f"{name}.md").resolve()
+        base = directory.resolve()
+        candidate = (base / f"{name}.md").resolve()
+        # Containment layer 2: `.resolve()` followed any symlink, so an
+        # in-dir `evil.md -> /etc/hosts` now points out of tree. Require the
+        # resolved candidate to stay under the (resolved) agents dir before
+        # reading it — this is what closes the symlink-follow leak.
+        if not candidate.is_relative_to(base):
+            continue
         if not candidate.is_file():
             continue
         try:
