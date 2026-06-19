@@ -558,3 +558,99 @@ def test_latest_build_for_returns_most_recent_per_target(repo: Repository) -> No
 
     assert repo.latest_build_for("ingest", "staging") is None
     assert repo.latest_build_for("missing", "dev") is None
+
+
+# ------------------------------------------------------------------ Workspaces
+
+
+def test_record_workspace_sync_inserts_row(repo: Repository) -> None:
+    ws = repo.record_workspace_sync(
+        name="github-com-org-analytics-main",
+        url="git@github.com:org/analytics.git",
+        branch="main",
+        last_synced_commit="abc1234",
+        status="clean",
+    )
+    assert ws.name == "github-com-org-analytics-main"
+    assert ws.url == "git@github.com:org/analytics.git"
+    assert ws.branch == "main"
+    assert ws.last_synced_commit == "abc1234"
+    assert ws.status == "clean"
+    assert ws.last_synced_at is not None
+
+    fetched = repo.get_workspace("github-com-org-analytics-main")
+    assert fetched is not None
+    assert fetched.last_synced_commit == "abc1234"
+
+
+def test_record_workspace_sync_is_idempotent_upsert(repo: Repository) -> None:
+    repo.record_workspace_sync(
+        name="ws1",
+        url="git@h:o/r.git",
+        branch="main",
+        last_synced_commit="aaa",
+        status="clean",
+    )
+    updated = repo.record_workspace_sync(
+        name="ws1",
+        url="git@h:o/r.git",
+        branch="main",
+        last_synced_commit="bbb",
+        status="dirty",
+    )
+    assert updated.last_synced_commit == "bbb"
+    assert updated.status == "dirty"
+    # Still exactly one row.
+    assert len(repo.list_workspaces()) == 1
+
+
+def test_record_workspace_sync_redacts_url_credentials(repo: Repository) -> None:
+    """A token-bearing HTTPS url is never persisted verbatim in `workspaces.url`.
+
+    The loader resolves `${GH_TOKEN}` to the live secret before it reaches the
+    state store, so the persisted diagnostics row must strip the userinfo.
+    """
+    ws = repo.record_workspace_sync(
+        name="ingest",
+        url="https://x-access-token:ghp_SECRET_TOKEN_abc123@github.com/org/repo.git",
+        branch="main",
+        last_synced_commit="abc1234",
+        status="clean",
+    )
+    assert "ghp_SECRET_TOKEN_abc123" not in ws.url
+    assert "x-access-token" not in ws.url
+    assert ws.url == "https://github.com/org/repo.git"
+    # Persisted, not just on the returned object.
+    fetched = repo.get_workspace("ingest")
+    assert fetched is not None
+    assert "ghp_SECRET_TOKEN_abc123" not in fetched.url
+    assert fetched.url == "https://github.com/org/repo.git"
+
+
+def test_record_workspace_sync_leaves_scp_url_intact(repo: Repository) -> None:
+    """scp-style `git@host:path` carries no secret and is stored unchanged."""
+    ws = repo.record_workspace_sync(
+        name="analytics",
+        url="git@github.com:org/analytics.git",
+        branch="main",
+        last_synced_commit="abc",
+        status="clean",
+    )
+    assert ws.url == "git@github.com:org/analytics.git"
+
+
+def test_get_workspace_returns_none_for_unknown(repo: Repository) -> None:
+    assert repo.get_workspace("nope") is None
+
+
+def test_list_workspaces_is_name_ordered(repo: Repository) -> None:
+    for name in ("zeta", "alpha", "mid"):
+        repo.record_workspace_sync(
+            name=name,
+            url="git@h:o/r.git",
+            branch=None,
+            last_synced_commit=None,
+            status="unreachable",
+        )
+    names = [w.name for w in repo.list_workspaces()]
+    assert names == ["alpha", "mid", "zeta"]

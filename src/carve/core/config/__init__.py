@@ -12,7 +12,11 @@ Everything downstream (CLI commands, agent runtime, server) accepts a
 
 from carve.core.config.exceptions import ConfigError
 from carve.core.config.loader import load_config
+from carve.core.config.paths import ProjectPaths
 from carve.core.config.schema import (
+    ComponentConfig,
+    ComponentMode,
+    ComponentType,
     Config,
     ConnectionsConfig,
     ModelsConfig,
@@ -26,12 +30,16 @@ from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreCon
 
 __all__ = [
     "DEFAULT_STATE_STORE_URL",
+    "ComponentConfig",
+    "ComponentMode",
+    "ComponentType",
     "Config",
     "ConfigError",
     "ConnectionsConfig",
     "ModelsConfig",
     "PathsConfig",
     "ProjectConfig",
+    "ProjectPaths",
     "RunnerConfig",
     "ServerConfig",
     "SnowflakeConnection",

@@ -81,6 +81,13 @@ def load_config(project_dir: Path | None = None) -> Config:
         "project": main.get("project", {}) or {},
         "paths": paths_section,
     }
+    # `[components.<name>]` blocks live top-level in `carve.toml` alongside
+    # `[project]`/`[paths]`. Omitting them entirely is the convention-based
+    # simple mode (empty dict). Env-var interpolation below recurses into
+    # the nested blocks, so `${VAR}` inside a component works for free.
+    components_section = main.get("components", {}) or {}
+    if components_section:
+        raw["components"] = components_section
     sub_file_paths: dict[str, Path] = {}
     for section, filename in _SUB_FILES.items():
         path = config_dir / filename
@@ -93,6 +100,7 @@ def load_config(project_dir: Path | None = None) -> Config:
     file_map: dict[str, Path] = {
         "project": main_path,
         "paths": main_path,
+        "components": main_path,
         **sub_file_paths,
     }
 

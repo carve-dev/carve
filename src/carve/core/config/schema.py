@@ -11,9 +11,10 @@ threading it through.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import PurePosixPath
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreConfig
 
@@ -139,6 +140,12 @@ class RunnerConfig(BaseModel):
     type: str = "local_venv"
     venv_cache_dir: str = ".carve/venvs"
     default_timeout_seconds: int = 1800
+    # Bound (seconds) on each git workspace-sync subprocess for
+    # separate-remote components, so an unreachable remote can't hang a
+    # worker. The sync triggers pass it to
+    # `carve.integrations.workspace_cache.sync_workspace(timeout=…)`; the
+    # cache's own floor default matches this value.
+    git_timeout_seconds: int = Field(default=300, ge=1)
     max_concurrent_runs: int = 4
     auto_fix: AutoFixConfig = Field(default_factory=AutoFixConfig)
 
@@ -162,6 +169,157 @@ class ServerConfig(BaseModel):
     auth_mode: str = "single_user"
 
 
+class ComponentType(StrEnum):
+    """The kind of component a `[components.<name>]` block references.
+
+    A component is either a dlt pipeline (`dlt`) or a dbt project
+    (`dbt`). The type tells the locator how to resolve and run it — they
+    are symmetric in topology but resolved differently (see
+    `carve.integrations.component_locator`). The value is a plain string
+    so it round-trips cleanly through TOML.
+    """
+
+    DLT = "dlt"
+    DBT = "dbt"
+
+
+class ComponentMode(StrEnum):
+    """Where a component's code lives — its repo topology.
+
+    Three discrete strings rather than inferring mode from the presence
+    of `path`/`url`; explicit is friendlier to validate and less
+    surprising (spec *Design notes*).
+
+    * ``same-repo`` — code lives in this control-plane working tree
+      (``el/<name>/`` for dlt, the detected dbt project for dbt).
+    * ``separate-local`` — code lives at an on-disk ``path`` outside the
+      tree; required when this mode is set.
+    * ``separate-remote`` — code lives in a git repo at ``url``; cloned
+      into the workspace cache and checked out at ``ref``/``branch``.
+    """
+
+    SAME_REPO = "same-repo"
+    SEPARATE_LOCAL = "separate-local"
+    SEPARATE_REMOTE = "separate-remote"
+
+
+class ComponentConfig(BaseModel):
+    """A single `[components.<name>]` block in `carve.toml`.
+
+    Records *which* typed component the control plane references and
+    *where* it resolves. The block name (the dict key in
+    ``Config.components``) is the component name a pipeline step
+    references by ``component = "<name>"``; it is not duplicated as a
+    field here.
+
+    Cross-field rules (spec *`carve.toml` schema additions* + *`ref` vs
+    `branch` precedence*):
+
+    * ``path`` is required iff ``mode == "separate-local"``.
+    * ``url`` is required iff ``mode == "separate-remote"``.
+    * ``ref`` (a commit SHA or tag) is a **pin**; ``branch`` tracks a
+      branch HEAD. ``ref`` always wins when both are present — the
+      precedence is encoded in the locator, but the schema accepts both
+      so the locator can apply it.
+
+    ``url``/``branch``/``ref`` are only meaningful for
+    ``separate-remote``; ``path`` only for ``separate-local``. They are
+    left optional rather than split into per-mode models so the TOML
+    shape stays a single flat block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: ComponentType
+    mode: ComponentMode
+    url: str | None = None
+    branch: str | None = None
+    path: str | None = None
+    ref: str | None = None
+    # Sync semantics for separate-remote (spec *Open questions*): hard
+    # sync by default (``git fetch && reset --hard``); ``soft`` opts into
+    # ``git pull``. ``sync_before_run`` lets a component skip the
+    # before-each-run sync for offline operation. Both ride here so the
+    # workspace cache + runtime can read them off the resolved config.
+    sync_mode: str = "hard"
+    sync_before_run: bool = True
+
+    @field_validator("sync_mode")
+    @classmethod
+    def _known_sync_mode(cls, value: str) -> str:
+        if value not in ("hard", "soft"):
+            raise ValueError(f"sync_mode must be 'hard' or 'soft'; got {value!r}")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def _safe_url(cls, value: str | None) -> str | None:
+        # Defense-in-depth for the git subprocess that clones a
+        # separate-remote component (carve.integrations.workspace_cache):
+        # allow only transports git can fetch over safely, and reject
+        # option-shaped or alternate-transport URLs (`--upload-pack=...`,
+        # `ext::sh -c ...`) that could smuggle a flag or arbitrary command
+        # into `git clone`. Enforced at config load, before any git call.
+        if value is None:
+            return value
+        url = value.strip()
+        if not url:
+            raise ValueError("url must not be empty")
+        if url.startswith("-"):
+            raise ValueError(
+                f"url must not start with '-' (option-shaped); got {value!r}"
+            )
+        if url.startswith(("https://", "ssh://", "git://", "file://")):
+            return value
+        # scp-style `[user@]host:path`: no scheme, a single `:` splitting a
+        # slash-free host from a path. `::` (the `transport::address` form,
+        # e.g. `ext::...`) is excluded explicitly.
+        if "://" not in url and "::" not in url:
+            host, sep, path = url.partition(":")
+            if sep and host and path and "/" not in host and host not in (".", ".."):
+                return value
+        raise ValueError(
+            f"url transport not allowed; got {value!r}. Use https://, ssh://, "
+            "git://, file://, or scp-style git@host:path."
+        )
+
+    @field_validator("ref", "branch")
+    @classmethod
+    def _safe_ref_branch(cls, value: str | None) -> str | None:
+        # Defense-in-depth: `ref`/`branch` flow into `git checkout <value>`
+        # as a positional, so an option-shaped value (e.g. `--orphan=…`)
+        # would be parsed as a git flag. Reject a leading `-` (mirrors the
+        # `url` transport allow-list), at config load before any git call.
+        if value is None:
+            return value
+        if not value.strip():
+            raise ValueError("ref/branch must not be empty")
+        if value.startswith("-"):
+            raise ValueError(
+                f"ref/branch must not start with '-' (option-shaped); got {value!r}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _check_mode_fields(self) -> ComponentConfig:
+        if self.mode is ComponentMode.SEPARATE_LOCAL and not self.path:
+            raise ValueError("`path` is required when mode == 'separate-local'")
+        if self.mode is ComponentMode.SEPARATE_REMOTE and not self.url:
+            raise ValueError("`url` is required when mode == 'separate-remote'")
+        # `path` is meaningless outside separate-local; `url`/`branch`/`ref`
+        # outside separate-remote. Reject the contradiction rather than
+        # silently ignoring it, so a mis-set block is caught at load time.
+        if self.mode is not ComponentMode.SEPARATE_LOCAL and self.path:
+            raise ValueError("`path` is only valid when mode == 'separate-local'")
+        if self.mode is not ComponentMode.SEPARATE_REMOTE and (
+            self.url or self.branch or self.ref
+        ):
+            raise ValueError(
+                "`url`/`branch`/`ref` are only valid when mode == 'separate-remote'"
+            )
+        return self
+
+
 class Config(BaseModel):
     """Fully-merged, validated Carve configuration.
 
@@ -178,4 +336,10 @@ class Config(BaseModel):
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     state_store: StateStoreConfig = Field(default_factory=StateStoreConfig)
+    # `[components.<name>]` blocks keyed by component name. An empty dict
+    # is the convention-based **simple mode**: components are discovered
+    # from `el/<name>/` dirs + the detected dbt project (see
+    # `carve.integrations.component_locator.discover_components`). Blocks
+    # only materialize when a component is split out to a separate repo.
+    components: dict[str, ComponentConfig] = Field(default_factory=dict)
     config_hash: str = ""

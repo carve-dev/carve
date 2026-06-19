@@ -16,7 +16,7 @@ from carve.core.state.database import (
     create_session_factory,
     initialize_database,
 )
-from carve.core.state.models import Base, Build, Log, Pipeline, Plan, Run
+from carve.core.state.models import Base, Build, Log, Pipeline, Plan, Run, Workspace
 from carve.core.state.repository import Repository
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "Plan",
     "Repository",
     "Run",
+    "Workspace",
     "create_engine_from_config",
     "create_session_factory",
     "initialize_database",

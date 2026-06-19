@@ -72,8 +72,16 @@ def test_alembic_upgrade_head_on_empty_postgres(
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
 
-        # The five M1-shape tables plus alembic's bookkeeping table.
-        assert {"runs", "logs", "plans", "pipelines", "builds"}.issubset(tables)
+        # The five M1-shape tables, the workspaces table, plus alembic's
+        # bookkeeping table.
+        assert {
+            "runs",
+            "logs",
+            "plans",
+            "pipelines",
+            "builds",
+            "workspaces",
+        }.issubset(tables)
         assert "alembic_version" in tables
 
         # JSONB on the two free-form payload columns.
@@ -116,7 +124,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
             head_rev = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert head_rev == "0006_recovery_chains"
+        assert head_rev == "0007_workspaces"
     finally:
         engine.dispose()
 
@@ -570,5 +578,105 @@ def test_0006_fk_constraint_declared_against_runs_id(
         fk = parent_fks[0]
         assert fk["referred_table"] == "runs"
         assert fk["referred_columns"] == ["id"]
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0007_workspaces
+# ---------------------------------------------------------------------------
+
+
+def test_0007_creates_workspaces_table_with_expected_columns(
+    postgres_state_store_url: str,
+) -> None:
+    """After head: the ``workspaces`` table exists with the documented
+    columns and TIMESTAMPTZ on ``last_synced_at``."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+
+        inspector = inspect(engine)
+        assert "workspaces" in set(inspector.get_table_names())
+
+        cols = {c["name"]: c for c in inspector.get_columns("workspaces")}
+        assert set(cols) == {
+            "name",
+            "url",
+            "branch",
+            "last_synced_commit",
+            "last_synced_at",
+            "status",
+        }
+        synced_type = cols["last_synced_at"]["type"]
+        assert isinstance(synced_type, TIMESTAMP)
+        assert synced_type.timezone is True
+
+        pk = inspector.get_pk_constraint("workspaces")
+        assert pk["constrained_columns"] == ["name"]
+    finally:
+        engine.dispose()
+
+
+def test_0007_status_check_constraint_enforced(
+    postgres_state_store_url: str,
+) -> None:
+    """The status CHECK rejects values outside clean/dirty/unreachable."""
+    from sqlalchemy.exc import IntegrityError
+
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+
+        now = datetime.now(UTC)
+        # A valid status inserts fine.
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO workspaces (name, url, status, last_synced_at) "
+                    "VALUES ('w1', 'git@h:o/r.git', 'clean', :now)"
+                ),
+                {"now": now},
+            )
+        # An invalid status is rejected by ck_workspaces_status.
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO workspaces (name, url, status) "
+                        "VALUES ('w2', 'git@h:o/r.git', 'bogus')"
+                    )
+                )
+            raise AssertionError("expected the status CHECK to reject 'bogus'")
+        except IntegrityError:
+            pass
+    finally:
+        engine.dispose()
+
+
+def test_0007_downgrade_drops_workspaces(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0007 -> 0006 drops the ``workspaces`` table."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert "workspaces" in set(inspect(engine).get_table_names())
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0006_recovery_chains")
+
+        assert "workspaces" not in set(inspect(engine).get_table_names())
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        assert head_rev == "0006_recovery_chains"
     finally:
         engine.dispose()

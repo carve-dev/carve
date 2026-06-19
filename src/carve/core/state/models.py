@@ -1,8 +1,9 @@
 """SQLAlchemy 2.0 declarative models for the Carve state store.
 
-Five tables: `runs`, `logs`, `plans`, `pipelines`, `builds`. The schema
-is managed by Alembic — see ``migrations/`` — but the ORM models are
-still the canonical Python representation that repository methods return.
+Six tables: `runs`, `logs`, `plans`, `pipelines`, `builds`, and
+`workspaces`. The schema is managed by Alembic — see ``migrations/`` —
+but the ORM models are still the canonical Python representation that
+repository methods return.
 
 v0.1-01 ported the state store from SQLite to Postgres. Concretely:
 
@@ -223,4 +224,46 @@ class Build(Base):
     deployed_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
 
 
-__all__: list[Any] = ["Base", "Build", "Log", "Pipeline", "Plan", "Run"]
+class Workspace(Base):
+    """Diagnostics row for a cached ``separate-remote`` component.
+
+    The control plane clones each ``separate-remote`` component into
+    ``<root>/.carve/workspaces/<name>/`` (see
+    ``carve.integrations.workspace_cache``). This table records the sync
+    result so the static UI can show, per cached repo, what revision it's
+    on and whether it's healthy. It is **diagnostics only** — the source
+    of truth for the code is the on-disk clone, not this row. The heavy
+    querying is the UI's (Increment 5); the repository keeps a thin
+    upsert/read surface.
+
+    ``name`` is the workspace's derived cache-dir name (``slug(url)`` +
+    branch/ref), which is unique per (url, revision) and stable across
+    syncs — hence the primary key. ``status`` is constrained to the three
+    documented values.
+    """
+
+    __tablename__ = "workspaces"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('clean', 'dirty', 'unreachable')",
+            name="ck_workspaces_status",
+        ),
+    )
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    url: Mapped[str]
+    branch: Mapped[str | None] = mapped_column(default=None)
+    last_synced_commit: Mapped[str | None] = mapped_column(default=None)
+    last_synced_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    status: Mapped[str] = mapped_column(default="clean")
+
+
+__all__: list[Any] = [
+    "Base",
+    "Build",
+    "Log",
+    "Pipeline",
+    "Plan",
+    "Run",
+    "Workspace",
+]

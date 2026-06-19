@@ -30,7 +30,9 @@ Shipped and in `src/` — every increment plans *against* this:
 - **M1.1 — lifecycle + UX.** `carve init` templates, Claude-subscription OAuth, dotenv autoload, plan progress, agent-prompt tightening, the **plan / build / run** separation, run-retry-permits-redo. (The OAuth and the plan/build/run separation are the shipped cores of [model-auth](./capabilities/model-auth.md) + [plan-build](./capabilities/plan-build.md) — Increment 0 formalizes them.)
 - **Spec 01 — state store → Postgres.** Landed (SQLite retired; Postgres baseline + the six audited migrations). Followups landed: the M1 test sweep and `DATABASE_URL` precedence. ~300 tests passing. **Increment 0 (state-store formalization) complete 2026-06-18** — spec reconciled to the shipped code.
 
-Everything else is **designed but unbuilt**. The foundational AI specs **harness** and **extensibility** have been adversarially reviewed + hardened. The full corpus is internally consistent under the control-plane + AI-harness model.
+- **Layout (Increment 1) — control-plane `carve.toml`.** Landed 2026-06-18: the `[components.<name>]` schema (transport-validated `url`/`ref`/`branch`), `ProjectPaths`, the component locator (`resolve_component` / `discover_components` / `workspace_dirname`), the git workspace cache (ref-pin, credential redaction, hardened env, bounded `timeout`), the provenance reader, and the `Workspace` model + migration `0007`. 879 tests passing.
+
+The rest of Increment 1 (packaging, harness, extensibility, model-auth) and everything beyond is **designed but unbuilt**. The foundational AI specs **harness** and **extensibility** have been adversarially reviewed + hardened. The full corpus is internally consistent under the control-plane + AI-harness model.
 
 ---
 

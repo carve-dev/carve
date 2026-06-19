@@ -155,7 +155,13 @@ class TestRunnerConfig:
         cfg = RunnerConfig()
         assert cfg.type == "local_venv"
         assert cfg.default_timeout_seconds == 1800
+        assert cfg.git_timeout_seconds == 300
         assert cfg.max_concurrent_runs == 4
+
+    def test_git_timeout_seconds_override_and_floor(self) -> None:
+        assert RunnerConfig(git_timeout_seconds=600).git_timeout_seconds == 600
+        with pytest.raises(ValidationError):
+            RunnerConfig(git_timeout_seconds=0)
 
 
 class TestAutoFixConfig:

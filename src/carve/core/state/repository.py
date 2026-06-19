@@ -20,6 +20,7 @@ written from `mark_plan_built`; the build row carries that state now.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -27,10 +28,24 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from carve.core.state.models import Build, Log, Pipeline, Plan, Run
+from carve.core.state.models import Build, Log, Pipeline, Plan, Run, Workspace
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
+
+
+def _redact_url_userinfo(url: str) -> str:
+    """Strip ``user:pass@`` userinfo from a scheme-based URL before persisting.
+
+    A ``separate-remote`` component may use a token-bearing HTTPS remote
+    (``https://x-access-token:<token>@host/org/repo.git``); the loader has
+    already resolved the ``${TOKEN}`` to the live secret by the time it
+    reaches the state store, so the raw ``url`` must never be written to
+    ``workspaces.url`` verbatim. The substitution only matches a ``://…@``
+    authority, so scp-style ``git@host:path`` (no secret — ``git`` is a
+    username, not credential material) is left intact.
+    """
+    return re.sub(r"://[^@/]+@", "://", url)
 
 
 @dataclass
@@ -530,3 +545,69 @@ class Repository:
         )
         with self._session_factory() as session:
             return session.scalars(stmt).first()
+
+    # ------------------------------------------------------------- Workspaces
+
+    def record_workspace_sync(
+        self,
+        *,
+        name: str,
+        url: str,
+        branch: str | None,
+        last_synced_commit: str | None,
+        status: str,
+        synced_at: datetime | None = None,
+    ) -> Workspace:
+        """Upsert a `workspaces` diagnostics row, keyed by ``name``.
+
+        Called by the sync triggers (runtime/deploy) after a workspace
+        clone or sync to record the result the static UI surfaces.
+        ``status`` must be one of ``clean`` / ``dirty`` / ``unreachable``
+        (enforced by the table's CHECK constraint). ``synced_at``
+        defaults to now (UTC); pass an explicit value in tests.
+
+        Idempotent: re-recording the same ``name`` overwrites the row.
+
+        The ``url`` is stored with any ``user:pass@`` userinfo redacted, so a
+        token-bearing HTTPS remote is never persisted in plaintext.
+        """
+        timestamp = synced_at if synced_at is not None else datetime.now(UTC)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        else:
+            timestamp = timestamp.astimezone(UTC)
+        # Never persist credentials: a token-bearing HTTPS remote would
+        # otherwise land plaintext in `workspaces.url`.
+        safe_url = _redact_url_userinfo(url)
+        with self._session_factory() as session:
+            workspace = session.get(Workspace, name)
+            if workspace is None:
+                workspace = Workspace(
+                    name=name,
+                    url=safe_url,
+                    branch=branch,
+                    last_synced_commit=last_synced_commit,
+                    last_synced_at=timestamp,
+                    status=status,
+                )
+                session.add(workspace)
+            else:
+                workspace.url = safe_url
+                workspace.branch = branch
+                workspace.last_synced_commit = last_synced_commit
+                workspace.last_synced_at = timestamp
+                workspace.status = status
+            session.commit()
+            session.refresh(workspace)
+            return workspace
+
+    def get_workspace(self, name: str) -> Workspace | None:
+        """Fetch a workspace diagnostics row by name, or ``None``."""
+        with self._session_factory() as session:
+            return session.get(Workspace, name)
+
+    def list_workspaces(self) -> list[Workspace]:
+        """List all workspace diagnostics rows, name-ordered."""
+        stmt = select(Workspace).order_by(Workspace.name.asc())
+        with self._session_factory() as session:
+            return list(session.scalars(stmt).all())
