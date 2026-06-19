@@ -25,12 +25,13 @@ and decides each call.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from carve.core.agents.permissions.modes import PermissionMode
+from carve.core.agents.permissions.modes import PermissionMode, mode_permits
 
 # ---------------------------------------------------------------------------
 # Tool taxonomy
@@ -63,6 +64,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "web_search",
         "todo",
         "run_snowflake_query",
+        "lookup_skill_pack",
         "bash",
         "edit",
         "create_file",
@@ -82,10 +84,110 @@ _READ_TOOLS: frozenset[str] = frozenset(
         "web_search",
         "todo",
         "run_snowflake_query",
+        # `lookup_skill_pack` injects a curated pack's instructions into the
+        # conversation; it reads inert on-disk SKILL.md content (no script
+        # runs) and writes nothing, so it belongs in the read-only floor.
+        # The orchestrator constructs the agent *with* this tool, so without
+        # it here a gated loop (e.g. a SubagentRunner with the lookup tool)
+        # would DENY a permitted, read-only injection — closed-world denying
+        # a tool that should always be reachable.
+        "lookup_skill_pack",
         "bash",  # gated per-command; read-only bash is allowed in read_only
         "delegate",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# MCP-imported tools (spec 16 — consume external servers)
+# ---------------------------------------------------------------------------
+#
+# An MCP server's tools are imported dynamically as ``mcp:<server>:<tool>``
+# (the ``mcp:`` prefix is the namespace guarantee — it can't collide with a
+# base tool or a ``@skill`` name). Each carries an ``effects`` tag the
+# import derives into a single ``writes`` boolean. Because these names are
+# **not** in any static mode set, the closed-world gate denies them by
+# default; this registration path classifies them *into* the policy so they
+# can be permitted — without ever touching the base static sets.
+#
+# FAIL-CLOSED is the whole point: a tool with missing/incomplete effects is
+# `writes=True` (decided in ``client.py``), and a writer is denied below
+# ``build`` and prompt-tier at ``build``/``deploy``. A read-only tool is
+# permitted from ``read_only`` up. An *unregistered* ``mcp:`` name is in no
+# set and stays denied in every mode — the closed-world property is
+# preserved, only widened by an explicit, effects-derived registration.
+
+
+# The namespace prefix every imported MCP tool name must carry. It is the
+# collision + widening guarantee: `build_policy` only ever *adds*
+# `mcp:`-prefixed names to the permitted set, so a name without this prefix
+# could shadow a base tool (e.g. a crafted `McpToolSpec(name="edit")`). The
+# prefix is enforced as a hard precondition at construction (below) — not
+# merely belt-checked against `WRITE_TOOLS` at the widening point — so a
+# non-prefixed spec can never be built, let alone reach `permitted_tools`.
+MCP_TOOL_PREFIX = "mcp:"
+
+
+@dataclass(frozen=True)
+class McpToolSpec:
+    """One imported MCP tool, classified for the policy.
+
+    * ``name`` — the namespaced ``mcp:<server>:<tool>`` identifier. The
+      ``mcp:`` prefix is a **hard precondition** (enforced in
+      :meth:`__post_init__`): a name lacking it is rejected at
+      construction, so a crafted spec can never widen a base-tool name.
+    * ``writes`` — derived from the tool's ``effects`` with the
+      **fail-closed default**: missing/incomplete effects ⇒ ``True``. A
+      ``True`` here means "treat as a write tool" (deny below ``build``,
+      prompt-tier at ``build``/``deploy``); ``False`` means "read-only"
+      (permitted from ``read_only`` up).
+    """
+
+    name: str
+    writes: bool
+
+    def __post_init__(self) -> None:
+        # The widening-point guard: every McpToolSpec name must be in the
+        # `mcp:` namespace. Without this, `build_policy`'s union step could
+        # admit a name that collides with a base tool. Rejecting here makes
+        # the prefix a precondition of the type, not a downstream check a
+        # caller might forget.
+        if not self.name.startswith(MCP_TOOL_PREFIX):
+            raise ValueError(
+                f"McpToolSpec name {self.name!r} must start with "
+                f"{MCP_TOOL_PREFIX!r}; an MCP tool name is always namespaced "
+                "so it cannot shadow a base tool."
+            )
+
+
+def _mcp_permitted_for_mode(
+    mode: PermissionMode, mcp_tools: Iterable[McpToolSpec]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Classify imported MCP tools into ``(permitted, prompt)`` for ``mode``.
+
+    * A **read-only** MCP tool (``writes=False``) is permitted in every
+      mode (read_only → deploy).
+    * A **writer** MCP tool (``writes=True``, incl. the missing-effects
+      fail-closed default) is permitted **only** at ``build``/``deploy``,
+      and there it is **prompt-tier** (held for approval / fail-closed when
+      non-interactive). Below ``build`` it is absent from ``permitted`` →
+      the gate denies it.
+
+    Returns the set of permitted MCP names and the subset of those that
+    must route to the prompt tier in this mode.
+    """
+    permitted: set[str] = set()
+    prompt: set[str] = set()
+    is_build_or_deploy = mode_permits(mode, PermissionMode.BUILD)
+    for spec in mcp_tools:
+        if not spec.writes:
+            permitted.add(spec.name)
+            continue
+        # Writer (or missing-effects fail-closed): build/deploy only, prompt.
+        if is_build_or_deploy:
+            permitted.add(spec.name)
+            prompt.add(spec.name)
+    return frozenset(permitted), frozenset(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -484,16 +586,69 @@ class EffectivePolicy:
     tool set, the bash tiering for the running mode, the narrowed
     ``allowed_paths``, and the running ``mode`` itself. The gate reads
     only this object — it never re-derives policy from modes/agents.
+
+    ``mcp_prompt_tools`` is the subset of permitted MCP-imported tools
+    that must route to the **prompt tier** in the running mode (writer /
+    missing-effects MCP tools at ``build``/``deploy``). The gate consults
+    it the way it consults the bash prompt tier: a prompt outcome needs an
+    interactive approver, else it is held (fail-closed). It is a subset of
+    ``permitted_tools`` — a name absent from ``permitted_tools`` is denied
+    regardless of this set.
     """
 
     mode: PermissionMode
     permitted_tools: frozenset[str]
     bash: BashRules
     allowed_paths: frozenset[Path] | None = field(default=None)
+    mcp_prompt_tools: frozenset[str] = field(default_factory=frozenset)
 
     def tool_permitted(self, tool_name: str) -> bool:
         """Return True iff ``tool_name`` is in the intersected permitted set."""
         return tool_name in self.permitted_tools
+
+    def mcp_requires_prompt(self, tool_name: str) -> bool:
+        """Return True iff a *permitted* MCP tool must route to the prompt tier."""
+        return tool_name in self.mcp_prompt_tools
+
+
+def _grant_admits(
+    mcp_names: frozenset[str], grant: frozenset[str]
+) -> frozenset[str]:
+    """Filter classified MCP names to those the agent's ``grant`` admits.
+
+    A grant entry admits an ``mcp:<server>:<tool>`` name when either:
+
+    * it equals the name exactly (``mcp:jira:search`` grants that tool), or
+    * it is the ``mcp:<server>:*`` wildcard for that name's server
+      (``mcp:jira:*`` grants every imported ``mcp:jira:`` tool).
+
+    The wildcard is **server-scoped** by construction — it must carry a
+    concrete ``<server>`` segment and the literal ``*`` tool segment, so a
+    grant cannot widen across servers (there is no ``mcp:*`` form: it would
+    not match the three-segment ``mcp:<server>:<tool>`` shape). The result
+    is still a subset of ``mcp_names`` (already mode-classified), so a
+    wildcard never escapes the effects/mode floor.
+    """
+    if not grant:
+        return frozenset()
+    # Precompute the server-wildcard prefixes the grant authorises:
+    # `mcp:jira:*` -> the prefix `mcp:jira:` that an imported tool must
+    # start with. Only well-formed `mcp:<server>:*` entries qualify.
+    wildcard_prefixes = {
+        entry[: -len("*")]  # drop the trailing `*`, keep `mcp:<server>:`
+        for entry in grant
+        if entry.startswith(MCP_TOOL_PREFIX)
+        and entry.endswith(":*")
+        and entry.count(":") == 2
+    }
+    admitted: set[str] = set()
+    for name in mcp_names:
+        if name in grant:
+            admitted.add(name)
+            continue
+        if any(name.startswith(prefix) for prefix in wildcard_prefixes):
+            admitted.add(name)
+    return frozenset(admitted)
 
 
 def build_policy(
@@ -501,16 +656,28 @@ def build_policy(
     *,
     agent: AgentPolicy | None = None,
     config: PermissionsConfig | None = None,
+    mcp_tools: Iterable[McpToolSpec] | None = None,
 ) -> EffectivePolicy:
-    """Reconcile ``effective = mode-default ∩ config ∩ agent`` (tighten-only).
+    """Reconcile ``effective = mode-default ∩ config ∩ agent`` (tighten-only),
+    then **widen** by the explicit, effects-derived MCP registration.
 
     The mode default is the floor. ``config`` (if present) removes tools
     and forces bash tokens to deny. ``agent`` (if present) intersects its
     ``tools:`` grant with what remains and narrows ``allowed_paths``.
 
-    The result is the airtight permitted set the gate enforces — note in
-    particular that no input can *add* a tool the mode withholds, so a
-    write tool is absent below ``build`` no matter what an agent grants.
+    No input can *add* a **base** tool the mode withholds, so a base write
+    tool is absent below ``build`` no matter what an agent grants — the
+    static sets are untouched.
+
+    ``mcp_tools`` is the only *widening* input, and it widens **only** the
+    ``mcp:<server>:<tool>`` namespace, never a base tool: each registered
+    MCP tool is classified by :func:`_mcp_permitted_for_mode`
+    (read-only ⇒ from ``read_only`` up; writer / missing-effects ⇒
+    ``build``/``deploy`` only, prompt-tier there). When an ``agent`` is
+    present, the registered MCP permitted set is **also** intersected with
+    the agent's grant (an agent only gets the MCP tools it asked for); an
+    *unregistered* ``mcp:`` name is in no set and stays denied in every
+    mode (closed-world preserved).
     """
     permitted = _permitted_tools_for_mode(mode)
     bash = _bash_rules_for_mode(mode)
@@ -526,29 +693,58 @@ def build_policy(
             )
 
     allowed_paths: frozenset[Path] | None = None
+    grant: frozenset[str] | None = None
     if agent is not None:
-        # Intersection: the grant can only narrow the floor.
-        permitted = permitted & agent.tools
+        grant = agent.tools
+        # Intersection: the grant can only narrow the (base) floor.
+        permitted = permitted & grant
         allowed_paths = (
             frozenset(p.resolve() for p in agent.allowed_paths)
             if agent.allowed_paths is not None
             else None
         )
 
+    mcp_prompt: frozenset[str] = frozenset()
+    if mcp_tools is not None:
+        mcp_permitted, mcp_prompt = _mcp_permitted_for_mode(mode, mcp_tools)
+        if grant is not None:
+            # An agent only gets the MCP tools it actually granted. The
+            # grant may name a tool exactly (`mcp:jira:search`) or use the
+            # `mcp:<server>:*` wildcard (the spec's `tools: ["mcp:jira:*"]`
+            # syntax), which admits every imported tool on that server. The
+            # admitted set is still ∩ the mode-classified permitted set
+            # above (a writer stays build/deploy-only) and the prompt subset
+            # is intersected the same way.
+            mcp_permitted = _grant_admits(mcp_permitted, grant)
+            mcp_prompt = _grant_admits(mcp_prompt, grant)
+        # Widen the permitted set with the classified MCP names. This is
+        # additive over the `mcp:`-prefixed namespace only — `mcp_permitted`
+        # can never contain a base tool name (every entry is a registered
+        # McpToolSpec.name, all `mcp:`-prefixed by construction).
+        permitted = permitted | mcp_permitted
+        # A `config.denied_tools` entry still removes an MCP tool (config is
+        # tighten-only and applies last over the union).
+        if config is not None and config.denied_tools:
+            permitted = permitted - config.denied_tools
+            mcp_prompt = mcp_prompt - config.denied_tools
+
     return EffectivePolicy(
         mode=mode,
         permitted_tools=permitted,
         bash=bash,
         allowed_paths=allowed_paths,
+        mcp_prompt_tools=mcp_prompt,
     )
 
 
 __all__ = [
     "DANGEROUS_BASH_FLAGS",
+    "MCP_TOOL_PREFIX",
     "WRITE_TOOLS",
     "AgentPolicy",
     "BashRules",
     "EffectivePolicy",
+    "McpToolSpec",
     "PermissionsConfig",
     "build_policy",
 ]

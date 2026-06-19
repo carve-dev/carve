@@ -12,13 +12,16 @@ from carve.cli.commands import (
     deploy,
     init,
     logs,
+    mcp_servers,
     pipelines,
     plan,
     runs,
     serve,
     version,
 )
+from carve.cli.commands.agents import app as agents_app
 from carve.cli.commands.el import app as el_app
+from carve.cli.commands.skills import app as skills_app
 from carve.cli.commands.target import app as target_app
 from carve.cli.dotenv import load_dotenv
 
@@ -88,6 +91,9 @@ app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
+app.add_typer(agents_app, name="agents")
+app.add_typer(skills_app, name="skills")
+app.add_typer(mcp_servers.app, name="mcp-servers")
 
 
 if __name__ == "__main__":

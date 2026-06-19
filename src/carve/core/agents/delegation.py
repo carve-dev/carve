@@ -29,6 +29,7 @@ cannot itself spawn another engineer ad infinitum.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,26 @@ from carve.core.agents.tools.submit_result import (
 from carve.core.config.paths import ProjectPaths
 
 MAX_DELEGATION_DEPTH = 2
+
+# Mirrors ``loop.Hook`` (defined under TYPE_CHECKING there): a tool-call
+# hook is ``(tool_name, tool_input) -> None`` and may raise to abort. Spec
+# 16's ``hooks.toml`` wiring builds these.
+SubagentHook = Callable[[str, dict[str, Any]], None]
+
+# A hook *factory*: given the mode a loop will run at, build that loop's
+# ``(pre_tool_hook, post_tool_hook)`` clamped to that mode. The runner is
+# handed the factory (NOT a parent's pre-built closures) precisely so it can
+# rebuild the hooks — and their bash gate — at the child's clamped
+# ``child_mode``. Propagating the parent's closures would run a hook inside a
+# ``read_only`` child at the parent's ``build`` authority (it could run
+# write/network bash the child forbids); calling the factory at
+# ``child_mode`` re-clamps the gate so the hook never widens past the child.
+# The structural type matches ``extensibility_wiring.HookFactory`` — the
+# wiring module owns the concrete builder; `core` only consumes this shape so
+# it never imports up into `cli`.
+HookFactory = Callable[
+    [PermissionMode], tuple[SubagentHook | None, SubagentHook | None]
+]
 
 
 class SubagentError(AgentError):
@@ -92,6 +113,7 @@ class SubagentRunner:
         approver: Approver | None = None,
         max_turns: int = 30,
         max_tokens: int = 4096,
+        hook_factory: HookFactory | None = None,
     ) -> None:
         self._registry = registry
         self._paths = paths
@@ -101,6 +123,16 @@ class SubagentRunner:
         self._approver = approver
         self._max_turns = max_turns
         self._max_tokens = max_tokens
+        # Spec 16: the run's declarative hooks, as a *factory* the runner
+        # invokes at the child's clamped mode (see :data:`HookFactory`). The
+        # runner must NOT receive pre-built closures: those would carry the
+        # parent run's mode and so run a hook inside a narrower child at the
+        # parent's authority. Calling the factory at ``child_mode`` rebuilds
+        # the gate at the child's floor, so a hook in a ``read_only`` child
+        # cannot run the write/network bash the child forbids. `None` (the
+        # default) means the run configured no hooks — the child runs
+        # hook-free, exactly as before this wiring landed.
+        self._hook_factory = hook_factory
 
     def run(
         self,
@@ -142,22 +174,38 @@ class SubagentRunner:
         #    parent transcript. Named keys only.
         system_prompt = _compose_subagent_prompt(spec.system_prompt, context)
 
+        # Per-agent model tiering (spec 16): a declarative agent may pin a
+        # `model:`; `None` falls back to the runner's install-default model
+        # (`ModelsConfig.default_model`, threaded in as `self._model`).
+        model = spec.model if spec.model is not None else self._model
+
+        # Build the child's hooks AT child_mode — never the parent's. The
+        # factory rebuilds the HookRunner's bash gate at this clamped mode, so
+        # a hook firing inside a read_only child is denied the write/network
+        # bash the child itself forbids. (No factory → no hooks, as before.)
+        pre_tool_hook: SubagentHook | None = None
+        post_tool_hook: SubagentHook | None = None
+        if self._hook_factory is not None:
+            pre_tool_hook, post_tool_hook = self._hook_factory(child_mode)
+
         loop = AgentLoop(
             client=self._client,
             tools=tools,
             system_prompt=system_prompt,
-            model=self._model,
+            model=model,
             max_tokens=self._max_tokens,
             observer=self._observer,
             terminator_tool="submit_result",
             gate=gate,
             approver=self._approver,
+            pre_tool_hook=pre_tool_hook,
+            post_tool_hook=post_tool_hook,
         )
         agent_result = loop.run(task, max_turns=self._max_turns)
 
         # 4. files_changed is read from the loop's harness-tracked log.
         files_changed = list(loop.files_changed)
-        cost = agent_result.token_usage.cost_usd(self._model)
+        cost = agent_result.token_usage.cost_usd(model)
 
         if not capture.submitted:
             # The child never called submit_result — a failed delegation.
@@ -223,7 +271,9 @@ def delegate(
 __all__ = [
     "MAX_DELEGATION_DEPTH",
     "DelegationResult",
+    "HookFactory",
     "SubagentError",
+    "SubagentHook",
     "SubagentRunner",
     "delegate",
 ]

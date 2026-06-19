@@ -40,6 +40,12 @@ class PathsConfig(BaseModel):
     skills_dir: str = "carve/skills"
     pipelines_dir: str = "carve/pipelines"
     targets_dir: str = "targets"
+    # Extensibility (spec 16) config-file locations. Both are
+    # project-relative paths joined with the project root by callers, and
+    # guarded by the same `_project_relative` validator (no `..`, relative
+    # POSIX) so a malicious carve.toml can't redirect them out of the tree.
+    hooks_file: str = "carve/hooks.toml"
+    mcp_file: str = "carve/mcp.toml"
 
     @field_validator(
         "config_dir",
@@ -47,6 +53,8 @@ class PathsConfig(BaseModel):
         "skills_dir",
         "pipelines_dir",
         "targets_dir",
+        "hooks_file",
+        "mcp_file",
     )
     @classmethod
     def _project_relative(cls, value: str) -> str:

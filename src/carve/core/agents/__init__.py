@@ -11,6 +11,11 @@ Public surface:
 - `AgentError` and friends — exceptions raised by the loop.
 """
 
+from carve.core.agents.discovery import (
+    BUILTIN_AGENTS_DIR,
+    AgentDiscovery,
+    AgentRoot,
+)
 from carve.core.agents.exceptions import (
     AgentError,
     InvalidRequestError,
@@ -23,6 +28,12 @@ from carve.core.agents.extract_load import (
     ExtractLoadResult,
     load_extract_load_agent_prompt,
     run_extract_load_agent,
+)
+from carve.core.agents.loader import (
+    MAX_AGENT_FILE_BYTES,
+    AgentFile,
+    AgentLoadError,
+    load_agent_file,
 )
 from carve.core.agents.loop import (
     AgentLoop,
@@ -42,30 +53,43 @@ from carve.core.agents.m1_tools import (
 )
 from carve.core.agents.observer import AgentObserver, NullObserver
 from carve.core.agents.pricing import ModelPricing, compute_cost_usd, lookup_pricing
+from carve.core.agents.routing import NoAgentMatch, select_agent
+from carve.core.agents.subagent_registry import (
+    AgentSpec,
+    SubagentRegistry,
+    spec_from_agent_file,
+)
 from carve.core.agents.tools import Tool, ToolExecutionError, ToolExecutor
 
-AGENT_REGISTRY: dict[str, str] = {
-    # Maps task.agent values to a human-meaningful description. The build
-    # flow's dispatch (Pillar 2 onward) consults this map to validate
-    # task.agent before invoking the specialist. In Pillar 1 there's only
-    # one entry — extract_load — and the build flow assumes it.
-    "extract_load": "Pillar 1 extract-load specialist (P1-04).",
-}
+# NOTE: the old hardcoded `AGENT_REGISTRY: dict[str, str]` (M1-era,
+# zero external consumers) has been replaced by the declarative agent
+# surface: `AgentDiscovery.build_registry()` produces a `SubagentRegistry`
+# from the discovery roots, and `select_agent` (the classification router)
+# turns a goal classification / explicit name into the agent name
+# `delegate(agent, …)` consumes.
 
 __all__ = [
-    "AGENT_REGISTRY",
+    "BUILTIN_AGENTS_DIR",
+    "MAX_AGENT_FILE_BYTES",
+    "AgentDiscovery",
     "AgentError",
+    "AgentFile",
+    "AgentLoadError",
     "AgentLoop",
     "AgentObserver",
     "AgentResult",
+    "AgentRoot",
+    "AgentSpec",
     "ExtractLoadAgentError",
     "ExtractLoadResult",
     "InvalidRequestError",
     "MaxTurnsExceeded",
     "ModelPricing",
+    "NoAgentMatch",
     "NullObserver",
     "RateLimitExhausted",
     "SnowflakeQueryRunner",
+    "SubagentRegistry",
     "SubmitPlanCapture",
     "TokenUsage",
     "Tool",
@@ -74,6 +98,7 @@ __all__ = [
     "UnexpectedStopReason",
     "build_m1_tools",
     "compute_cost_usd",
+    "load_agent_file",
     "load_extract_load_agent_prompt",
     "load_m1_build_agent_prompt",
     "load_m1_plan_agent_prompt",
@@ -83,4 +108,6 @@ __all__ = [
     "make_submit_plan_tool",
     "make_write_file_tool",
     "run_extract_load_agent",
+    "select_agent",
+    "spec_from_agent_file",
 ]

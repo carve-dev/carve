@@ -25,6 +25,11 @@ from typing import Any
 
 import anthropic
 
+from carve.cli.orchestrator.extensibility_wiring import (
+    build_extensibility_hooks,
+    build_skill_pack_tool,
+    resolve_agent_or_fallback,
+)
 from carve.core.agents import (
     AgentLoop,
     AgentObserver,
@@ -34,6 +39,7 @@ from carve.core.agents import (
     make_read_file_tool,
     make_write_file_tool,
 )
+from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.config import Config, ConfigError
 from carve.core.state import Plan, Repository
 from carve.core.targets.names import (
@@ -176,6 +182,32 @@ def build_plan(
     repository.update_run_status(run_id, "running")
 
     tools = _build_tools(project_dir)
+    # Extensibility (spec 16): expose discovered skill packs at runtime via
+    # the content-injection lookup tool (discovery is inert at load).
+    tools.append(
+        build_skill_pack_tool(project_dir=project_dir, paths=config.paths)
+    )
+
+    # Extensibility (spec 16): route through the classification router; no
+    # classification → None → the M1 build flow is preserved unchanged, but
+    # the seam is live for declarative agents.
+    _routed_agent = resolve_agent_or_fallback(
+        project_dir=project_dir,
+        paths=config.paths,
+        classification=None,
+    )
+    if _routed_agent is not None:
+        logger.debug("Router selected agent %r for build flow.", _routed_agent)
+
+    # Extensibility (spec 16): load carve/hooks.toml clamped to the build
+    # flow's mode. A missing file yields no hooks; hooks fire after the gate
+    # at the loop's pre/post-tool seam.
+    pre_tool_hook, post_tool_hook = build_extensibility_hooks(
+        project_dir=project_dir,
+        paths=config.paths,
+        mode=PermissionMode.BUILD,
+    )
+
     system_prompt = _compose_build_system_prompt(
         config=config,
         project_dir=project_dir,
@@ -193,6 +225,8 @@ def build_plan(
         repository=repository,
         run_id=run_id,
         observer=observer if observer is not None else NullObserver(),
+        pre_tool_hook=pre_tool_hook,
+        post_tool_hook=post_tool_hook,
     )
 
     initial_message = (

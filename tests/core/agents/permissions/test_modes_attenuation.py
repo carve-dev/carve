@@ -119,6 +119,27 @@ class TestNonInteractiveFailClosed:
         assert decision.outcome is Outcome.NEEDS_USER_INPUT
 
 
+class TestReadFloorTools:
+    def test_lookup_skill_pack_permitted_in_read_only(self) -> None:
+        # `lookup_skill_pack` is a read-only content-injection tool (it
+        # reads inert SKILL.md, writes nothing), so it must be in the
+        # read-only floor — permitted from `read_only` up. The orchestrator
+        # constructs agents WITH this tool; absent from the floor, a gated
+        # loop would DENY a permitted, read-only injection.
+        policy = build_policy(PermissionMode.READ_ONLY)
+        assert policy.tool_permitted("lookup_skill_pack")
+        gate = PermissionGate(policy)
+        assert (
+            gate.check("lookup_skill_pack", {"pack_name": "x"}).outcome
+            is Outcome.ALLOW
+        )
+
+    def test_lookup_skill_pack_permitted_in_every_mode(self) -> None:
+        for mode in PermissionMode:
+            policy = build_policy(mode)
+            assert policy.tool_permitted("lookup_skill_pack"), mode
+
+
 class TestConfigTightenOnly:
     def test_config_can_remove_a_tool(self) -> None:
         from carve.core.agents.permissions.policy import PermissionsConfig

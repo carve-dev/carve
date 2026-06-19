@@ -40,6 +40,11 @@ from typing import Any
 
 import anthropic
 
+from carve.cli.orchestrator.extensibility_wiring import (
+    build_extensibility_hooks,
+    build_skill_pack_tool,
+    resolve_agent_or_fallback,
+)
 from carve.core.agents import (
     AgentLoop,
     AgentObserver,
@@ -53,6 +58,7 @@ from carve.core.agents import (
     make_submit_plan_tool,
 )
 from carve.core.agents.loop import TokenUsage
+from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.config import Config, ConfigError
 from carve.core.connectors.exceptions import SnowflakeError
 from carve.core.connectors.snowflake import SnowflakePool
@@ -225,6 +231,33 @@ def generate_plan(
         active_target=active_target,
         snowflake_pool=snowflake_pool,
     )
+    # Extensibility (spec 16): make discovered skill packs loadable at
+    # runtime by adding the content-injection lookup tool to the agent's
+    # tool list. Discovery is inert (no bundled script runs at load).
+    tools.append(
+        build_skill_pack_tool(project_dir=project_dir, paths=config.paths)
+    )
+
+    # Extensibility (spec 16): route through the classification router. With
+    # no classification the router falls back to None — the M1 plan flow is
+    # preserved unchanged — but the seam is live, so a declarative agent
+    # that matches would be selected here before delegating.
+    _routed_agent = resolve_agent_or_fallback(
+        project_dir=project_dir,
+        paths=config.paths,
+        classification=None,
+    )
+    if _routed_agent is not None:
+        logger.debug("Router selected agent %r for plan flow.", _routed_agent)
+
+    # Extensibility (spec 16): load carve/hooks.toml and clamp the hook
+    # runner to the plan flow's mode. A missing file yields no hooks. Hooks
+    # fire at the loop's pre/post-tool seam, after the gate admits a call.
+    pre_tool_hook, post_tool_hook = build_extensibility_hooks(
+        project_dir=project_dir,
+        paths=config.paths,
+        mode=PermissionMode.PLAN,
+    )
 
     # Resolve user-specified destination: CLI flags first, then
     # FQN parsed from the goal text. The combined dict is the
@@ -260,6 +293,8 @@ def generate_plan(
         skills=skills_registry,
         skill_executor=skill_executor,
         skill_context=skill_context,
+        pre_tool_hook=pre_tool_hook,
+        post_tool_hook=post_tool_hook,
     )
     initial_user_message = _compose_initial_user_message(
         goal=goal,

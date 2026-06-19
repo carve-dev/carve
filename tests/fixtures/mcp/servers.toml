@@ -1,0 +1,21 @@
+# Fixture MCP server descriptor for the integration test.
+#
+# One server, two declared tools:
+#   * `search_issues` — effects = ["read"]  → read-only, permitted from read_only
+#   * `create_issue`  — NO effects          → fail-closed to writes=true
+#
+# This is the `mcp.toml` shape `load_mcp_config` parses; the test imports
+# the tools and threads them through `build_policy` → the gate.
+
+[[server]]
+name = "fixture"
+command = "fixture-mcp --stdio"
+
+[[server.tools]]
+name = "search_issues"
+effects = ["read"]
+
+[[server.tools]]
+name = "create_issue"
+# effects intentionally omitted — the fail-closed default classifies this
+# as a writer (writes = true).

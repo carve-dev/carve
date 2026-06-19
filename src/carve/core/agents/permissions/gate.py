@@ -146,7 +146,38 @@ class PermissionGate:
         if tool_name == "bash":
             return self._check_bash(tool_input, approver=approver)
 
+        # Registered MCP writer (or missing-effects fail-closed) tool: it is
+        # only in the permitted set at build/deploy, and there it is
+        # prompt-tier. Below build it was never permitted (denied above), so
+        # reaching here means we are at build/deploy — hold for approval,
+        # fail-closed when non-interactive (mirrors the bash prompt path).
+        if self._policy.mcp_requires_prompt(tool_name):
+            return self._resolve_prompt(tool_name, tool_input, approver=approver)
+
         return Decision.allow()
+
+    def _resolve_prompt(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        approver: Approver | None,
+    ) -> Decision:
+        """Resolve a prompt-tier (non-bash) tool: approver or fail-closed."""
+        reason = (
+            f"MCP tool {tool_name!r} writes (or has incomplete effects) and "
+            "requires approval in this mode."
+        )
+        if approver is None:
+            return Decision.needs_user_input(
+                f"{reason} No interactive approver is registered "
+                "(non-interactive run), so this is held for user approval."
+            )
+        if approver(tool_name, dict(tool_input)):
+            return Decision.allow()
+        return Decision.needs_user_input(
+            f"{reason} The approver declined; held for user input."
+        )
 
     def _check_bash(
         self,
