@@ -109,6 +109,7 @@ class SubagentRunner:
         paths: ProjectPaths,
         client: Any,
         model: str,
+        model_tiers: dict[str, str] | None = None,
         observer: AgentObserver | None = None,
         approver: Approver | None = None,
         max_turns: int = 30,
@@ -119,6 +120,9 @@ class SubagentRunner:
         self._paths = paths
         self._client = client
         self._model = model
+        # Per-agent `model:` may name a tier label from models.toml; resolved
+        # at delegation time (model-auth). Empty -> literal model ids only.
+        self._model_tiers = dict(model_tiers or {})
         self._observer = observer if observer is not None else NullObserver()
         self._approver = approver
         self._max_turns = max_turns
@@ -174,10 +178,18 @@ class SubagentRunner:
         #    parent transcript. Named keys only.
         system_prompt = _compose_subagent_prompt(spec.system_prompt, context)
 
-        # Per-agent model tiering (spec 16): a declarative agent may pin a
-        # `model:`; `None` falls back to the runner's install-default model
-        # (`ModelsConfig.default_model`, threaded in as `self._model`).
-        model = spec.model if spec.model is not None else self._model
+        # Per-agent model tiering (spec 16 + model-auth): a declarative agent
+        # may pin a `model:` that is either a literal model id or a tier label
+        # from `models.toml` (`[models] tiers`). `None` falls back to the
+        # runner's install-default model (`ModelsConfig.default_model`).
+        # Canonical resolution rule mirrors `ModelsConfig.resolve_model`
+        # (None -> default; tier label -> tier model; else literal id). Kept
+        # in sync; when the orchestrator wires delegation it should thread
+        # `model_tiers=config.models.tiers`.
+        if spec.model is None:
+            model = self._model
+        else:
+            model = self._model_tiers.get(spec.model, spec.model)
 
         # Build the child's hooks AT child_mode — never the parent's. The
         # factory rebuilds the HookRunner's bash gate at this clamped mode, so

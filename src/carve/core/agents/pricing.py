@@ -26,7 +26,35 @@ class ModelPricing:
 
 
 # Source: Anthropic public pricing page. Stored in USD per 1M tokens.
+# Cache-write is ~1.25x input (5-minute TTL); cache-read is ~0.1x input.
 PRICING: dict[str, ModelPricing] = {
+    # Current generation (the install-default lives here — see
+    # `ModelsConfig.default_model`).
+    "claude-opus-4-8": ModelPricing(
+        input_per_mtok=5.0,
+        output_per_mtok=25.0,
+        cache_creation_per_mtok=6.25,
+        cache_read_per_mtok=0.50,
+    ),
+    "claude-sonnet-4-6": ModelPricing(
+        input_per_mtok=3.0,
+        output_per_mtok=15.0,
+        cache_creation_per_mtok=3.75,
+        cache_read_per_mtok=0.30,
+    ),
+    "claude-haiku-4-5": ModelPricing(
+        input_per_mtok=1.0,
+        output_per_mtok=5.0,
+        cache_creation_per_mtok=1.25,
+        cache_read_per_mtok=0.10,
+    ),
+    "claude-fable-5": ModelPricing(
+        input_per_mtok=10.0,
+        output_per_mtok=50.0,
+        cache_creation_per_mtok=12.5,
+        cache_read_per_mtok=1.0,
+    ),
+    # Prior generation, still selectable.
     "claude-sonnet-4-5": ModelPricing(
         input_per_mtok=3.0,
         output_per_mtok=15.0,
@@ -38,12 +66,6 @@ PRICING: dict[str, ModelPricing] = {
         output_per_mtok=75.0,
         cache_creation_per_mtok=18.75,
         cache_read_per_mtok=1.50,
-    ),
-    "claude-haiku-4-5": ModelPricing(
-        input_per_mtok=1.0,
-        output_per_mtok=5.0,
-        cache_creation_per_mtok=1.25,
-        cache_read_per_mtok=0.10,
     ),
 }
 

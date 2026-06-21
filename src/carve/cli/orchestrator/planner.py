@@ -38,8 +38,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import anthropic
-
 from carve.cli.orchestrator.extensibility_wiring import (
     build_extensibility_hooks,
     build_skill_pack_tool,
@@ -59,7 +57,7 @@ from carve.core.agents import (
 )
 from carve.core.agents.loop import TokenUsage
 from carve.core.agents.permissions.modes import PermissionMode
-from carve.core.config import Config, ConfigError
+from carve.core.config import Config
 from carve.core.connectors.exceptions import SnowflakeError
 from carve.core.connectors.snowflake import SnowflakePool
 from carve.core.skills import (
@@ -661,22 +659,14 @@ def _build_skills(
 
 
 def _build_client(config: Config, client: Any | None) -> Any:
-    """Return the Anthropic client, building one from config if needed."""
-    if client is not None:
-        return client
-    api_key = config.models.anthropic_api_key
-    if api_key is None:
-        raise ConfigError(
-            "Anthropic API key is required to generate a plan but is unset.",
-            file="carve/models.toml",
-            field="models.anthropic_api_key",
-            hint=(
-                "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
-                "carve/models.toml and set ANTHROPIC_API_KEY in your "
-                "environment (or .env)."
-            ),
-        )
-    return anthropic.Anthropic(api_key=api_key)
+    """Return the Anthropic client, building one from config if needed.
+
+    All credential precedence (API key vs. Claude-subscription OAuth) lives
+    in :func:`carve.core.agents.client_factory.make_client`.
+    """
+    from carve.core.agents.client_factory import make_client
+
+    return make_client(config, client)
 
 
 # ---------------------------------------------------------------------------

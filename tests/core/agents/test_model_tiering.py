@@ -35,6 +35,17 @@ max_mode: read_only
 prompt
 """
 
+_WITH_TIER = """\
+---
+name: tiered
+description: Names a tier label, not a literal model id.
+model: fast
+tools: [read_file]
+max_mode: read_only
+---
+prompt
+"""
+
 
 class _ModelRecordingClient:
     """Records the `model` kwarg of each messages.create call."""
@@ -94,3 +105,25 @@ def test_agent_pinned_model_drives_the_runner(tmp_path: Path) -> None:
 
 def test_absent_model_falls_back_to_install_default(tmp_path: Path) -> None:
     assert _run(tmp_path, _NO_MODEL) == _INSTALL_DEFAULT
+
+
+def test_tier_label_resolves_via_models_tiers(tmp_path: Path) -> None:
+    """A per-agent `model:` may name a tier from models.toml (model-auth)."""
+    from carve.core.config.paths import ProjectPaths
+
+    path = tmp_path / "a.md"
+    path.write_text(_WITH_TIER, encoding="utf-8")
+    spec = spec_from_agent_file(load_agent_file(path))
+    registry = SubagentRegistry()
+    registry.register(spec)
+
+    client = _ModelRecordingClient()
+    runner = SubagentRunner(
+        registry=registry,
+        paths=ProjectPaths.from_root(tmp_path),
+        client=client,
+        model=_INSTALL_DEFAULT,
+        model_tiers={"fast": "claude-haiku-4-5"},
+    )
+    runner.run("tiered", "do it", {}, parent_mode=PermissionMode.READ_ONLY)
+    assert client.models[0] == "claude-haiku-4-5"

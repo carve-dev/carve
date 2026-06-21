@@ -673,20 +673,9 @@ def _resolve_client(config: Any, client: Any | None) -> Any:
     Mirrors the extract-load agent's helper. Tests pass a fake client
     that records calls; production callers leave this alone.
     """
-    if client is not None:
-        return client
-    import anthropic
+    from carve.core.agents.client_factory import make_client
 
-    from carve.core.config import ConfigError
-
-    api_key = config.models.anthropic_api_key
-    if api_key is None:
-        raise ConfigError(
-            "Anthropic API key is required to run the recovery agent.",
-            file="carve/models.toml",
-            field="models.anthropic_api_key",
-        )
-    return anthropic.Anthropic(api_key=api_key)
+    return make_client(config, client)
 
 
 # ---------------------------------------------------------------------------
