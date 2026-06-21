@@ -277,9 +277,24 @@ def test_plan_rejects_invalid_pipeline_name(
 
 
 def test_plan_raises_config_error_when_api_key_missing(
-    project_dir: Path, repository: Repository, postgres_state_store_url: str
+    project_dir: Path,
+    repository: Repository,
+    postgres_state_store_url: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`models.anthropic_api_key=None` surfaces ConfigError pointing at models.toml."""
+    """No credential at all surfaces an actionable ConfigError.
+
+    The unified resolver (`client_factory.make_client`) reports a missing
+    *credential* — an API key or a Claude-subscription OAuth token — anchored
+    at models.toml, rather than the old api-key-only error.
+    """
+    for var in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CARVE_HOSTED",
+    ):
+        monkeypatch.delenv(var, raising=False)
     config = _config(postgres_state_store_url)
     config.models.anthropic_api_key = None
 
@@ -292,7 +307,9 @@ def test_plan_raises_config_error_when_api_key_missing(
         )
 
     err = exc_info.value
-    assert err.field == "models.anthropic_api_key"
+    assert "credential" in err.message.lower()
+    assert str(err.file) == "carve/models.toml"
+    assert err.hint is not None and "ANTHROPIC_API_KEY" in err.hint
 
 
 # ---------------------------------------------------------------- refine path

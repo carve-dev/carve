@@ -23,8 +23,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import anthropic
-
 from carve.cli.orchestrator.extensibility_wiring import (
     build_extensibility_hooks,
     build_skill_pack_tool,
@@ -40,7 +38,7 @@ from carve.core.agents import (
     make_write_file_tool,
 )
 from carve.core.agents.permissions.modes import PermissionMode
-from carve.core.config import Config, ConfigError
+from carve.core.config import Config
 from carve.core.state import Plan, Repository
 from carve.core.targets.names import (
     InvalidArtifactNameError,
@@ -718,21 +716,10 @@ def _build_tools(project_dir: Path) -> list[Tool]:
 
 
 def _build_client(config: Config, client: Any | None) -> Any:
-    if client is not None:
-        return client
-    api_key = config.models.anthropic_api_key
-    if api_key is None:
-        raise ConfigError(
-            "Anthropic API key is required to build a plan but is unset.",
-            file="carve/models.toml",
-            field="models.anthropic_api_key",
-            hint=(
-                "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
-                "carve/models.toml and set ANTHROPIC_API_KEY in your "
-                "environment (or .env)."
-            ),
-        )
-    return anthropic.Anthropic(api_key=api_key)
+    """Return the Anthropic client; credential precedence lives in one place."""
+    from carve.core.agents.client_factory import make_client
+
+    return make_client(config, client)
 
 
 # ---------------------------------------------------------------------------

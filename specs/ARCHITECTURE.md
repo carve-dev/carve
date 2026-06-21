@@ -959,10 +959,10 @@ Plan/build surfaces what will be generated before generation. Deploy surfaces wh
 
 ### 12.4 LLM provider credentials
 
-Carve's agent layer is designed to accept two credential types for Anthropic, picked in this precedence order. **Today only the API-key path (1) is wired**; the OAuth path (2) and the single precedence resolver are designed but unbuilt (see [model-auth](capabilities/model-auth.md)):
+Carve's agent layer accepts two credential types for Anthropic, picked in this precedence order by **one resolver** (`client_factory`; see [model-auth](capabilities/model-auth.md)). It sends exactly one credential — never both (the SDK 400s when an API key and an auth token are both set):
 
-1. **`ANTHROPIC_API_KEY` env var** — a developer-portal API key with pay-per-token billing. Used by most server installs, CI workflows, and shared deployments. *(Shipped — currently constructed directly at each client call site, pending the consolidation below.)*
-2. **OAuth token from a Claude subscription** — obtained via `carve auth login`, which opens a browser flow to Anthropic and returns an OAuth token bound to the user's Claude Pro / Team / Enterprise subscription. Stored locally at `.carve/anthropic_oauth.json` (gitignored, mode 0600). Token refresh is handled automatically by the SDK. This is the path for individual users and small teams who already pay for Claude and don't want a separate Anthropic-API billing relationship. *(Designed but unbuilt — the M1.1-02 follow-up planned this path behind an investigation phase, but it was never implemented; same flow Claude Code itself uses.)*
+1. **`ANTHROPIC_API_KEY` env var** — a developer-portal API key with pay-per-token billing. Used by most server installs, CI workflows, and shared deployments. Client built with `Anthropic(api_key=…)`.
+2. **OAuth token from a Claude subscription** — a subscription OAuth bearer (minted by Claude Code's `claude setup-token` or `ant auth login`) supplied via `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`. Carve builds the client with the SDK-native `auth_token=` path plus the `anthropic-beta: oauth-2025-04-20` header, and owns **no** browser flow or token file of its own — acquisition, storage, and refresh stay with the SDK/CLI. This is the path for individual users and small teams who already pay for Claude and don't want a separate Anthropic-API billing relationship; `carve auth login` is a thin wrapper over `claude setup-token`.
 
 Whichever credential is in use, it stays scoped to the agent process — never logged, never echoed in CLI output, never in webhook payloads, never passed to subprocess executors, never persisted in the state store.
 

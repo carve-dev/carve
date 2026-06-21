@@ -112,17 +112,58 @@ class ConnectionsConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    """Model-provider credentials. Anthropic-only for M1."""
+    """Model-provider configuration: how Carve authenticates to Anthropic
+    and which models it uses (Anthropic-only).
+
+    Credential *precedence* and client construction live in one place —
+    ``carve.core.agents.client_factory.make_client`` — which reads
+    ``auth_mode`` (here) plus the environment. The secret itself never
+    lives in ``models.toml``: the API key / OAuth token come from the
+    environment (``${ANTHROPIC_API_KEY}`` / ``ANTHROPIC_AUTH_TOKEN``). See
+    the model-auth capability spec.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    # Required at *use*-time (commands like `plan` / `build` that talk to the
-    # Anthropic API), not at *load*-time. Keeping it optional lets
-    # `load_config()` succeed against a freshly-initialised project whose
-    # `models.toml` is fully commented; commands that need the key raise a
-    # `ConfigError` themselves when they go to use it.
+    # Credential mode. ``api_key`` uses ``ANTHROPIC_API_KEY``; ``oauth`` uses
+    # a Claude-subscription OAuth bearer (``ANTHROPIC_AUTH_TOKEN`` /
+    # ``CLAUDE_CODE_OAUTH_TOKEN``). ``None`` -> auto-resolve by precedence
+    # (key first, then token). An explicit value forces that one path.
+    auth_mode: str | None = None
+
+    # The API key, when ``auth_mode`` is (or resolves to) ``api_key``.
+    # Required at *use*-time, not *load*-time: keeping it optional lets
+    # ``load_config()`` succeed against a freshly-initialised project whose
+    # ``models.toml`` is fully commented; ``client_factory.make_client``
+    # raises a ``ConfigError`` when a command actually needs a credential.
     anthropic_api_key: str | None = None
-    default_model: str = "claude-sonnet-4-5-20250929"
+
+    # The install-default model id every per-agent ``model:`` falls back to.
+    default_model: str = "claude-opus-4-8"
+
+    # Optional named tiers a per-agent ``model:`` frontmatter may reference
+    # (e.g. ``fast = "claude-haiku-4-5"``). Resolved via ``resolve_model``.
+    tiers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("auth_mode")
+    @classmethod
+    def _valid_auth_mode(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("api_key", "oauth"):
+            raise ValueError(
+                f"auth_mode must be 'api_key' or 'oauth', got {value!r}"
+            )
+        return value
+
+    def resolve_model(self, ref: str | None) -> str:
+        """Resolve a per-agent ``model:`` reference to a concrete model id.
+
+        ``None`` falls back to ``default_model``; a name matching a key in
+        ``tiers`` resolves to that tier's model; anything else is treated as
+        a literal model id and returned unchanged.
+        """
+        if ref is None:
+            return self.default_model
+        return self.tiers.get(ref, ref)
 
 
 class AutoFixConfig(BaseModel):

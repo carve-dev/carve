@@ -85,18 +85,31 @@ MODELS_TOML_CONTENT = """\
 # Anthropic / model configuration. The keys here populate the `models`
 # section of the merged config — write fields at the top level, no header.
 
-# anthropic_api_key = "${ANTHROPIC_API_KEY}"
-# default_model = "claude-sonnet-4-5-20250929"
+# How Carve authenticates to Anthropic. Leave `auth_mode` unset to
+# auto-resolve (API key first, then a Claude-subscription OAuth token), or
+# pin it explicitly:
+#   auth_mode = "api_key"   # uses ANTHROPIC_API_KEY
+#   auth_mode = "oauth"     # uses a Claude-subscription OAuth token
+#                           # (ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN;
+#                           #  mint one with `carve auth login`)
 
-# To use your Claude Code subscription instead of an API key, see M1.1-02
-# (auth_mode = "claude_code_oauth"). Not yet implemented as of this version.
+# anthropic_api_key = "${ANTHROPIC_API_KEY}"
+# default_model = "claude-opus-4-8"
+
+# Optional named model tiers a per-agent `model:` may reference:
+# [tiers]
+# fast = "claude-haiku-4-5"
 """
 
 ENV_EXAMPLE_HEADER = """\
 # Copy this to `.env` and fill in real values. `.env` is gitignored.
 
 # === Project-wide ===
+# Model-provider credential — set ONE of these (not both; the API rejects
+# requests carrying both). A developer-portal API key:
 ANTHROPIC_API_KEY=
+# …or a Claude-subscription OAuth token (mint with `carve auth login`):
+# ANTHROPIC_AUTH_TOKEN=
 # GITHUB_TOKEN=                          # uncomment if using `carve el deploy`
 """
 

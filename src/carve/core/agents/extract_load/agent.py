@@ -561,27 +561,14 @@ def _compose_initial_user_message(
 
 
 def _resolve_client(config: Config, client: Any | None) -> Any:
-    """Return `client` if provided; else build one from `config`."""
-    if client is not None:
-        return client
-    # Local import keeps the module tree shallow when callers pass a client.
-    import anthropic
+    """Return `client` if provided; else build one from `config`.
 
-    from carve.core.config import ConfigError
+    Credential precedence (API key vs. Claude-subscription OAuth) lives in
+    :func:`carve.core.agents.client_factory.make_client`.
+    """
+    from carve.core.agents.client_factory import make_client
 
-    api_key = config.models.anthropic_api_key
-    if api_key is None:
-        raise ConfigError(
-            "Anthropic API key is required to run the extract-load agent.",
-            file="carve/models.toml",
-            field="models.anthropic_api_key",
-            hint=(
-                "Uncomment `anthropic_api_key = \"${ANTHROPIC_API_KEY}\"` in "
-                "carve/models.toml and set ANTHROPIC_API_KEY in your "
-                "environment."
-            ),
-        )
-    return anthropic.Anthropic(api_key=api_key)
+    return make_client(config, client)
 
 
 def _collect_tools_invoked(agent_result: AgentResult) -> list[str]:
