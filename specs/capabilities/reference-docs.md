@@ -76,7 +76,7 @@ A complete, authoritative reference for the `carve` CLI surface. Structure:
 | `carve memory show/edit/append-decision/refresh` | Project memory                | [memory](../capabilities/memory.md) |
 | `carve metrics costs/runs/agents`     | Aggregate metrics                   | [rest-api](../capabilities/rest-api.md) |
 | `carve workspaces list/clear`         | Workspace cache for separate-remote | [layout](../capabilities/layout.md) |
-| `carve auth login`                    | OAuth login to Claude subscription  | M1.1 |
+| `carve auth login`                    | OAuth login to Claude subscription (planned, unbuilt) | [model-auth](../capabilities/model-auth.md) |
 | `carve auth token mint/rotate/revoke` | API token management                | [rest-api](../capabilities/rest-api.md) |
 | `carve docs open/regen/serve`         | Static HTML UI commands             | [ui](../capabilities/ui.md) |
 

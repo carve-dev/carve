@@ -55,7 +55,7 @@ Two operational shapes underlie every use case below:
 - Project repo cloned to laptop with `carve.toml`, `el/`, `pipelines/`, `carve/` already scaffolded (a teammate ran `carve init` previously, or this is the first use case after init)
 - Snowflake `dev` target connection exists in `connections.toml` with `${VAR}` references; corresponding env vars exist in laptop's `.env`
 - Snowflake `dev` is already verified (or this story is preceded by a `carve connect snowflake --target dev` step — see open questions)
-- `ANTHROPIC_API_KEY` is set, or `carve auth login` has produced an OAuth token
+- `ANTHROPIC_API_KEY` is set (the OAuth `carve auth login` alternative is planned, not yet built — see [model-auth](./capabilities/model-auth.md))
 
 ### Walkthrough
 
