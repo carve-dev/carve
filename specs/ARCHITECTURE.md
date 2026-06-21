@@ -959,10 +959,10 @@ Plan/build surfaces what will be generated before generation. Deploy surfaces wh
 
 ### 12.4 LLM provider credentials
 
-Carve's agent layer accepts two credential types for Anthropic, picked in this precedence order:
+Carve's agent layer is designed to accept two credential types for Anthropic, picked in this precedence order. **Today only the API-key path (1) is wired**; the OAuth path (2) and the single precedence resolver are designed but unbuilt (see [model-auth](capabilities/model-auth.md)):
 
-1. **`ANTHROPIC_API_KEY` env var** — a developer-portal API key with pay-per-token billing. Used by most server installs, CI workflows, and shared deployments.
-2. **OAuth token from a Claude subscription** — obtained via `carve auth login`, which opens a browser flow to Anthropic and returns an OAuth token bound to the user's Claude Pro / Team / Enterprise subscription. Stored locally at `.carve/anthropic_oauth.json` (gitignored, mode 0600). Token refresh is handled automatically by the SDK. This is the path for individual users and small teams who already pay for Claude and don't want a separate Anthropic-API billing relationship. (Inherited from the M1.1 `claude-code-oauth` work; same flow Claude Code itself uses.)
+1. **`ANTHROPIC_API_KEY` env var** — a developer-portal API key with pay-per-token billing. Used by most server installs, CI workflows, and shared deployments. *(Shipped — currently constructed directly at each client call site, pending the consolidation below.)*
+2. **OAuth token from a Claude subscription** — obtained via `carve auth login`, which opens a browser flow to Anthropic and returns an OAuth token bound to the user's Claude Pro / Team / Enterprise subscription. Stored locally at `.carve/anthropic_oauth.json` (gitignored, mode 0600). Token refresh is handled automatically by the SDK. This is the path for individual users and small teams who already pay for Claude and don't want a separate Anthropic-API billing relationship. *(Designed but unbuilt — the M1.1-02 follow-up planned this path behind an investigation phase, but it was never implemented; same flow Claude Code itself uses.)*
 
 Whichever credential is in use, it stays scoped to the agent process — never logged, never echoed in CLI output, never in webhook payloads, never passed to subprocess executors, never persisted in the state store.
 
@@ -1032,7 +1032,7 @@ Typical (Claude Sonnet baseline):
 - `carve build` typical: 10K–30K input, 3K–10K output → ~$0.20–$0.75
 - `carve ask` typical: 5K–20K input, 500–2K output → ~$0.05–$0.25
 
-Per project: typically tens of dollars per month. Skill-call caching, result truncation, and pre-scoped context all reduce token use. Users on the OAuth-with-Claude-subscription path (§12.4) pay nothing per-run — costs are absorbed by their existing subscription, subject to its rate limits.
+Per project: typically tens of dollars per month. Skill-call caching, result truncation, and pre-scoped context all reduce token use. Users on the OAuth-with-Claude-subscription path (§12.4) — once that path ships — pay nothing per-run, because costs are absorbed by their existing subscription, subject to its rate limits.
 
 ## 14. Failure modes and recovery
 
