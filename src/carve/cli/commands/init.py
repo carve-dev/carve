@@ -16,7 +16,17 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from carve.cli.commands.packaging import (
+    InvalidPostgresUrlError,
+    bundled_env_block,
+    docker_compose_available,
+    external_env_block,
+    normalize_postgres_url,
+    render_compose,
+)
 from carve.core.config import ServerConfig
 from carve.core.config.schema import (
     Config,
@@ -148,6 +158,14 @@ def command(
         Path("."),
         help="Directory to initialize. Defaults to the current directory.",
     ),
+    external_postgres: str | None = typer.Option(
+        None,
+        "--external-postgres",
+        help=(
+            "Use an existing Postgres (postgresql+psycopg://…) instead of the "
+            "bundled docker-compose Postgres. Skips the compose scaffolding."
+        ),
+    ),
 ) -> None:
     """Create a new Carve project skeleton in `directory`."""
     root = directory.resolve()
@@ -159,6 +177,24 @@ def command(
         raise typer.Exit(code=2)
     root.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the state-store mode up front. external_postgres -> validate the
+    # URL and skip the compose bundle; otherwise the bundled path needs Docker.
+    database_url: str | None = None
+    if external_postgres is not None:
+        try:
+            database_url = normalize_postgres_url(external_postgres)
+        except InvalidPostgresUrlError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+    elif not docker_compose_available():
+        console.print(
+            "[red]Error:[/red] Docker not detected. Either install Docker "
+            "(Docker Desktop / `docker compose`), or re-run with "
+            '`--external-postgres "postgresql+psycopg://…"` pointing at your '
+            "existing Postgres."
+        )
+        raise typer.Exit(code=3)
+
     console.print(f"[bold]Initializing Carve project in[/bold] {root}")
 
     _write_if_missing(root / "carve.toml", _carve_toml_content(root.name))
@@ -166,8 +202,25 @@ def command(
     _write_if_missing(root / "carve" / "models.toml", MODELS_TOML_CONTENT)
     _ensure_dir(root / "carve" / "agents")
     _ensure_dir(root / "el")
-    _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER)
+    state_block = external_env_block() if database_url is not None else bundled_env_block()
+    _write_if_missing(root / ".env.example", ENV_EXAMPLE_HEADER + state_block)
     _write_if_missing(root / ".gitignore", GITIGNORE_CONTENT)
+
+    # Bundled path: drop the Postgres-only docker-compose template (left alone
+    # on re-run if it already exists). External path: no compose; print the
+    # lifecycle boundary + the real DATABASE_URL for the user to paste into
+    # their gitignored .env (never written to the committed .env.example).
+    if database_url is None:
+        _write_if_missing(root / "docker-compose.yml", render_compose(root.name))
+    else:
+        console.print(
+            "[yellow]![/yellow] External Postgres: bundled docker-compose not "
+            "generated. Carve will not manage your Postgres lifecycle "
+            "(backups, upgrades, tuning are yours)."
+        )
+        console.print("  Add this line to your .env (gitignored):")
+        # soft_wrap so the (possibly long) URL stays on one copyable line.
+        console.print(f"    DATABASE_URL={database_url}", markup=False, soft_wrap=True)
 
     # Add the default "dev" target — creates the [snowflake.dev]
     # section in carve/connections.toml and appends the
@@ -184,26 +237,67 @@ def command(
             "already has [snowflake.dev], skipping"
         )
 
-    _initialize_state_store(root)
+    _initialize_state_store(root, database_url=database_url)
 
     console.print("[green]✓[/green] Project initialized.")
     raise typer.Exit(code=0)
 
 
-def _initialize_state_store(project_root: Path) -> None:
-    """Create the Postgres state-store schema for a fresh project.
+def _initialize_state_store(project_root: Path, *, database_url: str | None) -> None:
+    """Bring the state-store schema to head when Postgres is reachable.
 
-    `carve init` runs before `models.toml` exists, so we can't call
-    `load_config()` here. Instead we synthesise a minimal Config that
-    only the state-store helpers will read — they touch
-    `config.server.state_store` and nothing else.
+    `carve init` runs before `models.toml` exists, so we can't `load_config()`
+    here — we synthesise a minimal Config the state-store helpers will read.
+
+    Migration timing differs by path:
+
+    * **External Postgres** (`database_url` set) is already running, so it must
+      be reachable and migratable — a failure is fatal (exit 3). The engine is
+      built from the provided URL **directly** (not via
+      `resolve_state_store_url`) so a stray `DATABASE_URL` env can't override
+      it — even if the external URL happens to equal the dev default. Running
+      the migrations also exercises the connecting user's CREATE TABLE right.
+    * **Bundled Postgres** (`database_url is None`) usually isn't up yet at
+      init time (the compose file was only just rendered). An unreachable
+      database is therefore a next-step, not an error: the schema is brought
+      to head later, once the user runs `docker compose up -d` + `carve serve`.
     """
-    config = Config(
-        project=ProjectConfig(name="bootstrap"),
-        models=ModelsConfig(anthropic_api_key="bootstrap"),
-        server=ServerConfig(),
-    )
-    engine = create_engine_from_config(config, project_dir=project_root)
-    initialize_database(engine)
-    engine.dispose()
+    try:
+        if database_url is not None:
+            engine = create_engine(database_url, future=True, pool_pre_ping=True)
+        else:
+            config = Config(
+                project=ProjectConfig(name="bootstrap"),
+                models=ModelsConfig(anthropic_api_key="bootstrap"),
+                server=ServerConfig(),
+            )
+            engine = create_engine_from_config(config, project_dir=project_root)
+        initialize_database(engine)
+        engine.dispose()
+    except (OperationalError, ProgrammingError) as exc:
+        if database_url is not None:
+            console.print("[red]Error:[/red] couldn't initialize the external Postgres.")
+            console.print(f"  {_first_error_line(exc)}")
+            console.print(
+                "  Check the URL is reachable and the connecting user can "
+                "CREATE TABLE (Carve runs migrations)."
+            )
+            raise typer.Exit(code=3) from exc
+        console.print(
+            "[yellow]![/yellow] Postgres isn't running yet — schema not "
+            "initialized."
+        )
+        console.print(
+            "  Next: `docker compose up -d`, then `carve serve` brings the "
+            "schema to head."
+        )
+        return
     console.print("[green]+[/green] state store schema initialized (postgres)")
+
+
+def _first_error_line(exc: Exception) -> str:
+    """A short, single-line summary of a DB error (no multi-line SQL traceback)."""
+    orig = getattr(exc, "orig", None)
+    text = str(orig) if orig is not None else str(exc)
+    first = text.strip().splitlines()[0] if text.strip() else exc.__class__.__name__
+    return first[:200]

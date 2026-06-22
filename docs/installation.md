@@ -1,8 +1,12 @@
 # Installing Carve
 
-Carve is a Python CLI plus a Postgres-backed state store. v0.1 is
-Postgres-from-day-one (no SQLite fallback — see [spec
-v0.1-01](../specs/v0.1/01-state-store-postgres.md) for rationale).
+Carve is a Python CLI plus a Postgres-backed state store. It is
+Postgres-from-day-one (no SQLite fallback — see the
+[state-store](../specs/capabilities/state-store.md) capability for rationale).
+
+For the full walkthroughs, see
+[first-run with bundled Postgres](./first-run-with-bundled-postgres.md) and
+[first-run with external Postgres](./first-run-with-external-postgres.md).
 
 ## Requirements
 
@@ -50,8 +54,8 @@ $ carve plan "ingest the Stripe charges API"
 Behind the scenes:
 
 - `carve init` writes `carve.toml`, `carve/`, `.env.example`, and
-  `docker-compose.yml` (the bundled-Postgres template — see [spec
-  v0.1-02](../specs/v0.1/02-oss-packaging.md)).
+  `docker-compose.yml` (the bundled-Postgres template — see the
+  [packaging](../specs/capabilities/packaging.md) capability).
 - `docker compose up -d` brings up Postgres at the URL the `.env`
   template expects: `postgresql+psycopg://carve:carve@127.0.0.1:5432/carve`.
 - `carve serve` runs `alembic upgrade head` on the empty Postgres,

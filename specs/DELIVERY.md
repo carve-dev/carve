@@ -38,7 +38,9 @@ Shipped and in `src/` — every increment plans *against* this:
 
 - **Model auth (Increment 1b) — credential precedence + SDK-native OAuth.** Landed 2026-06-21: the single `client_factory.make_client` precedence resolver (explicit `auth_mode` wins and suppresses a stray opposite credential via the SDK header-omit sentinel; else `ANTHROPIC_API_KEY`; else a subscription OAuth bearer built with `auth_token=` + the `anthropic-beta: oauth-2025-04-20` header from `ANTHROPIC_AUTH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN`; else a clear `ConfigError`; auto mode refuses a both-present env), collapsing the four prior `anthropic.Anthropic(api_key=…)` sites; `ModelsConfig` gained `auth_mode` (validated) + `tiers` + `resolve_model`; `default_model` → `claude-opus-4-8` with `pricing.py` updated to the current models; `carve auth status`/`login` (login wraps `claude setup-token`); per-agent model-tier resolution at delegation. Carve owns **no** browser flow or token store. Security reviewer PASS + an adversarial 27-cell precedence-matrix verification PASS (exactly-one-credential at the wire, OAuth always carries the beta header); ruff/mypy --strict/1367 pytest green. Deferred (non-blocking): thread `config.models.tiers` into the live delegation runner when the orchestrator constructs it.
 
-The rest of Increment 1 (packaging) and everything beyond is **designed but unbuilt** (model-auth landed as Increment 1b, above). The full corpus is internally consistent under the control-plane + AI-harness model.
+- **Packaging (Increment 1) — bundled Postgres docker-compose + external-Postgres option.** Landed 2026-06-21: `carve init` renders a Postgres-only `docker-compose.yml` (`postgres:16`, slug-named container/volume so multiple projects don't collide, bound to `127.0.0.1` only, healthcheck) and adds a `DATABASE_URL` block to `.env.example`; `--external-postgres <url>` validates/normalizes the URL, skips the compose bundle, and migrates against the external DB directly (the URL is used as-is so a stray `DATABASE_URL` env can't redirect it). Migration is **graceful**: external is fatal-on-failure, but the bundled path defers with a next-step when Postgres isn't up yet (the real first-run case). Docker-absent + no `--external-postgres` → friendly exit 3. Idempotent (existing `docker-compose.yml`/`.env` left alone). Security note: the external path writes a **commented placeholder** to `.env.example` and prints the real password-bearing URL for the user to paste into the gitignored `.env` — never to a committed file (a leak the adversarial review caught and that's now regression-tested). Helpers in `cli/commands/packaging.py`; 3 docs added. ruff/mypy --strict/1397 pytest green.
+
+**Increment 1 is complete** — layout, harness, extensibility, model-auth (as Increment 1b), and packaging are all shipped. Everything beyond (Increment 2 onward) is **designed but unbuilt**. The full corpus is internally consistent under the control-plane + AI-harness model.
 
 ---
 
@@ -59,7 +61,7 @@ The rest of Increment 1 (packaging) and everything beyond is **designed but unbu
 
 ---
 
-## Increment 1 — Foundation: control-plane layout + the AI harness
+## Increment 1 — Foundation: control-plane layout + the AI harness ✅ *(complete 2026-06-21)*
 
 **Goal.** The structural + AI substrate everything runs on: a control-plane `carve.toml` that references components by name, and the Claude-Code-style harness (subagents, terminal tools, permission gate, verify-by-execution) with declarative extensibility.
 

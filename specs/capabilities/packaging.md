@@ -4,7 +4,7 @@
 
 ## Status
 
-- **Status:** Ready
+- **Status:** Landed (Increment 1)
 - **Depends on:** [state-store](./state-store.md) (the engine has to accept the connection string this spec produces)
 - **Blocks:** [init](./init.md) (init scaffolds the compose file produced here)
 
@@ -97,16 +97,23 @@ Behavior:
 - **Validates** the connection string format (must start with `postgresql+psycopg://` or `postgresql://` — the latter gets a friendly note that we'll add `+psycopg` for clarity)
 - **Connects** to confirm Postgres is reachable and that the user has CREATE TABLE privileges (Carve needs to run Alembic migrations)
 - **Does not** scaffold `docker-compose.yml` (no compose file is written)
-- **Writes** `DATABASE_URL=<provided-string>` to the project's `.env.example` file (never a real `.env` — a password-bearing connection string is a secret, per [spec 05](./init.md)'s "init never writes real secrets" rule), and prints a "copy this line into your `.env`" instruction
+- **Writes a commented placeholder** (`# DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DB`) to `.env.example` — **never the real, password-bearing string** (`.env.example` is conventionally committed to git, and the connection string is a secret, per [init](./init.md)'s "init never writes real secrets" rule) — and **prints** the real `DATABASE_URL` line for the user to paste into their gitignored `.env`
 - **Prints** a note: "External Postgres detected; bundled docker-compose not generated. Carve will not manage your Postgres instance lifecycle — backups, upgrades, and tuning are your responsibility."
 
 If `--external-postgres` is omitted, the bundled path is taken (compose file rendered).
+
+### State-store initialization (migration timing)
+
+`carve init` brings the schema to head (`initialize_database` → `alembic upgrade head`) **when Postgres is reachable**:
+
+- **External** Postgres is already running, so init migrates immediately; an unreachable database, or a connecting user lacking CREATE TABLE, is a hard error (exit 3). The engine is built from the provided URL **directly** (not via `resolve_state_store_url`), so a stray `DATABASE_URL` env can't redirect it.
+- **Bundled** Postgres usually isn't up at init time (the compose file was only just rendered), so init does **not** fail: it prints a next-step ("`docker compose up -d`, then `carve serve`") and the schema is brought to head once Postgres is reachable.
 
 ### Idempotency: re-running `carve init`
 
 If a `docker-compose.yml` already exists in the project root, `carve init` leaves it alone and prints a message: "Found existing docker-compose.yml; not overwriting. Delete it first if you want a fresh template." This protects users who have customized their compose file.
 
-Same for `.env`: if it exists, init never overwrites — only `.env.example` gets refreshed.
+Same for `.env`: init never writes or overwrites it. And if `.env.example` already exists, init leaves it alone too — the state-store block is written only on first scaffold; delete it first for a fresh template.
 
 ### Lifecycle commands
 
@@ -151,7 +158,7 @@ Carve doesn't wrap any of these — they're standard Docker Compose commands. Th
 
 ## Acceptance
 
-- A user who has Docker installed but no Postgres can run, in a fresh project directory, `carve init` → `docker compose up -d` in under 2 minutes total, and `carve init` brings the state-store schema to head against the bundled Postgres. (Bringing up the API/scheduler/worker via `carve serve` is verified in [spec 07](./runtime.md).)
+- A user who has Docker installed but no Postgres can run, in a fresh project directory, `carve init` → `docker compose up -d` in under 2 minutes total; the schema is brought to head once Postgres is up (init defers the migration with a next-step if Postgres isn't running yet, then `carve serve` brings it to head). (Bringing up the API/scheduler/worker via `carve serve` is verified in [runtime](./runtime.md).)
 - A user who has managed Postgres (RDS, Cloud SQL, Supabase, local install) can run `carve init --external-postgres "postgresql+psycopg://..."`, and Carve validates + migrates the schema against it, skipping Docker entirely. (The `carve serve` runtime lands in [spec 07](./runtime.md).)
 - The bundled Postgres is bound to `127.0.0.1` only (verifiable via `ss -tlnp` or `netstat`); never accessible from other machines on the network
 - Multiple Carve projects on the same machine don't collide on container or volume names
