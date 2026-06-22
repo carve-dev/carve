@@ -64,6 +64,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "web_search",
         "todo",
         "run_snowflake_query",
+        "sql",  # dialect-aware SQL tool (write/DDL gated inside the tool)
         "lookup_skill_pack",
         "bash",
         "edit",
@@ -84,6 +85,14 @@ _READ_TOOLS: frozenset[str] = frozenset(
         "web_search",
         "todo",
         "run_snowflake_query",
+        # The dialect-aware `sql` tool spans read + write + DDL under one name.
+        # The name-only gate admits it in every mode (its reads must always be
+        # reachable); write/DDL enforcement lives INSIDE the tool — it is built
+        # with the active PermissionMode closed over and uses `role_for`, which
+        # denies warehouse writes below `deploy` (warehouse_roles). So a
+        # `sql(op=run)` write in read_only is admitted by name but fail-closed
+        # in the executor. (Mirrors how `run_snowflake_query` is read-floored.)
+        "sql",
         # `lookup_skill_pack` injects a curated pack's instructions into the
         # conversation; it reads inert on-disk SKILL.md content (no script
         # runs) and writes nothing, so it belongs in the read-only floor.

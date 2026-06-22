@@ -99,16 +99,30 @@ class SnowflakeConnection(BaseModel):
     schema_: str | None = Field(default=None, alias="schema")
 
 
+class DuckDBConnection(BaseModel):
+    """A DuckDB target — the first-class local-dev + test substrate.
+
+    ``path`` is the database file (``:memory:`` for an ephemeral in-process
+    database). DuckDB needs no credentials, so there's no role/secret surface.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = ":memory:"
+
+
 class ConnectionsConfig(BaseModel):
     """Top-level container for connection definitions.
 
-    For M1 only Snowflake is supported. Sub-keys are user-chosen target
-    names (e.g. ``dev``, ``prod``).
+    Snowflake + DuckDB are first-class; sub-keys are user-chosen target names
+    (e.g. ``dev``, ``prod``). A target's **dialect** is whichever block it
+    appears under.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     snowflake: dict[str, SnowflakeConnection] = Field(default_factory=dict)
+    duckdb: dict[str, DuckDBConnection] = Field(default_factory=dict)
 
 
 class ModelsConfig(BaseModel):
