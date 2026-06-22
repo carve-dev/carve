@@ -134,9 +134,14 @@ def test_deploy_alias_requires_from_and_to(runner: CliRunner) -> None:
     ``tests/cli/commands/el/test_deploy.py``.
     """
     result = runner.invoke(app, ["deploy", "my_pipeline"])
-    # Missing --from / --to → typer exits 2 with a usage message.
+    # Missing --from / --to → typer exits 2 with a usage error. We assert the
+    # contract (exit 2 + a usage message), not the rendered option list:
+    # typer's rich error only prints the options panel at wider terminal
+    # widths, so asserting "--from" is environment-brittle (passes locally,
+    # fails under CI's no-TTY width). The forwarded flags are covered in
+    # tests/cli/commands/el/test_deploy.py.
     assert result.exit_code == 2
-    assert "--from" in result.output
+    assert "Usage" in result.output
 
 
 @pytest.mark.parametrize(
