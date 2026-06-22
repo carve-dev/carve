@@ -414,8 +414,7 @@ def make_submit_plan_tool(capture: SubmitPlanCapture) -> Tool:
         nonlocal called
         if called:
             raise ToolExecutionError(
-                "submit_plan already called; only one design can be "
-                "submitted per planning session."
+                "submit_plan already called; only one design can be submitted per planning session."
             )
         if not isinstance(input_, dict):
             raise ToolExecutionError("submit_plan input must be an object.")

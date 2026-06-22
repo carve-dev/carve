@@ -38,9 +38,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     on ``os.environ`` directly via ``load_dotenv``, so without an explicit
     teardown those values would leak into the rest of the test session.
     """
-    snapshot: dict[str, str | None] = {
-        key: os.environ.get(key) for key in _TOUCHED_KEYS
-    }
+    snapshot: dict[str, str | None] = {key: os.environ.get(key) for key in _TOUCHED_KEYS}
     for key in _TOUCHED_KEYS:
         monkeypatch.delenv(key, raising=False)
     try:
@@ -89,9 +87,7 @@ def test_load_dotenv_override_flag(
     assert os.environ["FOO"] == "file"
 
 
-def test_load_dotenv_handles_quotes_and_comments(
-    tmp_path: Path, clean_env: None
-) -> None:
+def test_load_dotenv_handles_quotes_and_comments(tmp_path: Path, clean_env: None) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n"
@@ -124,13 +120,7 @@ def test_load_dotenv_missing_file_is_noop(tmp_path: Path) -> None:
 
 def test_load_dotenv_skips_malformed_lines(tmp_path: Path, clean_env: None) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "not_a_kv_line\n"
-        "=missing_key\n"
-        "FOO=bar\n"
-        "  also-not-a-kv  \n"
-        "BAR=baz\n"
-    )
+    env_file.write_text("not_a_kv_line\n=missing_key\nFOO=bar\n  also-not-a-kv  \nBAR=baz\n")
 
     set_keys = load_dotenv(env_file)
 
@@ -154,9 +144,7 @@ def test_load_dotenv_handles_backslash_escapes_in_double_quotes(
     assert os.environ["ESCAPED"] == "line1\nline2"
 
 
-def test_load_dotenv_truncated_escape_does_not_crash(
-    tmp_path: Path, clean_env: None
-) -> None:
+def test_load_dotenv_truncated_escape_does_not_crash(tmp_path: Path, clean_env: None) -> None:
     """An unsupported escape like ``\\x`` is kept literal — never raises.
 
     The previous implementation routed double-quoted bodies through
@@ -176,9 +164,7 @@ def test_load_dotenv_truncated_escape_does_not_crash(
     assert os.environ["OTHER"] == "ok"
 
 
-def test_load_dotenv_non_ascii_in_double_quotes_is_literal(
-    tmp_path: Path, clean_env: None
-) -> None:
+def test_load_dotenv_non_ascii_in_double_quotes_is_literal(tmp_path: Path, clean_env: None) -> None:
     """Non-ASCII inside double quotes round-trips as UTF-8, not Latin-1.
 
     The old ``unicode_escape`` path mojibake'd these characters by
@@ -198,9 +184,7 @@ def test_load_dotenv_non_ascii_in_double_quotes_is_literal(
     sys.platform.startswith("win"),
     reason="POSIX chmod semantics — Windows treats 0o000 differently",
 )
-def test_load_dotenv_unreadable_file_returns_empty(
-    tmp_path: Path, clean_env: None
-) -> None:
+def test_load_dotenv_unreadable_file_returns_empty(tmp_path: Path, clean_env: None) -> None:
     """A file that exists but can't be read is silently treated as empty.
 
     The 'missing file is not an error' contract extends to 'unreadable

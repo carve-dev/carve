@@ -89,8 +89,7 @@ def make_web_search_tool(searcher: Searcher | None = None) -> Tool:
             raise ToolExecutionError("`query` must be a non-empty string.")
         if searcher is None:
             raise ToolExecutionError(
-                "web_search is not configured in this runtime; proceed "
-                "without searching."
+                "web_search is not configured in this runtime; proceed without searching."
             )
         try:
             results = searcher(query)

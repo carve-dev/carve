@@ -251,9 +251,9 @@ def test_plan_agent_can_call_catalog_skill(
     ]
 
     # The catalog skill ran against the fake Snowflake.
-    assert any(
-        "information_schema.columns" in sql.lower() for sql, _ in sf.calls
-    ), f"describe_table SQL not seen; calls={sf.calls}"
+    assert any("information_schema.columns" in sql.lower() for sql, _ in sf.calls), (
+        f"describe_table SQL not seen; calls={sf.calls}"
+    )
 
     # The first messages.create call advertised the catalog skills as tools.
     first_call_tools = client.calls[0]["tools"]

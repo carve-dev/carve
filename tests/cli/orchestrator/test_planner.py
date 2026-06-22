@@ -595,14 +595,10 @@ def test_plan_forwards_observer_events(
         def on_tool_call(self, name: str, input: dict[str, Any]) -> None:
             self.events.append(f"tool_call:{name}")
 
-        def on_tool_result(
-            self, name: str, ok: bool, summary: str, duration_ms: int
-        ) -> None:
+        def on_tool_result(self, name: str, ok: bool, summary: str, duration_ms: int) -> None:
             self.events.append(f"tool_result:{name}:{ok}")
 
-        def on_turn_complete(
-            self, turn: int, input_tokens: int, output_tokens: int
-        ) -> None:
+        def on_turn_complete(self, turn: int, input_tokens: int, output_tokens: int) -> None:
             self.events.append(f"turn_complete:{turn}")
 
         def on_done(

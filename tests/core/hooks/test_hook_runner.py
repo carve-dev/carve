@@ -73,9 +73,7 @@ def test_fail_closed_on_timeout_and_resets_in_hook(
     from carve.core.agents.tools.bash_tool import BashResult
 
     def _timed_out(*_args: object, **_kwargs: object) -> BashResult:
-        return BashResult(
-            exit_code=-1, stdout="", truncated=False, timed_out=True
-        )
+        return BashResult(exit_code=-1, stdout="", truncated=False, timed_out=True)
 
     monkeypatch.setattr("carve.core.hooks.runner.run_bash", _timed_out)
     runner = _runner(tmp_path)

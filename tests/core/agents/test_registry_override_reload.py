@@ -30,6 +30,7 @@ def _capture(logger_name: str, level: int) -> list[logging.LogRecord]:
     logger.disabled = False
     return records
 
+
 _BUILTIN = """\
 ---
 name: dlt-engineer
@@ -64,18 +65,13 @@ def test_user_file_overrides_builtin_and_logs(tmp_path: Path) -> None:
     _write(builtin_dir, "dlt-engineer.md", _BUILTIN)
     _write(user_dir, "dlt-engineer.md", _USER_OVERRIDE)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     records = _capture("carve.core.agents.subagent_registry", logging.INFO)
     registry = discovery.build_registry()
 
     spec = registry.resolve("dlt-engineer")
     assert spec.system_prompt == "User override prompt."
-    assert any(
-        "overrides an earlier registration" in rec.getMessage()
-        for rec in records
-    )
+    assert any("overrides an earlier registration" in rec.getMessage() for rec in records)
 
 
 def test_hot_reload_picks_up_change_at_dispatch(tmp_path: Path) -> None:
@@ -85,17 +81,13 @@ def test_hot_reload_picks_up_change_at_dispatch(tmp_path: Path) -> None:
     agent_path = _write(user_dir, "dlt-engineer.md", _USER_OVERRIDE)
     builtin_dir.mkdir(parents=True, exist_ok=True)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
 
     first = discovery.build_registry().resolve("dlt-engineer")
     assert first.system_prompt == "User override prompt."
 
     # Mutate the file + bump its mtime so the cache invalidates.
-    changed = _USER_OVERRIDE.replace(
-        "User override prompt.", "User override prompt v2."
-    )
+    changed = _USER_OVERRIDE.replace("User override prompt.", "User override prompt v2.")
     agent_path.write_text(changed, encoding="utf-8")
     _bump_mtime(agent_path)
 
@@ -112,9 +104,7 @@ def test_unchanged_file_uses_cache(tmp_path: Path) -> None:
     builtin_dir.mkdir(parents=True, exist_ok=True)
     _write(user_dir, "dlt-engineer.md", _USER_OVERRIDE)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     first = discovery.build_registry().resolve("dlt-engineer")
     # Second build with no file change reads from the cache and is identical.
     second = discovery.build_registry().resolve("dlt-engineer")
@@ -137,9 +127,7 @@ def test_duplicate_name_within_a_root_raises_through_build_registry(
     _write(user_dir, "a.md", _USER_OVERRIDE)
     _write(user_dir, "b.md", _USER_OVERRIDE)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     with pytest.raises(ValueError, match="Duplicate agent name"):
         discovery.build_registry()
 
@@ -165,9 +153,7 @@ def test_malformed_file_is_skipped_and_logged_not_fatal(tmp_path: Path) -> None:
     _write(user_dir, "good.md", _USER_OVERRIDE)  # name: dlt-engineer
     _write(user_dir, "broken.md", _MALFORMED)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     records = _capture("carve.core.agents.discovery", logging.WARNING)
     registry = discovery.build_registry()
 
@@ -176,8 +162,7 @@ def test_malformed_file_is_skipped_and_logged_not_fatal(tmp_path: Path) -> None:
     assert "broken" not in registry
     # The skip was logged (not silent).
     assert any(
-        "Skipping agent file" in rec.getMessage()
-        and "broken.md" in rec.getMessage()
+        "Skipping agent file" in rec.getMessage() and "broken.md" in rec.getMessage()
         for rec in records
     )
 
@@ -204,9 +189,7 @@ def test_builtin_readme_is_skipped_quietly(tmp_path: Path) -> None:
     _write(builtin_dir, "dlt-engineer.md", _BUILTIN)
     user_dir.mkdir(parents=True, exist_ok=True)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     records = _capture("carve.core.agents.discovery", logging.WARNING)
     registry = discovery.build_registry()
 
@@ -214,9 +197,7 @@ def test_builtin_readme_is_skipped_quietly(tmp_path: Path) -> None:
     assert "dlt-engineer" in registry
     assert registry.names() == ["dlt-engineer"]
     # And it was quiet — no "Skipping agent file" warning for the README.
-    assert not any(
-        "README.md" in rec.getMessage() for rec in records
-    )
+    assert not any("README.md" in rec.getMessage() for rec in records)
 
 
 def test_user_non_frontmatter_file_is_still_logged(tmp_path: Path) -> None:
@@ -230,16 +211,13 @@ def test_user_non_frontmatter_file_is_still_logged(tmp_path: Path) -> None:
     builtin_dir.mkdir(parents=True, exist_ok=True)
     _write(user_dir, "notes.md", _README)  # no frontmatter fence
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     records = _capture("carve.core.agents.discovery", logging.WARNING)
     registry = discovery.build_registry()
 
     assert registry.names() == []
     assert any(
-        "Skipping agent file" in rec.getMessage()
-        and "notes.md" in rec.getMessage()
+        "Skipping agent file" in rec.getMessage() and "notes.md" in rec.getMessage()
         for rec in records
     )
 
@@ -260,9 +238,7 @@ def test_out_of_tree_symlink_is_skipped_and_logged(tmp_path: Path) -> None:
     secret = _write(tmp_path / "outside", "secret.md", _USER_OVERRIDE)
     (user_dir / "evil.md").symlink_to(secret)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     records = _capture("carve.core.agents.discovery", logging.WARNING)
     registry = discovery.build_registry()
 
@@ -270,10 +246,7 @@ def test_out_of_tree_symlink_is_skipped_and_logged(tmp_path: Path) -> None:
     assert registry.names() == []
     assert "dlt-engineer" not in registry
     # The skip was logged with a containment reason (not silent).
-    assert any(
-        "evil.md" in rec.getMessage() and "outside" in rec.getMessage()
-        for rec in records
-    )
+    assert any("evil.md" in rec.getMessage() and "outside" in rec.getMessage() for rec in records)
 
 
 def test_in_tree_symlink_is_allowed(tmp_path: Path) -> None:
@@ -290,9 +263,7 @@ def test_in_tree_symlink_is_allowed(tmp_path: Path) -> None:
     real = _write(user_dir / "shared", "real.md", _USER_OVERRIDE)
     (user_dir / "agent.md").symlink_to(real)
 
-    discovery = AgentDiscovery.for_project(
-        agents_dir=user_dir, builtin_dir=builtin_dir
-    )
+    discovery = AgentDiscovery.for_project(agents_dir=user_dir, builtin_dir=builtin_dir)
     registry = discovery.build_registry()
 
     assert "dlt-engineer" in registry

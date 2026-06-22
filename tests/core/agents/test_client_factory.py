@@ -230,9 +230,7 @@ def test_hosted_auto_with_only_oauth_errors(
         client_factory.make_client(_cfg())
 
 
-def test_hosted_still_allows_api_key(
-    monkeypatch: pytest.MonkeyPatch, recorder: _Recorder
-) -> None:
+def test_hosted_still_allows_api_key(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> None:
     monkeypatch.setenv("CARVE_HOSTED", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
     client_factory.make_client(_cfg())

@@ -69,10 +69,7 @@ def compact_messages(
     summary_text = summarizer(head)
     summary_message: dict[str, Any] = {
         "role": "user",
-        "content": (
-            "[Earlier conversation summarized to stay within context]\n"
-            f"{summary_text}"
-        ),
+        "content": (f"[Earlier conversation summarized to stay within context]\n{summary_text}"),
     }
     return [summary_message, *tail]
 

@@ -41,9 +41,7 @@ def test_rich_console_observer_prints_tool_calls() -> None:
         "run_snowflake_query",
         {"sql": "SHOW SCHEMAS", "limit": 100},
     )
-    obs.on_tool_result(
-        "run_snowflake_query", ok=True, summary="14 rows", duration_ms=320
-    )
+    obs.on_tool_result("run_snowflake_query", ok=True, summary="14 rows", duration_ms=320)
     obs.on_turn_complete(1, input_tokens=100, output_tokens=20)
     obs.on_done(
         total_turns=1,
@@ -141,9 +139,7 @@ def test_rich_console_observer_renders_failure() -> None:
 
     obs.on_turn_start(1)
     obs.on_tool_call("read_file", {"path": "missing.toml"})
-    obs.on_tool_result(
-        "read_file", ok=False, summary="File not found: missing.toml", duration_ms=3
-    )
+    obs.on_tool_result("read_file", ok=False, summary="File not found: missing.toml", duration_ms=3)
 
     output = console.export_text()
     assert "✗" in output

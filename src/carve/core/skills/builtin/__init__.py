@@ -47,4 +47,3 @@ def _register_all() -> None:
 
 
 _register_all()
-

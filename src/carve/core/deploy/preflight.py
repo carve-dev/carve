@@ -110,16 +110,10 @@ def run_preflight(
     try:
         expected = _expected_destinations_from_design(plan_design)
     except InvalidSnowflakeIdentifierError as exc:
-        result.drift.append(
-            PreflightDrift(kind="invalid_identifier", detail=str(exc))
-        )
+        result.drift.append(PreflightDrift(kind="invalid_identifier", detail=str(exc)))
         return result
-    result.expected_destinations = [
-        (d, s, t) for (d, s, t, _cols) in expected
-    ]
-    result.expected_columns = {
-        (d, s, t): list(cols) for (d, s, t, cols) in expected
-    }
+    result.expected_destinations = [(d, s, t) for (d, s, t, _cols) in expected]
+    result.expected_columns = {(d, s, t): list(cols) for (d, s, t, cols) in expected}
 
     # 3. Per-destination column comparison. Tables that don't exist
     # yet are fine (DDL will create them); existing tables with a
@@ -136,10 +130,7 @@ def run_preflight(
             result.drift.append(
                 PreflightDrift(
                     kind="lookup_failed",
-                    detail=(
-                        f"could not query columns for "
-                        f"{database}.{schema}.{table}: {exc}"
-                    ),
+                    detail=(f"could not query columns for {database}.{schema}.{table}: {exc}"),
                 )
             )
             continue
@@ -175,9 +166,7 @@ def run_preflight(
             )
             return result
         try:
-            rows = deploy_connection.query(
-                f"SHOW ROLES LIKE '{runtime_role}'"
-            )
+            rows = deploy_connection.query(f"SHOW ROLES LIKE '{runtime_role}'")
         except Exception as exc:
             result.drift.append(
                 PreflightDrift(
@@ -410,9 +399,9 @@ def _strip_type_params(type_str: str) -> str:
     return type_str[:paren].strip() if paren > 0 else type_str.strip()
 
 
-
 # `expected_destinations_from_build` — small helper exported for the
 # verifier so it can avoid duplicating manifest-reading logic.
+
 
 def expected_destinations_from_build(
     build: Build,

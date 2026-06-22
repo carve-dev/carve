@@ -58,9 +58,7 @@ def _plant_ddl(project_dir: Path, target: str, name: str) -> Path:
 
 def _git_init_clean(project_dir: Path) -> None:
     """Initialize a git repo with all files committed."""
-    subprocess.run(
-        ["git", "init", "-q"], cwd=project_dir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q"], cwd=project_dir, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
         cwd=project_dir,
@@ -79,9 +77,7 @@ def _git_init_clean(project_dir: Path) -> None:
         check=True,
         capture_output=True,
     )
-    subprocess.run(
-        ["git", "add", "-A"], cwd=project_dir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=project_dir, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "initial"],
         cwd=project_dir,
@@ -151,9 +147,7 @@ def test_copy_artifact_refuses_uncommitted_destination(tmp_path: Path) -> None:
 
     # Modify the destination's main.py (== source under flat layout)
     # so git status flags it.
-    (tmp_path / "el" / "iowa" / "main.py").write_text(
-        "print('user edits')\n"
-    )
+    (tmp_path / "el" / "iowa" / "main.py").write_text("print('user edits')\n")
 
     with pytest.raises(UncommittedChangesError) as excinfo:
         copy_artifact(
@@ -180,10 +174,7 @@ def test_copy_artifact_clean_destination_proceeds(tmp_path: Path) -> None:
         source_target="dev",
         dest_target="prod",
     )
-    assert (
-        (tmp_path / "el" / "iowa" / "main.py").read_text()
-        == "print('hello')\n"
-    )
+    assert (tmp_path / "el" / "iowa" / "main.py").read_text() == "print('hello')\n"
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +213,7 @@ def test_copy_ddl_file_refuses_uncommitted(tmp_path: Path) -> None:
     _git_init_clean(tmp_path)
     # Under the flat layout, source == dest. Modifying the file after
     # commit makes the destination dirty.
-    (tmp_path / "el" / "iowa" / "snowflake.sql").write_text(
-        "-- modified after commit\n"
-    )
+    (tmp_path / "el" / "iowa" / "snowflake.sql").write_text("-- modified after commit\n")
     with pytest.raises(UncommittedChangesError):
         copy_ddl_file(
             project_dir=tmp_path,
@@ -308,9 +297,7 @@ def test_git_guard_repo_with_git_failure_raises(
     # Stub subprocess.run to simulate git breaking.
     from typing import Any
 
-    def _fake_run(
-        *args: Any, **kwargs: Any
-    ) -> subprocess.CompletedProcess[str]:
+    def _fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         cmd = args[0] if args else []
         return subprocess.CompletedProcess(
             args=cmd,

@@ -34,6 +34,7 @@ def _capture(logger_name: str, level: int) -> list[logging.LogRecord]:
     logger.disabled = False
     return records
 
+
 # `edit` is a write tool (needs `build`); pinned at `read_only` it can never
 # fire — a genuinely-unreachable grant.
 _UNREACHABLE = """\

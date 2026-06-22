@@ -195,10 +195,7 @@ def _resolve(config: Config) -> _Decision:
         ConfigError(
             "No Anthropic credential found.",
             file="carve/models.toml",
-            hint=(
-                "Set ANTHROPIC_API_KEY, or run `carve auth login` to use a Claude "
-                "subscription."
-            ),
+            hint=("Set ANTHROPIC_API_KEY, or run `carve auth login` to use a Claude subscription."),
         ),
     )
 

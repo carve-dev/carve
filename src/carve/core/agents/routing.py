@@ -62,24 +62,16 @@ def select_agent(
         if override in registry:
             return override
         raise NoAgentMatch(
-            f"Requested agent {override!r} is not registered. "
-            f"Known agents: {registry.names()}."
+            f"Requested agent {override!r} is not registered. Known agents: {registry.names()}."
         )
 
     if classification is None:
-        raise ValueError(
-            "select_agent needs a classification or an override name."
-        )
+        raise ValueError("select_agent needs a classification or an override name.")
 
-    matches = [
-        spec.name
-        for spec in registry.specs()
-        if classification in spec.classifications
-    ]
+    matches = [spec.name for spec in registry.specs() if classification in spec.classifications]
     if not matches:
         raise NoAgentMatch(
-            f"No agent handles classification {classification!r}. "
-            f"Known agents: {registry.names()}."
+            f"No agent handles classification {classification!r}. Known agents: {registry.names()}."
         )
     # `specs()` is already name-sorted, so `matches[0]` is the
     # lowest-named agent — a deterministic, legible tie-break.

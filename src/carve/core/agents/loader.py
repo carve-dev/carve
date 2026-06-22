@@ -179,8 +179,7 @@ def _read_bounded(path: Path, *, max_bytes: int) -> str:
         raise AgentLoadError(f"Cannot stat file {path}: {exc}") from exc
     if size > max_bytes:
         raise AgentLoadError(
-            f"File {path} is {size} bytes, over the "
-            f"{max_bytes}-byte limit; refusing to load."
+            f"File {path} is {size} bytes, over the {max_bytes}-byte limit; refusing to load."
         )
     try:
         return path.read_text(encoding="utf-8")
@@ -199,9 +198,7 @@ def _split_frontmatter(text: str, path: Path) -> tuple[dict[str, Any], str]:
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != _FENCE:
-        raise AgentLoadError(
-            f"File {path} must begin with a '---' frontmatter fence."
-        )
+        raise AgentLoadError(f"File {path} must begin with a '---' frontmatter fence.")
     closing: int | None = None
     for index in range(1, len(lines)):
         if lines[index].strip() == _FENCE:
@@ -209,8 +206,7 @@ def _split_frontmatter(text: str, path: Path) -> tuple[dict[str, Any], str]:
             break
     if closing is None:
         raise AgentLoadError(
-            f"File {path} has an unterminated frontmatter block "
-            "(no closing '---')."
+            f"File {path} has an unterminated frontmatter block (no closing '---')."
         )
 
     raw_frontmatter = "\n".join(lines[1:closing])
@@ -221,23 +217,18 @@ def _split_frontmatter(text: str, path: Path) -> tuple[dict[str, Any], str]:
         # any other construction directive raises — no object is built.
         parsed = yaml.safe_load(raw_frontmatter)
     except yaml.YAMLError as exc:
-        raise AgentLoadError(
-            f"File {path} has malformed YAML frontmatter: {exc}"
-        ) from exc
+        raise AgentLoadError(f"File {path} has malformed YAML frontmatter: {exc}") from exc
 
     if parsed is None:
         parsed = {}
     if not isinstance(parsed, dict):
         raise AgentLoadError(
-            f"File {path} frontmatter must be a mapping, "
-            f"got {type(parsed).__name__}."
+            f"File {path} frontmatter must be a mapping, got {type(parsed).__name__}."
         )
     return parsed, body
 
 
-def _build_agent_file(
-    frontmatter: dict[str, Any], body: str, path: Path
-) -> AgentFile:
+def _build_agent_file(frontmatter: dict[str, Any], body: str, path: Path) -> AgentFile:
     """Validate frontmatter fields and assemble the :class:`AgentFile`."""
     for key in frontmatter:
         if key not in _KNOWN_KEYS:
@@ -272,39 +263,29 @@ def _require_str(frontmatter: dict[str, Any], key: str, path: Path) -> str:
     value = frontmatter.get(key)
     if not isinstance(value, str) or not value.strip():
         raise AgentLoadError(
-            f"Agent file {path}: '{key}' is required and must be a "
-            "non-empty string."
+            f"Agent file {path}: '{key}' is required and must be a non-empty string."
         )
     return value.strip()
 
 
-def _optional_str(
-    frontmatter: dict[str, Any], key: str, path: Path
-) -> str | None:
+def _optional_str(frontmatter: dict[str, Any], key: str, path: Path) -> str | None:
     if key not in frontmatter or frontmatter[key] is None:
         return None
     value = frontmatter[key]
     if not isinstance(value, str) or not value.strip():
         raise AgentLoadError(
-            f"Agent file {path}: '{key}', when present, must be a "
-            "non-empty string."
+            f"Agent file {path}: '{key}', when present, must be a non-empty string."
         )
     return value.strip()
 
 
-def _str_list(
-    frontmatter: dict[str, Any], key: str, path: Path
-) -> tuple[str, ...]:
+def _str_list(frontmatter: dict[str, Any], key: str, path: Path) -> tuple[str, ...]:
     """Coerce a frontmatter value to a tuple of strings (empty if absent)."""
     if key not in frontmatter or frontmatter[key] is None:
         return ()
     value = frontmatter[key]
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) for item in value
-    ):
-        raise AgentLoadError(
-            f"Agent file {path}: '{key}' must be a list of strings."
-        )
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise AgentLoadError(f"Agent file {path}: '{key}' must be a list of strings.")
     return tuple(item.strip() for item in value)
 
 

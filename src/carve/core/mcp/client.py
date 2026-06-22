@@ -98,9 +98,7 @@ def import_server_tools(server: McpServer) -> list[ImportedMcpTool]:
     imported: list[ImportedMcpTool] = []
     for decl in server.tools:
         if decl.name in seen:
-            raise McpImportError(
-                f"Server {server.name!r} declares tool {decl.name!r} twice."
-            )
+            raise McpImportError(f"Server {server.name!r} declares tool {decl.name!r} twice.")
         seen.add(decl.name)
         imported.append(_import_tool(server.name, decl))
     return imported

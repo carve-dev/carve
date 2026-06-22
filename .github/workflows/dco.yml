@@ -9,5 +9,29 @@ jobs:
     name: DCO sign-off check
     runs-on: ubuntu-latest
     steps:
-      - name: Check commits for DCO sign-off
-        uses: tim-actions/dco@2fd0504dc0d27b33f542867c300c60840c6dcb20
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check every commit has a Signed-off-by trailer
+        # Inline check — the previous third-party action (tim-actions/dco)
+        # errored with "Unexpected end of JSON input" regardless of sign-off
+        # (see #6). Skips merge commits (GitHub creates those unsigned).
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for commit in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            if ! git show -s --format=%B "$commit" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::Commit $commit is missing a 'Signed-off-by' trailer."
+              git show -s --format='  %h %s' "$commit"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "All commits must be signed off — commit with 'git commit -s'"
+            echo "(or amend existing commits with 'git rebase --signoff <base>')."
+            exit 1
+          fi
+          echo "All commits have a DCO sign-off."

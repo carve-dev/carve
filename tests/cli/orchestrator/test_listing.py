@@ -123,13 +123,9 @@ def test_recovery_tree_renders_chain(repository: Repository) -> None:
     """Parent + two recovery children render as a tree."""
     parent_id = repository.create_run(kind="run", target_id="iowa")
     repository.update_run_status(parent_id, "failed", error="boom-1")
-    child1 = repository.create_run(
-        kind="run", target_id="iowa", parent_run_id=parent_id
-    )
+    child1 = repository.create_run(kind="run", target_id="iowa", parent_run_id=parent_id)
     repository.update_run_status(child1, "failed", error="boom-2")
-    child2 = repository.create_run(
-        kind="run", target_id="iowa", parent_run_id=child1
-    )
+    child2 = repository.create_run(kind="run", target_id="iowa", parent_run_id=child1)
     repository.update_run_status(child2, "success")
 
     renderable, exit_code = render_recovery_tree(repository, parent_id)
@@ -176,9 +172,7 @@ def test_recovery_tree_handles_cycle_in_parent_chain(
     """
     parent_id = repository.create_run(kind="run", target_id="iowa")
     repository.update_run_status(parent_id, "failed", error="boom")
-    child_id = repository.create_run(
-        kind="run", target_id="iowa", parent_run_id=parent_id
-    )
+    child_id = repository.create_run(kind="run", target_id="iowa", parent_run_id=parent_id)
     repository.update_run_status(child_id, "failed", error="boom-2")
 
     parent_run = repository.get_run(parent_id)

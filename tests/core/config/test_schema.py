@@ -207,9 +207,7 @@ class TestStateStoreConfig:
         assert cfg.max_overflow == 20
 
     def test_override_url(self) -> None:
-        cfg = StateStoreConfig(
-            url="postgresql+psycopg://u:p@db.example.com:5432/carve"
-        )
+        cfg = StateStoreConfig(url="postgresql+psycopg://u:p@db.example.com:5432/carve")
         assert cfg.url == "postgresql+psycopg://u:p@db.example.com:5432/carve"
 
     def test_extra_fields_forbidden(self) -> None:

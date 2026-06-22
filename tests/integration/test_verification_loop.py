@@ -90,9 +90,7 @@ class TestBoundedSelfCorrection:
 
         last = CheckResult(passed=False, summary="not run")
         for _iteration in range(1, 5):
-            last = run_check(
-                state["cmd"], parse=_parse_status_json, bash_tool=bash_tool
-            )
+            last = run_check(state["cmd"], parse=_parse_status_json, bash_tool=bash_tool)
             if last.passed:
                 break
             if not fix(last):

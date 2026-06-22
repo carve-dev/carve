@@ -49,8 +49,7 @@ class PythonStepConfig(StepConfig):
         for entry in value:
             if entry.startswith("-"):
                 raise ValueError(
-                    f"requirements entries must be package specs, "
-                    f"not flags; got {entry!r}"
+                    f"requirements entries must be package specs, not flags; got {entry!r}"
                 )
         return value
 

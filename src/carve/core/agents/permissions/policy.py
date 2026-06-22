@@ -522,9 +522,7 @@ def _permitted_tools_for_mode(mode: PermissionMode) -> frozenset[str]:
         return _READ_TOOLS
     if mode is PermissionMode.BUILD:
         # build adds the write/edit tools (warehouse DDL stays deploy-only)
-        return _READ_TOOLS | frozenset(
-            {"edit", "create_file", "write_file"}
-        )
+        return _READ_TOOLS | frozenset({"edit", "create_file", "write_file"})
     # deploy: everything, including warehouse DDL.
     return _ALL_TOOLS
 
@@ -611,9 +609,7 @@ class EffectivePolicy:
         return tool_name in self.mcp_prompt_tools
 
 
-def _grant_admits(
-    mcp_names: frozenset[str], grant: frozenset[str]
-) -> frozenset[str]:
+def _grant_admits(mcp_names: frozenset[str], grant: frozenset[str]) -> frozenset[str]:
     """Filter classified MCP names to those the agent's ``grant`` admits.
 
     A grant entry admits an ``mcp:<server>:<tool>`` name when either:
@@ -637,9 +633,7 @@ def _grant_admits(
     wildcard_prefixes = {
         entry[: -len("*")]  # drop the trailing `*`, keep `mcp:<server>:`
         for entry in grant
-        if entry.startswith(MCP_TOOL_PREFIX)
-        and entry.endswith(":*")
-        and entry.count(":") == 2
+        if entry.startswith(MCP_TOOL_PREFIX) and entry.endswith(":*") and entry.count(":") == 2
     }
     admitted: set[str] = set()
     for name in mcp_names:

@@ -28,9 +28,7 @@ class TestLattice:
         assert min_mode(PermissionMode.READ_ONLY, PermissionMode.BUILD) is (
             PermissionMode.READ_ONLY
         )
-        assert min_mode(PermissionMode.DEPLOY, PermissionMode.BUILD) is (
-            PermissionMode.BUILD
-        )
+        assert min_mode(PermissionMode.DEPLOY, PermissionMode.BUILD) is (PermissionMode.BUILD)
 
 
 class TestReadOnlyBlocksWrites:
@@ -52,9 +50,7 @@ class TestReadOnlyBlocksWrites:
 
     def test_edit_allowed_in_build(self) -> None:
         gate = PermissionGate(build_policy(PermissionMode.BUILD))
-        decision = gate.check(
-            "edit", {"path": "x.py", "old_string": "a", "new_string": "b"}
-        )
+        decision = gate.check("edit", {"path": "x.py", "old_string": "a", "new_string": "b"})
         assert decision.outcome is Outcome.ALLOW
 
     def test_warehouse_ddl_allowed_at_deploy(self) -> None:
@@ -74,9 +70,10 @@ class TestGrantAttenuation:
         policy = build_policy(PermissionMode.READ_ONLY, agent=agent)
         assert not policy.tool_permitted("edit")
         gate = PermissionGate(policy)
-        assert gate.check(
-            "edit", {"path": "x", "old_string": "a", "new_string": "b"}
-        ).outcome is Outcome.DENY
+        assert (
+            gate.check("edit", {"path": "x", "old_string": "a", "new_string": "b"}).outcome
+            is Outcome.DENY
+        )
 
     def test_bash_grant_runs_intersected_with_mode(self) -> None:
         # bash IS granted and IS permitted in read_only, but only read
@@ -129,10 +126,7 @@ class TestReadFloorTools:
         policy = build_policy(PermissionMode.READ_ONLY)
         assert policy.tool_permitted("lookup_skill_pack")
         gate = PermissionGate(policy)
-        assert (
-            gate.check("lookup_skill_pack", {"pack_name": "x"}).outcome
-            is Outcome.ALLOW
-        )
+        assert gate.check("lookup_skill_pack", {"pack_name": "x"}).outcome is Outcome.ALLOW
 
     def test_lookup_skill_pack_permitted_in_every_mode(self) -> None:
         for mode in PermissionMode:

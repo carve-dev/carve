@@ -75,9 +75,7 @@ def project_slug(project_name: str) -> str:
 
 def render_compose(project_name: str) -> str:
     """Render the bundled Postgres ``docker-compose.yml`` for ``project_name``."""
-    return _COMPOSE_TEMPLATE.format(
-        image=POSTGRES_IMAGE, slug=project_slug(project_name)
-    )
+    return _COMPOSE_TEMPLATE.format(image=POSTGRES_IMAGE, slug=project_slug(project_name))
 
 
 def normalize_postgres_url(url: str) -> str:
@@ -94,8 +92,7 @@ def normalize_postgres_url(url: str) -> str:
         return "postgresql+psycopg://" + url[len("postgresql://") :]
     shown = url[:24] + "…" if len(url) > 24 else url
     raise InvalidPostgresUrlError(
-        "Connection string must start with postgresql+psycopg:// or "
-        f"postgresql:// (got {shown!r})."
+        f"Connection string must start with postgresql+psycopg:// or postgresql:// (got {shown!r})."
     )
 
 

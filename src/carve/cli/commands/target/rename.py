@@ -53,14 +53,10 @@ def command(
 
     existing = list_target_sections(conn_path)
     if old not in existing:
-        console.print(
-            f'[red]Error:[/red] target "{old}" not defined in {conn_path}.'
-        )
+        console.print(f'[red]Error:[/red] target "{old}" not defined in {conn_path}.')
         raise typer.Exit(code=2)
     if new in existing:
-        console.print(
-            f'[red]Error:[/red] target "{new}" already exists in {conn_path}.'
-        )
+        console.print(f'[red]Error:[/red] target "{new}" already exists in {conn_path}.')
         raise typer.Exit(code=2)
 
     # 1) Rename the section in connections.toml.

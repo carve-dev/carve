@@ -30,9 +30,7 @@ from carve.core.mcp.client import (
 )
 from carve.core.mcp.config import load_mcp_config
 
-_FIXTURE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "mcp" / "servers.toml"
-)
+_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "mcp" / "servers.toml"
 
 _READ_TOOL = "mcp:fixture:search_issues"  # effects = ["read"] → read-only
 _WRITE_TOOL = "mcp:fixture:create_issue"  # no effects → fail-closed writer
@@ -81,9 +79,7 @@ def test_missing_effects_tool_prompted_in_build_and_deploy() -> None:
 
 
 def test_missing_effects_tool_allowed_with_approver_at_build() -> None:
-    decision = _gate(PermissionMode.BUILD).check(
-        _WRITE_TOOL, {}, approver=lambda _n, _i: True
-    )
+    decision = _gate(PermissionMode.BUILD).check(_WRITE_TOOL, {}, approver=lambda _n, _i: True)
     assert decision.outcome is Outcome.ALLOW
 
 
@@ -166,9 +162,7 @@ def test_agent_grant_narrows_mcp_tools() -> None:
         tools=frozenset({_READ_TOOL, "read_file"}),
         capability=PermissionMode.DEPLOY,
     )
-    policy = build_policy(
-        PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs()
-    )
+    policy = build_policy(PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs())
     gate = PermissionGate(policy)
     assert gate.check(_READ_TOOL, {}).outcome is Outcome.ALLOW
     # Not granted → not permitted, even at deploy.
@@ -187,9 +181,7 @@ def test_mcp_tool_spec_rejects_non_mcp_prefixed_name() -> None:
     with pytest.raises(ValueError, match="must start with 'mcp:'"):
         McpToolSpec(name="read_file", writes=False)
     # A legitimately-namespaced name is accepted.
-    assert McpToolSpec(name="mcp:jira:search", writes=False).name == (
-        "mcp:jira:search"
-    )
+    assert McpToolSpec(name="mcp:jira:search", writes=False).name == ("mcp:jira:search")
 
 
 def test_wildcard_grant_admits_a_servers_imported_tools() -> None:
@@ -202,9 +194,7 @@ def test_wildcard_grant_admits_a_servers_imported_tools() -> None:
         tools=frozenset({"mcp:fixture:*", "read_file"}),
         capability=PermissionMode.DEPLOY,
     )
-    policy = build_policy(
-        PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs()
-    )
+    policy = build_policy(PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs())
     assert _READ_TOOL in policy.permitted_tools
     assert _WRITE_TOOL in policy.permitted_tools
     # The writer is still effects-classified — prompt-tier, not auto-allow.
@@ -212,10 +202,7 @@ def test_wildcard_grant_admits_a_servers_imported_tools() -> None:
 
     gate = PermissionGate(policy)
     assert gate.check(_READ_TOOL, {}).outcome is Outcome.ALLOW
-    assert (
-        gate.check(_WRITE_TOOL, {}, approver=lambda _n, _i: True).outcome
-        is Outcome.ALLOW
-    )
+    assert gate.check(_WRITE_TOOL, {}, approver=lambda _n, _i: True).outcome is Outcome.ALLOW
 
 
 def test_wildcard_grant_is_server_scoped() -> None:
@@ -226,9 +213,7 @@ def test_wildcard_grant_is_server_scoped() -> None:
         tools=frozenset({"mcp:other:*", "read_file"}),
         capability=PermissionMode.DEPLOY,
     )
-    policy = build_policy(
-        PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs()
-    )
+    policy = build_policy(PermissionMode.DEPLOY, agent=agent, mcp_tools=_specs())
     # The fixture server's read tool is NOT admitted by an other-server
     # wildcard — the wildcard is scoped to its own server prefix.
     assert _READ_TOOL not in policy.permitted_tools

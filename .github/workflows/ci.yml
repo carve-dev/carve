@@ -22,18 +22,16 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Create venv and install
-        run: |
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install -e ".[dev]"
+      - name: Install from lockfile
+        # Install the exact pinned versions from uv.lock (not "latest"), so CI
+        # matches local + pre-commit and can't drift (see #7).
+        run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
 
       - name: Ruff lint
         run: uv run ruff check src/ tests/
 
-      # NOTE: `ruff format --check` was removed — the repo has never been
-      # ruff-format-clean, so it was a perpetually-red gate (CI's ruff also
-      # drifts from the pre-commit-pinned version). Tracked in #4: format the
-      # repo + re-enable. The real gates remain: ruff check, mypy, pytest.
+      - name: Ruff format check
+        run: uv run ruff format --check src/ tests/
 
       - name: Mypy
         run: uv run mypy src/

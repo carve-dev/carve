@@ -51,8 +51,7 @@ def test_render_compose_two_projects_dont_collide() -> None:
         != b["services"]["carve-postgres"]["container_name"]
     )
     assert (
-        a["volumes"]["carve-postgres-data"]["name"]
-        != b["volumes"]["carve-postgres-data"]["name"]
+        a["volumes"]["carve-postgres-data"]["name"] != b["volumes"]["carve-postgres-data"]["name"]
     )
 
 

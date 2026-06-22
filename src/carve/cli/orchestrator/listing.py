@@ -46,7 +46,7 @@ def render_runs_table(
                 f"No runs yet for pipeline {pipeline_name!r}. "
                 f"Run it with `carve run {pipeline_name}`."
             )
-        return "No runs yet. Generate a plan with `carve plan \"<goal>\"` first."
+        return 'No runs yet. Generate a plan with `carve plan "<goal>"` first.'
 
     title = f"Recent runs (last {len(runs)})"
     if pipeline_name is not None:
@@ -84,8 +84,7 @@ def render_logs(repository: Repository, run_id: str) -> tuple[RenderableType, in
     logs = repository.get_logs(run_id)
     if not logs:
         return (
-            f"[dim]No logs recorded for run {_escape(run_id)} "
-            f"(status: {run.status}).[/dim]",
+            f"[dim]No logs recorded for run {_escape(run_id)} (status: {run.status}).[/dim]",
             0,
         )
     lines = [_format_log_line(log.timestamp, log.level, log.source, log.message) for log in logs]
@@ -101,7 +100,7 @@ def render_pipelines_table(
     pipelines = repository.list_pipelines(limit=limit)
     if not pipelines:
         return (
-            "No pipelines yet. Generate a plan with `carve plan \"<goal>\"` "
+            'No pipelines yet. Generate a plan with `carve plan "<goal>"` '
             "and then `carve build <plan_id>`."
         )
 
@@ -205,11 +204,7 @@ def render_pipeline_detail(
             _truncate(child.goal, 60),
             _format_datetime(child.created_at),
         )
-    if (
-        not lineage.parent_chain
-        and not lineage.children
-        and lineage.current_plan is None
-    ):
+    if not lineage.parent_chain and not lineage.children and lineage.current_plan is None:
         blocks.append("[dim]No plan history recorded.[/dim]")
     else:
         blocks.append(plans_table)

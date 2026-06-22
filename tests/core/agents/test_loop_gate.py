@@ -217,9 +217,7 @@ class TestCancellationBetweenTurns:
         token = CancellationToken()
         token.cancel()
         client = _ScriptedClient([_response([_text("x")], "end_turn")])
-        loop = AgentLoop(
-            client, [], "sys", "claude-sonnet-4-5-20250929", cancellation=token
-        )
+        loop = AgentLoop(client, [], "sys", "claude-sonnet-4-5-20250929", cancellation=token)
         with pytest.raises(RunCancelled):
             loop.run("go")
         assert client.create_calls == 0

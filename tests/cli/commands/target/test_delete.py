@@ -38,7 +38,7 @@ def test_target_delete_removes_section(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -62,7 +62,7 @@ def test_target_delete_removes_env_example_block(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / ".env.example").read_text()
@@ -96,7 +96,7 @@ def test_target_delete_does_not_touch_targets_tree(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     # Connection-config section removed.
@@ -114,7 +114,7 @@ def test_target_delete_default_target_refused(
     result = runner.invoke(
         app,
         ["target", "delete", "dev", "--yes", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
 
@@ -136,7 +136,7 @@ def test_target_delete_default_target_force_succeeds(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -150,7 +150,7 @@ def test_target_delete_nonexistent(
     result = runner.invoke(
         app,
         ["target", "delete", "ghost", "--yes", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
 
@@ -171,7 +171,7 @@ def test_target_delete_rejects_unsafe_name(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
     assert "must match" in result.output or "must" in result.output

@@ -172,9 +172,7 @@ class SubagentRegistry:
         """
         self._agents[spec.name] = spec
 
-    def register_files(
-        self, agents: Iterable[AgentFile], *, root_label: str = "root"
-    ) -> None:
+    def register_files(self, agents: Iterable[AgentFile], *, root_label: str = "root") -> None:
         """Register a batch of declarative agents with collision discipline.
 
         Mirrors ``skills/registry.py``: a **duplicate name within this

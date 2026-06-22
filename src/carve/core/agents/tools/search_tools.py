@@ -39,9 +39,7 @@ def _resolve_dir(project_root: Path, sub: str | None) -> Path:
     try:
         candidate.relative_to(project_root)
     except ValueError as exc:
-        raise ToolExecutionError(
-            f"Path {sub!r} is outside the project directory."
-        ) from exc
+        raise ToolExecutionError(f"Path {sub!r} is outside the project directory.") from exc
     return candidate
 
 
@@ -174,9 +172,7 @@ def make_grep_tool(project_dir: Path) -> Tool:
                 continue  # binary / unreadable — skip
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if regex.search(line):
-                    results.append(
-                        {"path": str(rel), "line": lineno, "text": line[:500]}
-                    )
+                    results.append({"path": str(rel), "line": lineno, "text": line[:500]})
                     if len(results) >= _MAX_GREP_MATCHES:
                         truncated = True
                         break

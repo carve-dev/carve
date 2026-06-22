@@ -28,9 +28,7 @@ class _FakeSnowflake:
         self._fail_index = fail_index
         self._error = error
 
-    def execute(
-        self, sql: str, params: dict[str, object] | None = None
-    ) -> int:
+    def execute(self, sql: str, params: dict[str, object] | None = None) -> int:
         del params
         self.executed.append(sql)
         if self._fail_index is not None and len(self.executed) - 1 == self._fail_index:
@@ -81,8 +79,7 @@ def test_parse_handles_multi_statement_in_order() -> None:
 def test_apply_ddl_success(tmp_path: Path) -> None:
     ddl = tmp_path / "x.sql"
     ddl.write_text(
-        "CREATE TABLE IF NOT EXISTS a (id INT);\n"
-        "CREATE TABLE IF NOT EXISTS b (id INT);\n"
+        "CREATE TABLE IF NOT EXISTS a (id INT);\nCREATE TABLE IF NOT EXISTS b (id INT);\n"
     )
     fake = _FakeSnowflake()
     result = apply_ddl(deploy_connection=fake, ddl_path=ddl)  # type: ignore[arg-type]
@@ -185,9 +182,7 @@ def test_ddl_applier_allows_create_if_not_exists() -> None:
 
 def test_ddl_applier_refuses_create_or_replace() -> None:
     with pytest.raises(UnsafeDdlError) as excinfo:
-        validate_ddl_statements(
-            ["CREATE OR REPLACE TABLE analytics.raw.iowa (id INT)"]
-        )
+        validate_ddl_statements(["CREATE OR REPLACE TABLE analytics.raw.iowa (id INT)"])
     assert excinfo.value.index == 0
     assert "CREATE OR REPLACE" in excinfo.value.label
     # The error message must NOT contain the SQL text.
@@ -196,9 +191,7 @@ def test_ddl_applier_refuses_create_or_replace() -> None:
 
 def test_ddl_applier_refuses_bare_rename() -> None:
     with pytest.raises(UnsafeDdlError) as excinfo:
-        validate_ddl_statements(
-            ["ALTER TABLE analytics.raw.iowa RENAME TO analytics.raw.bad"]
-        )
+        validate_ddl_statements(["ALTER TABLE analytics.raw.iowa RENAME TO analytics.raw.bad"])
     assert "RENAME" in excinfo.value.label
 
 
@@ -234,10 +227,7 @@ def test_ddl_applier_refuses_drop_without_if_exists() -> None:
 def test_ddl_applier_refuses_alter_set_data_type() -> None:
     with pytest.raises(UnsafeDdlError) as excinfo:
         validate_ddl_statements(
-            [
-                "ALTER TABLE analytics.raw.iowa ALTER COLUMN id "
-                "SET DATA TYPE BIGINT"
-            ]
+            ["ALTER TABLE analytics.raw.iowa ALTER COLUMN id SET DATA TYPE BIGINT"]
         )
     assert "SET DATA TYPE" in excinfo.value.label
 

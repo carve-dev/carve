@@ -130,9 +130,7 @@ class _WatchLoopExit(Exception):
 class _ObserverProtocol(Protocol):
     """Structural type for a watchdog ``Observer`` (real or fake)."""
 
-    def schedule(
-        self, handler: object, path: str, recursive: bool = False
-    ) -> object: ...
+    def schedule(self, handler: object, path: str, recursive: bool = False) -> object: ...
 
     def start(self) -> None: ...
 
@@ -227,8 +225,7 @@ def _run_with_watch(
                 max_fix_attempts=max_fix_attempts,
             )
             console.print(
-                f"[dim]\\[watching {artifact_dir.relative_to(project_dir)} — "
-                f"Ctrl-C to exit][/dim]"
+                f"[dim]\\[watching {artifact_dir.relative_to(project_dir)} — Ctrl-C to exit][/dim]"
             )
             try:
                 # `Event.wait` is interruptible by KeyboardInterrupt, so
@@ -334,9 +331,7 @@ class _SyncObserver:
     def __init__(self) -> None:
         self._handlers: list[object] = []
 
-    def schedule(
-        self, handler: object, path: str, recursive: bool = False
-    ) -> object:
+    def schedule(self, handler: object, path: str, recursive: bool = False) -> object:
         # `path` and `recursive` are accepted to match watchdog's API
         # but ignored — the test fires events directly via the handler.
         del path, recursive

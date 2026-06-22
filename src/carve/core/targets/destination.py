@@ -192,17 +192,13 @@ def write_destination_toml(
         "",
     ]
 
-    body_lines += _render_optional_field(
-        "database", destination.database, env_database
-    )
+    body_lines += _render_optional_field("database", destination.database, env_database)
     body_lines += _render_optional_field("schema", destination.schema, env_schema)
 
     path.write_text("\n".join(body_lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _render_optional_field(
-    name: str, value: str | None, env_default: str | None
-) -> list[str]:
+def _render_optional_field(name: str, value: str | None, env_default: str | None) -> list[str]:
     """One block per optional field — always two lines.
 
     * No value, no env default: comment-only, no example.
@@ -216,20 +212,17 @@ def _render_optional_field(
     if value is None:
         if env_default:
             return [
-                f"# {name}: inherits `{env_default}` from "
-                f"`os.environ` at runtime",
+                f"# {name}: inherits `{env_default}` from `os.environ` at runtime",
                 f'# {name} = "{_escape_toml_string(env_default)}"',
                 "",
             ]
         return [
-            f"# {name}: no override; inherits from "
-            f"`<TARGET>_SNOWFLAKE_{name.upper()}` at runtime",
+            f"# {name}: no override; inherits from `<TARGET>_SNOWFLAKE_{name.upper()}` at runtime",
             "",
         ]
     if env_default == value:
         return [
-            f"# {name}: matches the connection default; left commented "
-            "for clarity",
+            f"# {name}: matches the connection default; left commented for clarity",
             f'# {name} = "{_escape_toml_string(value)}"',
             "",
         ]

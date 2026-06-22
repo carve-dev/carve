@@ -57,8 +57,6 @@ def command(
     console.print()
     console.print("[bold]Next steps:[/bold]")
     console.print(f"  1. Add {upper}_* values to .env (see .env.example for the list)")
-    console.print(
-        f"  2. Review the [snowflake.{name}] section in carve/connections.toml"
-    )
+    console.print(f"  2. Review the [snowflake.{name}] section in carve/connections.toml")
     console.print(f"  3. Run a build against this target: carve build <plan_id> --target {name}")
     raise typer.Exit(code=0)

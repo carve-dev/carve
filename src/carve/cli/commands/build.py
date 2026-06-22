@@ -138,10 +138,7 @@ def command(
             console.print(artifact.summary.strip())
         raise typer.Exit(code=1)
 
-    console.print(
-        f"[green]✓[/green] Built pipeline "
-        f"[bold]{_escape(artifact.pipeline_name)}[/bold]"
-    )
+    console.print(f"[green]✓[/green] Built pipeline [bold]{_escape(artifact.pipeline_name)}[/bold]")
     console.print(f"  Plan:           {_escape(artifact.plan_id)}")
     console.print(f"  Target:         {_escape(artifact.target)}")
     console.print(
@@ -160,9 +157,7 @@ def command(
         console.print(artifact.summary.strip())
     console.print()
     console.print(f"Next:  carve run {artifact.pipeline_name}")
-    console.print(
-        f"       carve el deploy {artifact.pipeline_name} --to {artifact.target}"
-    )
+    console.print(f"       carve el deploy {artifact.pipeline_name} --to {artifact.target}")
     raise typer.Exit(code=0)
 
 
@@ -210,16 +205,15 @@ def _confirm_or_override_destination(
     if task_graph is None:
         return None
     design = task_graph.get("design")
-    plan_destination = (
-        design.get("destination") if isinstance(design, dict) else None
-    )
+    plan_destination = design.get("destination") if isinstance(design, dict) else None
     if not isinstance(plan_destination, dict):
         plan_destination = {}
 
     # Resolve the active target so we can compare against connection
     # defaults for the env-vs-override classification.
     active_target = resolve_active_target(
-        resolve_subcommand_target(None), config  # type: ignore[arg-type]
+        resolve_subcommand_target(None),
+        config,  # type: ignore[arg-type]
     )
     target_section = config.connections.snowflake.get(active_target)  # type: ignore[attr-defined]
     env_db = target_section.database if target_section is not None else None
@@ -276,11 +270,15 @@ def _confirm_or_override_destination(
     console.print()
 
     while True:
-        answer = typer.prompt(
-            "Confirm? (y to proceed, e to edit, n to abort)",
-            default="y",
-            show_default=True,
-        ).strip().lower()
+        answer = (
+            typer.prompt(
+                "Confirm? (y to proceed, e to edit, n to abort)",
+                default="y",
+                show_default=True,
+            )
+            .strip()
+            .lower()
+        )
         if answer in ("y", "yes"):
             return override or None
         if answer in ("n", "no"):
@@ -307,15 +305,11 @@ def _confirm_or_override_destination(
                     proposed[field] = new_value
                     if new_value != plan_destination.get(field):
                         override[field] = new_value
-            console.print(
-                "[green]✓[/green] Updated. Confirming..."
-            )
+            console.print("[green]✓[/green] Updated. Confirming...")
             # Re-show the resolved values, then loop to ask y/n/e
             # again. Most users will pick `y` after editing once.
             console.print()
-            console.print(
-                f"[bold]Destination for target=[cyan]{active_target}[/cyan]:[/bold]"
-            )
+            console.print(f"[bold]Destination for target=[cyan]{active_target}[/cyan]:[/bold]")
             for field, env_value in (
                 ("database", env_db),
                 ("schema", env_schema),
@@ -328,6 +322,4 @@ def _confirm_or_override_destination(
                 )
             console.print()
             continue
-        console.print(
-            "[yellow]Please answer `y` (yes), `n` (no), or `e` (edit).[/yellow]"
-        )
+        console.print("[yellow]Please answer `y` (yes), `n` (no), or `e` (edit).[/yellow]")

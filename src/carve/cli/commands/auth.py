@@ -51,9 +51,7 @@ def status(
         console.print(f"[green]✓[/green] Authenticated via [bold]{info.mode}[/bold]")
         console.print(f"  Source: {info.source}")
     else:
-        console.print(
-            f"[yellow]![/yellow] No usable credential ([bold]{info.mode}[/bold])"
-        )
+        console.print(f"[yellow]![/yellow] No usable credential ([bold]{info.mode}[/bold])")
         if info.note:
             console.print(f"  {info.note}")
     if info.hosted:
@@ -78,17 +76,13 @@ def login() -> None:
             "`claude setup-token`, then set the printed token as "
             "ANTHROPIC_AUTH_TOKEN in your .env."
         )
-        console.print(
-            "Or set ANTHROPIC_API_KEY to use a developer-portal API key instead."
-        )
+        console.print("Or set ANTHROPIC_API_KEY to use a developer-portal API key instead.")
         raise typer.Exit(code=1)
 
     console.print("Running `claude setup-token` — complete the browser login…")
     result = subprocess.run([claude, "setup-token"], check=False)
     if result.returncode != 0:
-        console.print(
-            f"[red]`claude setup-token` exited with code {result.returncode}.[/red]"
-        )
+        console.print(f"[red]`claude setup-token` exited with code {result.returncode}.[/red]")
         raise typer.Exit(code=result.returncode)
     console.print(
         "[green]✓[/green] Token minted. Add it to your .env as "

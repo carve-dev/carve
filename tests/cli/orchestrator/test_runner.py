@@ -542,7 +542,8 @@ def test_run_surfaces_logs_appended_within_same_tick(
     project_dir: Path,
     repository: Repository,
     venv_cache_dir: Path,
-    monkeypatch: pytest.MonkeyPatch, postgres_state_store_url: str
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_state_store_url: str,
 ) -> None:
     """Two logs sharing a `datetime.now()` tick must both reach stdout."""
     fixed_dt = datetime(2026, 1, 1, 12, 0, 0)

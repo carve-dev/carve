@@ -182,9 +182,7 @@ def build_plan(
     tools = _build_tools(project_dir)
     # Extensibility (spec 16): expose discovered skill packs at runtime via
     # the content-injection lookup tool (discovery is inert at load).
-    tools.append(
-        build_skill_pack_tool(project_dir=project_dir, paths=config.paths)
-    )
+    tools.append(build_skill_pack_tool(project_dir=project_dir, paths=config.paths))
 
     # Extensibility (spec 16): route through the classification router; no
     # classification → None → the M1 build flow is preserved unchanged, but
@@ -294,9 +292,7 @@ def build_plan(
     if destination_path is not None:
         written_files.append(destination_path)
 
-    files_written_rel = sorted(
-        p.relative_to(project_dir).as_posix() for p in written_files
-    )
+    files_written_rel = sorted(p.relative_to(project_dir).as_posix() for p in written_files)
 
     repository.create_or_update_pipeline(
         name=pipeline_name,
@@ -376,8 +372,7 @@ def _pipeline_name_from(plan_row: Plan, design: dict[str, Any]) -> str:
     candidate = plan_row.pipeline_name or design.get("pipeline_name")
     if not isinstance(candidate, str):
         raise BuildError(
-            "Could not resolve a valid pipeline name for this build. "
-            f"Got {candidate!r}."
+            f"Could not resolve a valid pipeline name for this build. Got {candidate!r}."
         )
     try:
         validate_artifact_name(candidate)
@@ -445,9 +440,7 @@ def _write_destination_toml_for_build(
     # interpolation).
     target_section = config.connections.snowflake.get(active_target)
     env_db = target_section.database if target_section is not None else None
-    env_schema = (
-        target_section.schema_ if target_section is not None else None
-    )
+    env_schema = target_section.schema_ if target_section is not None else None
 
     path = pipeline_dir_abs / "destination.toml"
     write_destination_toml(
@@ -533,9 +526,7 @@ def _render_connection_context(config: Config, active_target: str) -> str:
     # `os.environ['DEV_SNOWFLAKE_SCHEMA']` reference that KeyErrors at
     # runtime against a project that doesn't set the var.
     if snowflake is not None and snowflake.schema_:
-        lines.append(
-            f"- schema:    `os.environ['{upper}_SNOWFLAKE_SCHEMA']`"
-        )
+        lines.append(f"- schema:    `os.environ['{upper}_SNOWFLAKE_SCHEMA']`")
 
     lines += [
         "",
@@ -550,8 +541,7 @@ def _render_connection_context(config: Config, active_target: str) -> str:
         "from pathlib import Path",
         "",
         "_dest_cfg = tomllib.loads(",
-        "    (Path(__file__).parent / 'destination.toml').read_text("
-        "encoding='utf-8')",
+        "    (Path(__file__).parent / 'destination.toml').read_text(encoding='utf-8')",
         ")",
         "_target = os.environ['CARVE_ACTIVE_TARGET']",
         "DEST_DATABASE = _dest_cfg.get('database') or os.environ[",
@@ -683,8 +673,7 @@ def _render_existing_pipeline_section(
         return None
     parts: list[str] = [
         f"## Existing pipeline `{pipeline_name}` (current state)",
-        "Use this for reference; the design above is authoritative for "
-        "the new state.",
+        "Use this for reference; the design above is authoritative for the new state.",
         "",
         f"### `{rel_dir}/main.py`",
         "```python",
@@ -732,9 +721,7 @@ def _snapshot_pipeline_dir(pipeline_dir: Path) -> dict[Path, float]:
     if not pipeline_dir.is_dir():
         return {}
     return {
-        path.resolve(): path.stat().st_mtime
-        for path in pipeline_dir.rglob("*")
-        if path.is_file()
+        path.resolve(): path.stat().st_mtime for path in pipeline_dir.rglob("*") if path.is_file()
     }
 
 

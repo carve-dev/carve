@@ -95,8 +95,7 @@ def list_databases(ctx: SkillContext) -> SkillResult:
 @skill(
     name="list_schemas",
     description=(
-        "List schemas in a Snowflake database accessible to the runtime "
-        "role. Capped at 100 rows."
+        "List schemas in a Snowflake database accessible to the runtime role. Capped at 100 rows."
     ),
     inputs={
         "database": {"type": "string", "required": True},
@@ -169,8 +168,7 @@ def list_tables(
         # We over-fetched; report the actual full count by issuing a
         # COUNT(*) so the caller can see how many tables truly exist.
         count_rows = sf.query(
-            f"SELECT COUNT(*) AS n FROM {database}.information_schema.tables "
-            f"{base_filter}",
+            f"SELECT COUNT(*) AS n FROM {database}.information_schema.tables {base_filter}",
             {"schema": schema.upper()},
         )
         total_count = _coerce_count(count_rows)

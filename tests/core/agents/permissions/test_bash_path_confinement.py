@@ -76,9 +76,7 @@ class TestPathTakingCoreutilsDenied:
         ],
     )
     @pytest.mark.parametrize("mode", _ALL_MODES)
-    def test_read_coreutil_denied_every_mode(
-        self, command: str, mode: PermissionMode
-    ) -> None:
+    def test_read_coreutil_denied_every_mode(self, command: str, mode: PermissionMode) -> None:
         decision = tier_bash_command(command, _rules(mode))
         assert decision.tier == "deny", command
 
@@ -112,9 +110,7 @@ class TestArbitraryWriteCoreutilsDenied:
         ],
     )
     @pytest.mark.parametrize("mode", _ALL_MODES)
-    def test_sort_uniq_denied_every_mode(
-        self, command: str, mode: PermissionMode
-    ) -> None:
+    def test_sort_uniq_denied_every_mode(self, command: str, mode: PermissionMode) -> None:
         decision = tier_bash_command(command, _rules(mode))
         assert decision.tier == "deny", command
 
@@ -132,9 +128,7 @@ class TestTestBuiltinDenied:
         ["test -f /etc/passwd", "test -e /root/.ssh/id_rsa", "[ -f .env ]"],
     )
     @pytest.mark.parametrize("mode", _ALL_MODES)
-    def test_test_builtin_denied_every_mode(
-        self, command: str, mode: PermissionMode
-    ) -> None:
+    def test_test_builtin_denied_every_mode(self, command: str, mode: PermissionMode) -> None:
         assert tier_bash_command(command, _rules(mode)).tier == "deny", command
 
 
@@ -150,9 +144,7 @@ class TestGitNoIndexDenied:
         ],
     )
     @pytest.mark.parametrize("mode", _ALL_MODES)
-    def test_no_index_denied_every_mode(
-        self, command: str, mode: PermissionMode
-    ) -> None:
+    def test_no_index_denied_every_mode(self, command: str, mode: PermissionMode) -> None:
         # Allow-listed in read tiers via `git diff`, but the flag guard
         # must reject it regardless of mode.
         assert tier_bash_command(command, _rules(mode)).tier == "deny", command
@@ -162,9 +154,7 @@ class TestGitNoIndexDenied:
 
     def test_no_index_denied_end_to_end(self) -> None:
         gate = PermissionGate(build_policy(PermissionMode.DEPLOY))
-        decision = gate.check(
-            "bash", {"command": "git diff --no-index /etc/passwd /etc/hosts"}
-        )
+        decision = gate.check("bash", {"command": "git diff --no-index /etc/passwd /etc/hosts"})
         assert decision.outcome is Outcome.DENY
 
 
@@ -206,22 +196,14 @@ class TestGhIsDeployTierOnly:
         "mode",
         [PermissionMode.READ_ONLY, PermissionMode.PLAN, PermissionMode.BUILD],
     )
-    def test_gh_read_denied_below_deploy(
-        self, command: str, mode: PermissionMode
-    ) -> None:
+    def test_gh_read_denied_below_deploy(self, command: str, mode: PermissionMode) -> None:
         assert tier_bash_command(command, _rules(mode)).tier == "deny", command
 
     def test_gh_pr_create_prompts_at_deploy(self) -> None:
-        assert (
-            tier_bash_command("gh pr create", _rules(PermissionMode.DEPLOY)).tier
-            == "prompt"
-        )
+        assert tier_bash_command("gh pr create", _rules(PermissionMode.DEPLOY)).tier == "prompt"
 
     def test_gh_pr_create_denied_below_deploy(self) -> None:
-        assert (
-            tier_bash_command("gh pr create", _rules(PermissionMode.BUILD)).tier
-            == "deny"
-        )
+        assert tier_bash_command("gh pr create", _rules(PermissionMode.BUILD)).tier == "deny"
 
 
 # Tokens that must never be in the read allow-list (the removed
@@ -259,9 +241,9 @@ class TestAllowListInvariant:
         guarded = set(DANGEROUS_BASH_FLAGS)  # {"git", "dbt", "dlt"}
         for entry in _READ_BASH_ALLOW:
             prog = entry.split(" ", 1)[0]
-            assert (
-                entry in pathless or prog in guarded
-            ), f"{entry!r} is neither path-less nor a flag-guarded tool"
+            assert entry in pathless or prog in guarded, (
+                f"{entry!r} is neither path-less nor a flag-guarded tool"
+            )
 
 
 class TestConfinedReadStillWorks:

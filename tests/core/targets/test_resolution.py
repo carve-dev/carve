@@ -67,9 +67,7 @@ def test_resolution_blank_cli_flag_falls_through() -> None:
         ("default", "with space"),
     ],
 )
-def test_resolution_rejects_unsafe_target_names(
-    source: str, value: str
-) -> None:
+def test_resolution_rejects_unsafe_target_names(source: str, value: str) -> None:
     """Path-traversal-shaped or otherwise malformed target names are refused."""
     cli = value if source == "cli_flag" else None
     env = {"CARVE_TARGET": value} if source == "env" else {}

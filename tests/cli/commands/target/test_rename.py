@@ -30,13 +30,13 @@ def test_target_rename_renames_section(
     runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
 
     result = runner.invoke(
         app,
         ["target", "rename", "staging", "qa", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -54,7 +54,7 @@ def test_target_rename_renames_env_example_lines(
     result = runner.invoke(
         app,
         ["target", "rename", "staging", "qa", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / ".env.example").read_text()
@@ -78,7 +78,7 @@ def test_target_rename_does_not_touch_targets_tree(
     result = runner.invoke(
         app,
         ["target", "rename", "staging", "qa", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     # Connection-config section flipped.
@@ -98,7 +98,7 @@ def test_target_rename_updates_default_target(
     result = runner.invoke(
         app,
         ["target", "rename", "dev", "qa", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     carve_toml = (tmp_path / "carve.toml").read_text()
@@ -114,7 +114,7 @@ def test_target_rename_refuses_if_destination_exists(
     result = runner.invoke(
         app,
         ["target", "rename", "staging", "dev", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
 
@@ -126,7 +126,7 @@ def test_target_rename_refuses_invalid_new_name(
     result = runner.invoke(
         app,
         ["target", "rename", "dev", "QA-1", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
 
@@ -140,7 +140,7 @@ def test_target_rename_missing_old(
     result = runner.invoke(
         app,
         ["target", "rename", "ghost", "qa", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
 
@@ -159,6 +159,6 @@ def test_target_rename_rejects_unsafe_old_name(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output

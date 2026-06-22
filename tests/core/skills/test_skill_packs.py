@@ -8,12 +8,7 @@ from pathlib import Path
 from carve.core.skills.pack_discovery import discover_pack_roots
 from carve.core.skills.packs import load_skill_pack
 
-_FIXTURE_PACK = (
-    Path(__file__).resolve().parents[2]
-    / "fixtures"
-    / "skill_packs"
-    / "_example"
-)
+_FIXTURE_PACK = Path(__file__).resolve().parents[2] / "fixtures" / "skill_packs" / "_example"
 
 
 def _isolated_skills_dir(tmp_path: Path) -> Path:

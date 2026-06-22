@@ -172,9 +172,7 @@ def _resolve_block(
         if block.type is ComponentType.DLT:
             return ResolvedComponent(name, block.type, paths.el_dir / name, ref=None)
         # same-repo dbt: detect the project dir (root or one level down).
-        return ResolvedComponent(
-            name, block.type, _detect_dbt_project(paths), ref=None
-        )
+        return ResolvedComponent(name, block.type, _detect_dbt_project(paths), ref=None)
 
     if block.mode is ComponentMode.SEPARATE_LOCAL:
         assert block.path is not None  # schema guarantees this
@@ -189,9 +187,7 @@ def _resolve_block(
 
     # separate-remote: workspace-cache path; ref pins, else branch tracks.
     assert block.url is not None  # schema guarantees this
-    workspace_path = paths.workspaces_dir / workspace_dirname(
-        block.url, block.ref, block.branch
-    )
+    workspace_path = paths.workspaces_dir / workspace_dirname(block.url, block.ref, block.branch)
     return ResolvedComponent(name, block.type, workspace_path, ref=block.ref)
 
 
@@ -236,9 +232,7 @@ def discover_components(paths: ProjectPaths) -> list[ResolvedComponent]:
     if paths.el_dir.is_dir():
         for child in sorted(paths.el_dir.iterdir()):
             if child.is_dir() and not child.name.startswith("."):
-                found.append(
-                    ResolvedComponent(child.name, ComponentType.DLT, child, ref=None)
-                )
+                found.append(ResolvedComponent(child.name, ComponentType.DLT, child, ref=None))
 
     dbt_path = _detect_dbt_project(paths, required=False)
     if dbt_path is not None:
@@ -300,8 +294,7 @@ def _detect_dbt_project(
     if not candidates:
         if required:
             raise ComponentResolutionError(
-                "No dbt project found (looked for dbt_project.yml at the root "
-                "and one level down).",
+                "No dbt project found (looked for dbt_project.yml at the root and one level down).",
                 hint="Run `carve init --with-dbt` to scaffold one, or add a "
                 "[components.<name>] block (type='dbt', mode='separate-local').",
             )

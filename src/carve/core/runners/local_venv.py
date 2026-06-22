@@ -114,9 +114,7 @@ class LocalVenvRunner:
         # user script can read them. A step that legitimately needs one
         # of these can opt back in via `step.config.env`, which is
         # layered on top below.
-        env = {
-            k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_VARS
-        }
+        env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_VARS}
         env.update(step.config.env)
         env.update(_snowflake_env(context))
 
@@ -267,9 +265,7 @@ class LocalVenvRunner:
         directory already exists we trust it — invalidation is implicit
         via a different hash when requirements change.
         """
-        req_hash = hashlib.sha256(
-            "\n".join(sorted(requirements)).encode("utf-8")
-        ).hexdigest()
+        req_hash = hashlib.sha256("\n".join(sorted(requirements)).encode("utf-8")).hexdigest()
 
         cache_root = Path(self.config.venv_cache_dir)
         if not cache_root.is_absolute():
@@ -280,9 +276,7 @@ class LocalVenvRunner:
             return venv_dir
 
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.check_call(
-            [self.python_executable, "-m", "venv", str(venv_dir)]
-        )
+        subprocess.check_call([self.python_executable, "-m", "venv", str(venv_dir)])
 
         if requirements:
             pip = self._venv_pip(venv_dir)
@@ -290,9 +284,7 @@ class LocalVenvRunner:
             # can never be interpreted as flags (e.g. ``--index-url=...``).
             # `PythonStepConfig.requirements` also rejects flag-shaped
             # entries at validation time; this is belt-and-braces.
-            subprocess.check_call(
-                [str(pip), "install", "--", *requirements]
-            )
+            subprocess.check_call([str(pip), "install", "--", *requirements])
 
         return venv_dir
 
@@ -320,12 +312,9 @@ class LocalVenvRunner:
                     # path to finalise the run row). Log the failure
                     # so a broken state store is at least debuggable
                     # rather than silently swallowed.
-                    _logger.exception(
-                        "append_log failed for run_id=%s", run_id
-                    )
+                    _logger.exception("append_log failed for run_id=%s", run_id)
                     print(
-                        f"carve.runners.local_venv: append_log failed "
-                        f"for run_id={run_id}",
+                        f"carve.runners.local_venv: append_log failed for run_id={run_id}",
                         file=sys.stderr,
                     )
                     traceback.print_exc(file=sys.stderr)
@@ -334,9 +323,7 @@ class LocalVenvRunner:
                 if proc.stdout is not None:
                     proc.stdout.close()
             except Exception:
-                _logger.exception(
-                    "closing stdout failed for run_id=%s", run_id
-                )
+                _logger.exception("closing stdout failed for run_id=%s", run_id)
             proc.wait()
             self._finalize_run(run_id, proc.returncode)
 
@@ -408,9 +395,7 @@ class LocalVenvRunner:
         try:
             candidate.relative_to(project_resolved)
         except ValueError as exc:
-            raise ValueError(
-                f"script path {script!r} resolves outside project_dir"
-            ) from exc
+            raise ValueError(f"script path {script!r} resolves outside project_dir") from exc
         return candidate
 
     @staticmethod

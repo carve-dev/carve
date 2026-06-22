@@ -97,10 +97,7 @@ def _good_columns() -> list[dict[str, Any]]:
 
 
 def _full_grants() -> list[dict[str, Any]]:
-    return [
-        {"grantee_name": "R", "privilege": p}
-        for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
-    ]
+    return [{"grantee_name": "R", "privilege": p} for p in ("SELECT", "INSERT", "UPDATE", "DELETE")]
 
 
 def _make_config(state_db: str) -> Config:
@@ -135,9 +132,7 @@ def repo_with_build(
     engine = create_engine_from_config(config, project_dir=tmp_path)
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
-    repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="el/iowa"
-    )
+    repo.create_or_update_pipeline(name="iowa", description="", pipeline_dir="el/iowa")
     plan = Plan(
         id="plan_1",
         goal="g",
@@ -161,13 +156,7 @@ def test_verify_passes_on_correct_state(
     repo_with_build: tuple[Repository, Config, Path],
 ) -> None:
     repo, config, _ = repo_with_build
-    pool = _FakePool(
-        {
-            "prod": _FakeSnowflake(
-                columns=_good_columns(), grants=_full_grants()
-            )
-        }
-    )
+    pool = _FakePool({"prod": _FakeSnowflake(columns=_good_columns(), grants=_full_grants())})
     console = Console(record=True, width=120)
     code = verify_cmd.run_verify_command(
         pipeline_name="iowa",

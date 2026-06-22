@@ -389,13 +389,13 @@ def test_init_uses_add_target_to_project(
             "--project-dir",
             str(create_dir),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--project-dir", str(create_dir)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -473,8 +473,8 @@ def test_top_level_target_flag_wired(
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     result = runner.invoke(
-        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 0, result.output
 
     # Pass the top-level --target flag and verify it's captured. We use
@@ -492,7 +492,7 @@ def test_top_level_target_flag_wired(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 

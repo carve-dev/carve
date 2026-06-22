@@ -64,9 +64,7 @@ def role_for(*, mode: PermissionMode, is_write: bool) -> WarehouseRole:
     if not is_write:
         return WarehouseRole.READ
     if not mode_permits(mode, PermissionMode.DEPLOY):
-        raise WarehouseWriteDenied(
-            f"Warehouse writes/DDL require deploy mode; got {mode}."
-        )
+        raise WarehouseWriteDenied(f"Warehouse writes/DDL require deploy mode; got {mode}.")
     return WarehouseRole.DEPLOY
 
 

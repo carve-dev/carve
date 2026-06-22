@@ -144,9 +144,7 @@ class VerificationLoop:
                 timeout=self._timeout,
             )
             if last.passed:
-                return VerificationOutcome(
-                    status="passed", iterations=iteration, last_result=last
-                )
+                return VerificationOutcome(status="passed", iterations=iteration, last_result=last)
             # Last allowed iteration — don't attempt another fix/re-check.
             if iteration >= self._max_iterations:
                 break

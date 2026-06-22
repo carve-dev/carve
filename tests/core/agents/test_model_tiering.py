@@ -92,9 +92,7 @@ def _run(tmp_path: Path, text: str) -> str:
         client=client,
         model=_INSTALL_DEFAULT,
     )
-    runner.run(
-        spec.name, "do it", {}, parent_mode=PermissionMode.READ_ONLY
-    )
+    runner.run(spec.name, "do it", {}, parent_mode=PermissionMode.READ_ONLY)
     assert client.models, "client was never called"
     return client.models[0]
 

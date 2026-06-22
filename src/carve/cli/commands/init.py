@@ -283,13 +283,9 @@ def _initialize_state_store(project_root: Path, *, database_url: str | None) -> 
                 "CREATE TABLE (Carve runs migrations)."
             )
             raise typer.Exit(code=3) from exc
+        console.print("[yellow]![/yellow] Postgres isn't running yet — schema not initialized.")
         console.print(
-            "[yellow]![/yellow] Postgres isn't running yet — schema not "
-            "initialized."
-        )
-        console.print(
-            "  Next: `docker compose up -d`, then `carve serve` brings the "
-            "schema to head."
+            "  Next: `docker compose up -d`, then `carve serve` brings the schema to head."
         )
         return
     console.print("[green]+[/green] state store schema initialized (postgres)")

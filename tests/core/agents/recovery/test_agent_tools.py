@@ -56,9 +56,7 @@ def test_run_snowflake_ddl_rejects_dml_insert() -> None:
     tool = make_run_snowflake_ddl_tool(executor)
 
     with pytest.raises(ToolExecutionError) as excinfo:
-        tool.executor(
-            {"sql": "INSERT INTO foo (a) VALUES (1)"}
-        )
+        tool.executor({"sql": "INSERT INTO foo (a) VALUES (1)"})
 
     assert "DDL rejected by allow-list" in str(excinfo.value)
     assert executor.calls == []
@@ -70,9 +68,7 @@ def test_run_snowflake_ddl_rejects_create_or_replace() -> None:
     tool = make_run_snowflake_ddl_tool(executor)
 
     with pytest.raises(ToolExecutionError) as excinfo:
-        tool.executor(
-            {"sql": "CREATE OR REPLACE TABLE foo (a INT)"}
-        )
+        tool.executor({"sql": "CREATE OR REPLACE TABLE foo (a INT)"})
 
     assert "DDL rejected by allow-list" in str(excinfo.value)
     assert executor.calls == []
@@ -83,9 +79,7 @@ def test_run_snowflake_ddl_accepts_idempotent_create() -> None:
     executor = _RecordingExecutor()
     tool = make_run_snowflake_ddl_tool(executor)
 
-    result = tool.executor(
-        {"sql": "CREATE TABLE IF NOT EXISTS foo (a INT)"}
-    )
+    result = tool.executor({"sql": "CREATE TABLE IF NOT EXISTS foo (a INT)"})
 
     assert result == {"status": "ok"}
     assert len(executor.calls) == 1

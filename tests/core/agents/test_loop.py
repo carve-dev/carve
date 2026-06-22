@@ -46,9 +46,7 @@ def _text_block(text: str) -> SimpleNamespace:
     return SimpleNamespace(type="text", text=text)
 
 
-def _tool_use_block(
-    name: str, input_: dict[str, Any], tool_id: str = "tu_1"
-) -> SimpleNamespace:
+def _tool_use_block(name: str, input_: dict[str, Any], tool_id: str = "tu_1") -> SimpleNamespace:
     return SimpleNamespace(type="tool_use", id=tool_id, name=name, input=input_)
 
 
@@ -559,9 +557,7 @@ class _RecordingObserver:
     def on_tool_call(self, name: str, input: dict[str, Any]) -> None:
         self.events.append(("tool_call", {"name": name, "input": dict(input)}))
 
-    def on_tool_result(
-        self, name: str, ok: bool, summary: str, duration_ms: int
-    ) -> None:
+    def on_tool_result(self, name: str, ok: bool, summary: str, duration_ms: int) -> None:
         self.events.append(
             (
                 "tool_result",
@@ -574,9 +570,7 @@ class _RecordingObserver:
             )
         )
 
-    def on_turn_complete(
-        self, turn: int, input_tokens: int, output_tokens: int
-    ) -> None:
+    def on_turn_complete(self, turn: int, input_tokens: int, output_tokens: int) -> None:
         self.events.append(
             (
                 "turn_complete",
@@ -770,9 +764,7 @@ class TestSummarizeSkillEnvelope:
             "truncated": True,
             "total_count": 1234,
         }
-        assert _summarize_tool_result("list_tables", envelope) == (
-            "200 of 1234 tables (truncated)"
-        )
+        assert _summarize_tool_result("list_tables", envelope) == ("200 of 1234 tables (truncated)")
 
     def test_skill_boolean_summary(self) -> None:
         from carve.core.agents.loop import _summarize_tool_result

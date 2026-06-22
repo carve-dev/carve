@@ -56,9 +56,7 @@ class TestEdit:
         f = tmp_path / "f.py"
         f.write_text("alpha\nbeta\n")
         tool = make_edit_tool(tmp_path)
-        result = tool.executor(
-            {"path": "f.py", "old_string": "beta", "new_string": "gamma"}
-        )
+        result = tool.executor({"path": "f.py", "old_string": "beta", "new_string": "gamma"})
         assert f.read_text() == "alpha\ngamma\n"
         assert isinstance(result, dict)
         assert result["replacements"] == 1
@@ -120,9 +118,7 @@ class TestEdit:
             pytest.skip("symlinks not permitted on this platform")
         tool = make_edit_tool(project)
         with pytest.raises(ToolExecutionError, match="outside the project"):
-            tool.executor(
-                {"path": "link.py", "old_string": "secret", "new_string": "leak"}
-            )
+            tool.executor({"path": "link.py", "old_string": "secret", "new_string": "leak"})
 
     def test_allowed_paths_enforced_on_edit(self, tmp_path: Path) -> None:
         target = tmp_path / "el" / "x" / "main.py"
@@ -132,13 +128,9 @@ class TestEdit:
         other.write_text("a\n")
         allowed = frozenset({target.resolve()})
         tool = make_edit_tool(tmp_path, allowed_paths=allowed)
-        assert tool.executor(
-            {"path": "el/x/main.py", "old_string": "a", "new_string": "b"}
-        )
+        assert tool.executor({"path": "el/x/main.py", "old_string": "a", "new_string": "b"})
         with pytest.raises(ToolExecutionError, match="allow-list"):
-            tool.executor(
-                {"path": "el/x/other.py", "old_string": "a", "new_string": "b"}
-            )
+            tool.executor({"path": "el/x/other.py", "old_string": "a", "new_string": "b"})
 
     def test_on_change_called_on_success(self, tmp_path: Path) -> None:
         f = tmp_path / "f.py"

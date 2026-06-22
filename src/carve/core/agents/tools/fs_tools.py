@@ -56,13 +56,9 @@ def _resolve_writable(
     if not isinstance(path, str) or not path:
         raise ToolExecutionError("`path` must be a non-empty string.")
     candidate = (project_root / path).resolve()
-    if not is_write_path_allowed(
-        candidate, project_root=project_root, allowed_paths=allowed_paths
-    ):
+    if not is_write_path_allowed(candidate, project_root=project_root, allowed_paths=allowed_paths):
         if not _is_relative_to(candidate, project_root):
-            raise ToolExecutionError(
-                f"Path {path!r} is outside the project directory."
-            )
+            raise ToolExecutionError(f"Path {path!r} is outside the project directory.")
         # In-tree but not on the explicit allow-list.
         permitted = sorted(
             str(p.relative_to(project_root))
@@ -71,8 +67,7 @@ def _resolve_writable(
             for p in (allowed_paths or frozenset())
         )
         raise ToolExecutionError(
-            f"Path {path!r} is not on the write allow-list. "
-            f"Allowed: {permitted}"
+            f"Path {path!r} is not on the write allow-list. Allowed: {permitted}"
         )
     return candidate
 
@@ -213,9 +208,7 @@ def make_edit_tool(
         if not isinstance(new_string, str):
             raise ToolExecutionError("`new_string` must be a string.")
         if old_string == new_string:
-            raise ToolExecutionError(
-                "`old_string` and `new_string` are identical; nothing to do."
-            )
+            raise ToolExecutionError("`old_string` and `new_string` are identical; nothing to do.")
 
         target = _resolve_writable(project_root, allowed_paths, path)  # type: ignore[arg-type]
         if not target.exists() or not target.is_file():

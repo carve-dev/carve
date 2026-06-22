@@ -146,9 +146,7 @@ def add_target_section(
 
     # Tomlkit's `.get("snowflake")` returns the table-of-tables when present.
     if isinstance(snowflake, dict) and name in snowflake and not force:
-        raise TargetExistsError(
-            f"[snowflake.{name}] already exists in {conn_path}"
-        )
+        raise TargetExistsError(f"[snowflake.{name}] already exists in {conn_path}")
 
     table = tomlkit.table()
     upper = name.upper()
@@ -184,9 +182,7 @@ def remove_target_section(name: str, conn_path: Path) -> None:
     doc = _load_connections_doc(conn_path)
     snowflake = doc.get("snowflake")
     if not isinstance(snowflake, dict) or name not in snowflake:
-        raise TargetNotFoundError(
-            f"[snowflake.{name}] not found in {conn_path}"
-        )
+        raise TargetNotFoundError(f"[snowflake.{name}] not found in {conn_path}")
     del snowflake[name]
     conn_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
@@ -209,13 +205,9 @@ def rename_target_section(old: str, new: str, conn_path: Path) -> None:
     doc = _load_connections_doc(conn_path)
     snowflake = doc.get("snowflake")
     if not isinstance(snowflake, dict) or old not in snowflake:
-        raise TargetNotFoundError(
-            f"[snowflake.{old}] not found in {conn_path}"
-        )
+        raise TargetNotFoundError(f"[snowflake.{old}] not found in {conn_path}")
     if new in snowflake:
-        raise TargetExistsError(
-            f"[snowflake.{new}] already exists in {conn_path}"
-        )
+        raise TargetExistsError(f"[snowflake.{new}] already exists in {conn_path}")
 
     # tomlkit doesn't support key rename, so we read, delete, and re-insert
     # with the new placeholder values. This preserves the surrounding doc

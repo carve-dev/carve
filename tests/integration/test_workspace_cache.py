@@ -98,9 +98,7 @@ def test_second_call_is_idempotent_and_syncs(remote: str, paths: ProjectPaths) -
     assert ws2.is_dir()
 
 
-def test_sync_pulls_new_commits(
-    remote: str, paths: ProjectPaths, tmp_path: Path
-) -> None:
+def test_sync_pulls_new_commits(remote: str, paths: ProjectPaths, tmp_path: Path) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths)
     assert (ws / "README.md").read_text() == "v1\n"
 
@@ -116,9 +114,7 @@ def test_sync_pulls_new_commits(
     assert (ws / "README.md").read_text() == "v2\n"
 
 
-def test_hard_reset_after_force_push(
-    remote: str, paths: ProjectPaths, tmp_path: Path
-) -> None:
+def test_hard_reset_after_force_push(remote: str, paths: ProjectPaths, tmp_path: Path) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths)
 
     # Rewrite history on the remote (force-push a divergent branch).
@@ -134,9 +130,7 @@ def test_hard_reset_after_force_push(
     assert (ws / "README.md").read_text() == "rewritten\n"
 
 
-def test_is_dirty_detects_local_modifications(
-    remote: str, paths: ProjectPaths
-) -> None:
+def test_is_dirty_detects_local_modifications(remote: str, paths: ProjectPaths) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths)
     assert is_dirty(ws) is False
 
@@ -150,9 +144,7 @@ def test_is_dirty_detects_untracked_files(remote: str, paths: ProjectPaths) -> N
     assert is_dirty(ws) is True
 
 
-def test_reject_if_dirty_blocks_with_message(
-    remote: str, paths: ProjectPaths
-) -> None:
+def test_reject_if_dirty_blocks_with_message(remote: str, paths: ProjectPaths) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths)
     (ws / "README.md").write_text("dirty\n")
     with pytest.raises(WorkspaceDirtyError) as exc:
@@ -162,9 +154,7 @@ def test_reject_if_dirty_blocks_with_message(
     assert "commit or discard" in msg.lower()
 
 
-def test_sync_refuses_to_clobber_dirty_workspace(
-    remote: str, paths: ProjectPaths
-) -> None:
+def test_sync_refuses_to_clobber_dirty_workspace(remote: str, paths: ProjectPaths) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths)
     (ws / "README.md").write_text("uncommitted work\n")
     with pytest.raises(WorkspaceDirtyError):
@@ -173,9 +163,7 @@ def test_sync_refuses_to_clobber_dirty_workspace(
     assert (ws / "README.md").read_text() == "uncommitted work\n"
 
 
-def test_soft_sync_mode_uses_pull(
-    remote: str, paths: ProjectPaths, tmp_path: Path
-) -> None:
+def test_soft_sync_mode_uses_pull(remote: str, paths: ProjectPaths, tmp_path: Path) -> None:
     ws = sync_workspace("analytics", remote, _BRANCH, paths, sync_mode="soft")
 
     work = tmp_path / "work"
@@ -276,9 +264,7 @@ def test_git_timeout_raises_workspace_sync_error(
 
     monkeypatch.setattr(wc.subprocess, "run", _timeout)
     with pytest.raises(WorkspaceSyncError) as exc:
-        sync_workspace(
-            "stuck", "https://example.invalid/repo.git", _BRANCH, paths, timeout=0.01
-        )
+        sync_workspace("stuck", "https://example.invalid/repo.git", _BRANCH, paths, timeout=0.01)
     msg = str(exc.value).lower()
     assert "timed out" in msg or "unreachable" in msg
 
