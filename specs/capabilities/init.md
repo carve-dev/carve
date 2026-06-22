@@ -6,10 +6,12 @@
 
 ## Status
 
-- **Status:** Drafting
+- **Status:** Partially landed — lean core (Increment 2). The non-interactive scaffold shipped; the heavier interactive/inference parts are deferred (see below). This spec is the durable design *target*; the list below records the current gap.
 - **Depends on:** [state-store](./state-store.md), [packaging](./packaging.md), [layout](./layout.md)
 - **Soft depends on:** [memory](./memory.md) — spec 05 scaffolds the memory files (writes empty templated `standards.md`/`decisions.md`, runs convention inference for `conventions.md`); spec 06 ships the runtime read/edit machinery that consumes them
 - **Blocks:** [runtime](./runtime.md) (init must produce a working Postgres connection before `carve serve` runs), [reference-docs](./reference-docs.md) (init writes `.env.example` which the reference docs cover)
+- **Landed (lean, Increment 2):** the `carve.init` package (`detect` → `resolve` → `scaffold`) plus the rewritten `carve init` command. Detection (dbt at root + one level, dlt via `.dlt/` or AST `import dlt`, git, docker, re-init); non-interactive axis resolution across Postgres × dbt × dlt (explicit flag > detected > default, with clean `InitError`s on conflict/ambiguity); the control-plane `carve.toml` renderer (simple mode writes **no** `[components.*]` block — same-repo dbt/dlt is convention-discovered; separate-local/-remote get a block); memory-file scaffolding as **empty templates** (`standards.md`/`decisions.md`/`conventions.md`); bundled vs external Postgres (compose for bundled, placeholder-only `.env.example` for external with the password-bearing URL printed, never committed); idempotent re-init (skip-if-exists, symlink-safe); default-target wiring + graceful state-store migration; `git init`.
+- **Deferred (not yet built):** convention *inference* (the `conventions.md` body — init writes a placeholder pointing at `carve memory refresh`); interactive prompts (`--non-interactive` is accepted but resolution is always non-interactive); `--migrate-from-targets`; dbt-engine **detection**/eager `--dbt-engine`/`--dbt-version` install; auth-token bootstrap (`.carve/token` → first-`carve serve`); and the getting-started docs. Each has a tracking issue.
 
 ## Goal
 
