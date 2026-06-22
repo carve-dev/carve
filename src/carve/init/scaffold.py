@@ -54,6 +54,10 @@ def scaffold(root: Path, plan: InitPlan) -> ScaffoldResult:
     r._write(root / "carve.toml", templates.render_carve_toml(plan))
     r._write(root / "carve" / "runner.toml", templates.RUNNER_TOML_CONTENT)
     r._write(root / "carve" / "models.toml", templates.MODELS_TOML_CONTENT)
+    r._write(
+        root / "carve" / "connections.toml",
+        templates.render_connections_toml(plan.default_target),
+    )
     r._ensure_dir(root / "carve" / "agents")
     r._write(root / "carve" / "standards.md", templates.STANDARDS_MD_CONTENT)
     r._write(root / "carve" / "decisions.md", templates.DECISIONS_MD_CONTENT)

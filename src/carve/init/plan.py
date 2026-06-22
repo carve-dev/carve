@@ -50,7 +50,6 @@ class InitOptions:
 
     project_name: str | None = None
     default_target: str = "dev"
-    destination_kind: str = "snowflake"
     external_postgres_url: str | None = None  # None = bundled compose
     with_dbt: bool = False
     dbt_path: str | None = None
@@ -70,7 +69,6 @@ class InitPlan:
     root: Path
     project_name: str
     default_target: str
-    destination_kind: str
     external_postgres_url: str | None
     components: tuple[ComponentSpec, ...]  # separate-local / -remote only
     scaffold_dbt: bool  # --with-dbt greenfield
@@ -120,7 +118,6 @@ def resolve(detection: Detection, opts: InitOptions) -> InitPlan:
         root=detection.root,
         project_name=project_name,
         default_target=opts.default_target,
-        destination_kind=opts.destination_kind,
         external_postgres_url=opts.external_postgres_url,
         components=components,
         scaffold_dbt=dbt.scaffold,

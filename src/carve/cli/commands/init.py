@@ -31,8 +31,8 @@ from carve.core.config.schema import Config, ModelsConfig, ProjectConfig
 from carve.core.state.database import create_engine_from_config, initialize_database
 from carve.core.targets.registry import (
     InvalidTargetNameError,
-    TargetExistsError,
-    add_target_to_project,
+    add_env_example_block,
+    env_example_has_block,
     validate_target_name,
 )
 from carve.init import InitError, InitOptions, detect, resolve, scaffold
@@ -77,9 +77,6 @@ def command(
     default_target: str = typer.Option(
         "dev", "--default-target", help="Name of the default target."
     ),
-    destination_kind: str = typer.Option(
-        "snowflake", "--destination-kind", help="Destination type for the default target."
-    ),
     no_git_init: bool = typer.Option(False, "--no-git-init", help="Don't run git init."),
     non_interactive: bool = typer.Option(
         False, "--non-interactive", help="Disable prompts; fail if required input is missing."
@@ -95,9 +92,10 @@ def command(
         )
         raise typer.Exit(code=2)
 
-    # Validate the target name before writing anything: add_target_to_project
-    # runs after the scaffold, so an invalid name would otherwise crash with a
-    # traceback and leave a half-written project behind.
+    # Validate the target name before writing anything: the target's
+    # connection section is scaffolded (and the .env.example block added)
+    # later, so an invalid name would otherwise crash with a traceback and
+    # leave a half-written project behind.
     try:
         validate_target_name(default_target)
     except InvalidTargetNameError as exc:
@@ -124,10 +122,11 @@ def command(
         raise typer.Exit(code=3)
 
     detection = detect(root)
+    # --destination-kind was cut: the lean init always scaffolds a (commented)
+    # Snowflake target; multi-destination scaffolding is a later capability.
     opts = InitOptions(
         project_name=project_name,
         default_target=default_target,
-        destination_kind=destination_kind,
         external_postgres_url=database_url,
         with_dbt=with_dbt,
         dbt_path=dbt_path,
@@ -150,6 +149,15 @@ def command(
     console.print(f"[bold]Initializing Carve project in[/bold] {root}")
     if plan.re_init:
         console.print("[yellow]![/yellow] Existing carve.toml — re-init (existing files kept).")
+    # Acknowledge detected brownfield code so the dominant persona sees Carve
+    # noticed their project (the interactive confirmation prompt is deferred).
+    if plan.dbt_same_repo and detection.dbt_projects:
+        rel = detection.dbt_projects[0].relative_to(root)
+        console.print(
+            f"[cyan]•[/cyan] Detected dbt project ({rel}) — Carve will integrate it, not modify it."
+        )
+    if plan.dlt_same_repo and detection.dlt_present:
+        console.print("[cyan]•[/cyan] Detected dlt code — Carve will integrate it, not modify it.")
 
     result = scaffold(root, plan)
     for path in result.dirs_created:
@@ -168,15 +176,17 @@ def command(
         console.print("  Add this line to your .env (gitignored):")
         console.print(f"    DATABASE_URL={database_url}", markup=False, soft_wrap=True)
 
-    # Connection config for the default target ([<kind>.<target>] in
-    # connections.toml + a `# === <target> target ===` .env.example block).
-    try:
-        add_target_to_project(plan.default_target, root)
-        console.print(f"[green]+[/green] {root / 'carve' / 'connections.toml'}")
-    except TargetExistsError:
+    # connections.toml is scaffolded with the default target COMMENTED OUT (by
+    # scaffold(), above) so the project loads without warehouse credentials.
+    # Here we add the matching `# === <target> target ===` block to
+    # .env.example so the user knows which env vars to set when they uncomment
+    # and activate it. (The live section is written later by `carve target
+    # create`, or by the user uncommenting the template.)
+    env_example_path = root / ".env.example"
+    if not env_example_has_block(plan.default_target, env_example_path):
+        add_env_example_block(plan.default_target, env_example_path)
         console.print(
-            f"[yellow]![/yellow] {root / 'carve' / 'connections.toml'} "
-            f"already has [snowflake.{plan.default_target}], skipping"
+            f"[green]+[/green] {env_example_path} (+ {plan.default_target}-target connection vars)"
         )
 
     _initialize_state_store(root, database_url=database_url)
@@ -187,10 +197,19 @@ def command(
     console.print("[green]✓[/green] Project initialized.")
     console.print("")
     console.print("Next steps:")
+    step = 1
     if database_url is None:
-        console.print("  docker compose up -d   # start the bundled Postgres")
-    console.print("  carve serve            # API + scheduler + worker")
-    console.print('  carve plan "ingest the Hacker News top stories"')
+        console.print(f"  {step}. docker compose up -d   # start the bundled Postgres")
+        step += 1
+    else:
+        console.print(
+            f"  {step}. Set DATABASE_URL in .env (gitignored) to the external "
+            "Postgres URL printed above"
+        )
+        step += 1
+    console.print(f"  {step}. Set ANTHROPIC_API_KEY in .env (copy from .env.example)")
+    step += 1
+    console.print(f'  {step}. carve plan "ingest the Hacker News top stories"')
     raise typer.Exit(code=0)
 
 

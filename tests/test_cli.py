@@ -224,20 +224,23 @@ def test_init_writes_connections_toml_template(
     tmp_path: Path,
     cli_env: dict[str, str],
 ) -> None:
-    """`connections.toml` ships a real `[snowflake.dev]` section.
+    """`connections.toml` ships a COMMENTED-OUT `[snowflake.dev]` template.
 
-    P1-01 changed init to call ``add_target_to_project("dev", root)``,
-    so the section is uncommented and uses ``${DEV_SNOWFLAKE_*}``-prefixed
-    placeholders.
+    The default target is scaffolded commented out so a fresh project loads
+    without warehouse credentials (see ``test_init_produces_loadable_config``).
+    The ``${DEV_SNOWFLAKE_*}`` placeholders are present as documentation;
+    uncommenting + filling them (or ``carve target create``) activates it.
     """
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
-    assert "[snowflake.dev]" in content
-    assert 'account = "${DEV_SNOWFLAKE_ACCOUNT}"' in content
-    assert 'user = "${DEV_SNOWFLAKE_USER}"' in content
-    assert 'password = "${DEV_SNOWFLAKE_PASSWORD}"' in content
+    # Commented header present; no LIVE (uncommented) section.
+    assert "# [snowflake.dev]" in content
+    assert "\n[snowflake.dev]" not in content
+    assert '# account = "${DEV_SNOWFLAKE_ACCOUNT}"' in content
+    assert '# user = "${DEV_SNOWFLAKE_USER}"' in content
+    assert '# password = "${DEV_SNOWFLAKE_PASSWORD}"' in content
 
 
 def test_init_writes_runner_toml_template(
@@ -282,22 +285,18 @@ def test_init_writes_env_example_template(
 
 
 def test_init_produces_loadable_config(
-    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
+    runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
-    """A freshly-initialised project must round-trip through `load_config()`.
+    """A freshly-initialised project must round-trip through `load_config()`
+    WITHOUT any warehouse credentials set.
 
-    P1-01 made init write a real ``[snowflake.dev]`` section with
-    ``${DEV_SNOWFLAKE_*}`` placeholders, so loading needs those env vars
-    populated. We set placeholder values to satisfy the loader.
+    The default target's ``[snowflake.dev]`` section is scaffolded commented
+    out, so ``load_config`` doesn't choke on unset ``${DEV_SNOWFLAKE_*}`` vars
+    — the regression for the first-run break where the advertised
+    ``carve plan`` died at config load. No ``DEV_SNOWFLAKE_*`` env vars are
+    set here on purpose; the connections map is empty until the user
+    uncomments the section or runs ``carve target create``.
     """
-    monkeypatch.setenv("DEV_SNOWFLAKE_ACCOUNT", "acc")
-    monkeypatch.setenv("DEV_SNOWFLAKE_USER", "u")
-    monkeypatch.setenv("DEV_SNOWFLAKE_PASSWORD", "p")
-    monkeypatch.setenv("DEV_SNOWFLAKE_ROLE", "r")
-    monkeypatch.setenv("DEV_SNOWFLAKE_WAREHOUSE", "w")
-    monkeypatch.setenv("DEV_SNOWFLAKE_DATABASE", "d")
-    monkeypatch.setenv("DEV_SNOWFLAKE_SCHEMA", "s")
-
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
@@ -306,8 +305,8 @@ def test_init_produces_loadable_config(
     assert config.models.anthropic_api_key is None
     assert config.models.default_model == "claude-opus-4-8"
     assert config.runner.type == "local_venv"
-    assert "dev" in config.connections.snowflake
-    assert config.connections.snowflake["dev"].account == "acc"
+    # Commented dev section → no live target, but the file still loads.
+    assert config.connections.snowflake == {}
 
 
 def test_init_carve_toml_content(
@@ -354,67 +353,52 @@ def test_init_is_idempotent_on_existing_files(
 # ---------------------------------------------------------------------------
 
 
-def test_init_uses_add_target_to_project(
+def test_init_scaffolds_commented_dev_target(
     runner: CliRunner,
     tmp_path: Path,
     cli_env: dict[str, str],
 ) -> None:
-    """``carve init`` produces the same artifacts that ``carve target create dev``
-    would, on a fresh project.
+    """``carve init`` scaffolds the default target's connections section
+    COMMENTED OUT — diverging on purpose from ``carve target create dev``,
+    which writes a LIVE section.
 
-    Both code paths route through ``add_target_to_project("dev", root)``;
-    this regression test pins the contract by initialising one project with
-    ``init`` and another by stitching together ``init`` + a fresh
-    ``target create``, then comparing the dev section + dev env-example
-    block byte-for-byte. P1.1-01 removed the per-target filesystem tree;
-    the flat ``el/`` tree from init is the same in both flows.
+    The new contract (lean init): a fresh project must load without warehouse
+    credentials, so the section is a commented template; activation is the
+    user's explicit step (uncomment, or run ``carve target create``). The
+    ``.env.example`` dev block is still produced by the same
+    ``add_env_example_block`` helper target-create uses, so it stays
+    byte-for-byte identical between the two verbs.
     """
     init_dir = tmp_path / "init"
     create_dir = tmp_path / "create"
     init_dir.mkdir()
     create_dir.mkdir()
 
-    # `init` flow: produces dev directly.
     result = runner.invoke(app, ["init", str(init_dir)], env=cli_env)
     assert result.exit_code == 0, result.output
 
-    # `target create` flow: init another project, then delete dev (force +
-    # no-default-warning), then re-create dev via `target create`.
+    # init's connections.toml: the dev section is commented (no LIVE section).
+    init_conn = (init_dir / "carve" / "connections.toml").read_text()
+    assert "# [snowflake.dev]" in init_conn
+    assert _extract_section(init_conn, "snowflake.dev") == []
+
+    # Activation is explicit: after init, `carve target create` writes a LIVE
+    # section (here a second target name, to show the live-vs-commented split).
     result = runner.invoke(app, ["init", str(create_dir)], env=cli_env)
     assert result.exit_code == 0, result.output
     result = runner.invoke(
-        app,
-        [
-            "target",
-            "delete",
-            "dev",
-            "--yes",
-            "--force",
-            "--no-default-warning",
-            "--project-dir",
-            str(create_dir),
-        ],
-        env=cli_env,
+        app, ["target", "create", "prod", "--project-dir", str(create_dir)], env=cli_env
     )
     assert result.exit_code == 0, result.output
-    result = runner.invoke(
-        app,
-        ["target", "create", "dev", "--project-dir", str(create_dir)],
-        env=cli_env,
-    )
-    assert result.exit_code == 0, result.output
-
-    # Pull out the [snowflake.dev] body from each connections.toml.
-    init_conn = (init_dir / "carve" / "connections.toml").read_text()
     create_conn = (create_dir / "carve" / "connections.toml").read_text()
-    assert _extract_section(init_conn, "snowflake.dev") == _extract_section(
-        create_conn, "snowflake.dev"
-    )
+    assert _extract_section(create_conn, "snowflake.prod") != []  # live section
 
-    # Pull out the # === dev target === block from each .env.example.
+    # init still produces a well-formed dev env-example block (via the same
+    # add_env_example_block helper target-create uses).
     init_env = (init_dir / ".env.example").read_text()
-    create_env = (create_dir / ".env.example").read_text()
-    assert _extract_env_block(init_env, "dev") == _extract_env_block(create_env, "dev")
+    dev_block = _extract_env_block(init_env, "dev")
+    assert dev_block[0] == "# === dev target ==="
+    assert "DEV_SNOWFLAKE_ACCOUNT=" in dev_block
 
     # Flat el/ tree exists in both (created by init); no targets/ tree.
     assert (init_dir / "el").is_dir()

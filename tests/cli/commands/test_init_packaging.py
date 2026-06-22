@@ -66,6 +66,9 @@ def test_external_postgres_skips_compose_and_migrates(
     assert postgres_state_store_url in result.output
     assert "External Postgres" in result.output
     assert "schema initialized" in result.output
+    # Next-steps must tell the external user to set DATABASE_URL, else they'd
+    # silently fall back to the bundled default DB on the first `carve plan`.
+    assert "Set DATABASE_URL in .env" in result.output
 
     engine = create_engine(postgres_state_store_url)
     assert "runs" in set(inspect(engine).get_table_names())

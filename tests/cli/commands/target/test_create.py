@@ -18,6 +18,13 @@ def runner() -> CliRunner:
 def _init_project(runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]) -> None:
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
+    # init scaffolds the default `dev` target COMMENTED (so a fresh project
+    # loads creds-free); these target-management tests need a LIVE `dev`, so
+    # activate it explicitly — the same live section init used to write.
+    result = runner.invoke(
+        app, ["target", "create", "dev", "--project-dir", str(tmp_path)], env=cli_env
+    )
+    assert result.exit_code == 0, result.output
 
 
 def test_target_create_appends_section_to_connections(
@@ -120,8 +127,9 @@ def test_target_create_force_overwrites(
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / "carve" / "connections.toml").read_text()
-    # Still only one [snowflake.dev] section.
-    assert content.count("[snowflake.dev]") == 1
+    # Still only one LIVE [snowflake.dev] section (the commented template
+    # header init scaffolds, `# [snowflake.dev]`, is separate and doesn't count).
+    assert content.count("\n[snowflake.dev]") == 1
 
 
 def test_target_create_preserves_comments_round_trip(
