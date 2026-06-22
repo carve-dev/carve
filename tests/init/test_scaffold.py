@@ -14,7 +14,6 @@ def _plan(root: Path, **overrides: object) -> InitPlan:
         root=root,
         project_name=root.name,
         default_target="dev",
-        destination_kind="snowflake",
         external_postgres_url=None,
         components=(),
         scaffold_dbt=False,

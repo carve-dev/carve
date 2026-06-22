@@ -74,13 +74,15 @@ def test_init_writes_carve_toml_with_default_target(
 def test_init_seeds_dev_section_in_connections(
     runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
-    """``carve/connections.toml`` contains ``[snowflake.dev]`` with
-    ``${DEV_SNOWFLAKE_*}`` placeholders for every standard field."""
+    """``carve/connections.toml`` contains a COMMENTED ``[snowflake.dev]``
+    template with ``${DEV_SNOWFLAKE_*}`` placeholders for every standard
+    field — commented so a fresh project loads without warehouse creds."""
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
-    assert "[snowflake.dev]" in content
+    assert "# [snowflake.dev]" in content
+    assert "\n[snowflake.dev]" not in content  # commented, not live
     for field in ("ACCOUNT", "USER", "PASSWORD", "ROLE", "WAREHOUSE", "DATABASE"):
         assert f"${{DEV_SNOWFLAKE_{field}}}" in content
 
@@ -205,15 +207,13 @@ def test_init_gitignore_uses_root_env(
 def test_init_does_not_clobber_existing_files(
     runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]
 ) -> None:
-    """Pre-existing ``carve.toml`` and other ``_write_if_missing``-managed
-    files are preserved verbatim on a re-init.
+    """Pre-existing ``carve.toml`` and other scaffold-managed files are
+    preserved verbatim on a re-init.
 
-    Note: ``carve/connections.toml`` is edited in-place by
-    ``add_target_to_project``, so a pre-existing file gains a
-    ``[snowflake.dev]`` section if one isn't already present — but the
-    user's prior content is preserved alongside (the helper appends, it
-    doesn't overwrite). On a second ``init`` (idempotent re-run, see
-    ``test_init_idempotent``) the section is detected and skipped.
+    ``carve/connections.toml`` is now scaffolded from a commented template
+    (skip-if-exists), so a pre-existing one is left untouched. The
+    ``.env.example`` dev block is still appended idempotently (guarded by
+    ``env_example_has_block``); see ``test_init_idempotent``.
     """
     # Pre-create the file with sentinel content.
     (tmp_path / "carve").mkdir()

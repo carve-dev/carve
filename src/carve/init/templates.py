@@ -126,17 +126,16 @@ DECISIONS_MD_CONTENT = """\
 ## (No decisions recorded yet)
 """
 
-# Convention inference is deferred (see DELIVERY); init writes this placeholder
-# so the file exists. `carve memory refresh` will populate it later.
+# Convention inference is deferred (see DELIVERY). The body is intentionally
+# comment-only: the EL agent strips HTML comments and skips a conventions file
+# whose remaining body is empty, so this placeholder must contribute NO prose —
+# otherwise the agent is told as fact that "no conventions were inferred".
+# `carve memory refresh` (once it ships) replaces this with inferred content.
 CONVENTIONS_MD_CONTENT = """\
-# Project conventions
-
-> Inferred by Carve from this project's existing code. Convention inference is
-> not yet wired up — run `carve memory refresh` once it ships to populate this
-> from any detected dbt/dlt projects. User-edited overrides go in
-> `carve/standards.md`, which takes precedence over inferred conventions.
-
-## (No conventions inferred yet)
+<!-- Inferred project conventions land here once `carve memory refresh` ships.
+     Until then this file is intentionally empty so it adds nothing to the
+     agent's context. User-authored rules go in carve/standards.md, which
+     takes precedence over inferred conventions. -->
 """
 
 DLT_SAMPLE_INIT_CONTENT = """\
@@ -180,6 +179,39 @@ def render_carve_toml(plan: InitPlan) -> str:
                 lines.append(f"url = {_toml_str(c.url)}")
             if c.branch is not None:
                 lines.append(f"branch = {_toml_str(c.branch)}")
+    return "\n".join(lines) + "\n"
+
+
+def render_connections_toml(default_target: str) -> str:
+    """Render a fresh project's ``connections.toml`` with a COMMENTED target.
+
+    The default target's ``[snowflake.<name>]`` section is scaffolded commented
+    out so a fresh project loads without warehouse credentials. ``load_config``
+    raises on an unset ``${VAR}``, and a live ``${<NAME>_SNOWFLAKE_*}``
+    placeholder would make the very first ``carve plan`` fail before the user
+    has any Snowflake creds (a dlt ingestion needs none; a dbt build into
+    Snowflake does). Uncomment + fill (env vars live in ``.env.example``) when a
+    warehouse exists, or run ``carve target create <name>`` for a live section.
+    """
+    upper = default_target.upper()
+    lines = [
+        "# Connection definitions for Snowflake (and future connectors).",
+        "# The key after `[snowflake.<target>]` is the target name, referenced",
+        "# from carve.toml's `default_target`.",
+        "#",
+        "# Use ${VAR_NAME} to interpolate environment variables from .env or your",
+        "# shell. Your default target is scaffolded below, COMMENTED OUT, so a",
+        "# fresh project loads without warehouse credentials. To activate it, do",
+        "# exactly ONE of:",
+        "#   (a) uncomment the block below and fill in the env vars (.env.example",
+        "#       lists them); or",
+        "#   (b) leave it commented and run `carve target create <name>`.",
+        "# Do NOT do both — two live [snowflake.<name>] sections is invalid TOML.",
+        "#",
+        f"# [snowflake.{default_target}]",
+    ]
+    for field in ("account", "user", "password", "role", "warehouse", "database", "schema"):
+        lines.append(f'# {field} = "${{{upper}_SNOWFLAKE_{field.upper()}}}"')
     return "\n".join(lines) + "\n"
 
 

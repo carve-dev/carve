@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -340,17 +341,22 @@ def _compose_system_prompt(
 def _render_conventions_block(project_dir: Path, config: Config) -> str | None:
     """Read ``<project_dir>/<config_dir>/conventions.md`` if present.
 
-    Returns ``None`` (and skips the section) when the file is missing or
-    empty. Pillar 1 ships without a convention doc; Pillar 2's M2-08
-    inference produces one and the agent picks it up automatically.
+    Returns ``None`` (and skips the section) when the file is missing,
+    empty, or contains only HTML comments. Pillar 1 ships without a
+    convention doc — and ``carve init`` scaffolds a comment-only placeholder
+    until inference lands — so a file with no real prose must add nothing to
+    the prompt (otherwise the agent is told as fact that no conventions
+    exist). Pillar 2's M2-08 inference produces real content and the agent
+    picks it up automatically.
     """
     candidate = project_dir / config.paths.config_dir / "conventions.md"
     if not candidate.is_file():
         return None
-    text = candidate.read_text(encoding="utf-8").strip()
-    if not text:
+    raw = candidate.read_text(encoding="utf-8")
+    # A comment-only doc (e.g. init's placeholder) is treated as empty.
+    if not re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL).strip():
         return None
-    return f"## Conventions\n\n{text}"
+    return f"## Conventions\n\n{raw.strip()}"
 
 
 def _render_connection_context(config: Config, active_target: str) -> str:

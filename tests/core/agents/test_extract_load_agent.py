@@ -28,6 +28,7 @@ import sqlparse
 from carve.core.agents.extract_load.agent import (
     ExtractLoadAgentError,
     ExtractLoadResult,
+    _render_conventions_block,
     run_extract_load_agent,
 )
 from carve.core.config.schema import (
@@ -1018,3 +1019,31 @@ def test_convention_preamble_skipped_when_absent(
 
     first_system = client.calls[0]["system"]
     assert "## Conventions" not in first_system
+
+
+def _bare_config() -> Config:
+    return Config(
+        project=ProjectConfig(name="x"),
+        models=ModelsConfig(anthropic_api_key="x"),
+        server=ServerConfig(),
+    )
+
+
+def test_conventions_block_skips_comment_only_file(tmp_path: Path) -> None:
+    """A comment-only conventions.md (e.g. what `carve init` scaffolds) must
+    NOT be injected — otherwise the agent is told as fact that no conventions
+    were inferred. Regression for the init placeholder leaking into context."""
+    conv = tmp_path / "carve" / "conventions.md"
+    conv.parent.mkdir(parents=True, exist_ok=True)
+    conv.write_text("<!-- inferred conventions land here later -->\n", encoding="utf-8")
+    assert _render_conventions_block(tmp_path, _bare_config()) is None
+
+
+def test_conventions_block_injects_real_prose(tmp_path: Path) -> None:
+    """Real convention prose (even alongside comments) is still injected."""
+    conv = tmp_path / "carve" / "conventions.md"
+    conv.parent.mkdir(parents=True, exist_ok=True)
+    conv.write_text("<!-- note -->\nUse snake_case for tables.\n", encoding="utf-8")
+    block = _render_conventions_block(tmp_path, _bare_config())
+    assert block is not None
+    assert "Use snake_case for tables." in block

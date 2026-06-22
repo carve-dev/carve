@@ -18,6 +18,13 @@ def runner() -> CliRunner:
 def _init_project(runner: CliRunner, tmp_path: Path, cli_env: dict[str, str]) -> None:
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
+    # init scaffolds the default `dev` target COMMENTED (so a fresh project
+    # loads creds-free); these target-management tests need a LIVE `dev`, so
+    # activate it explicitly — the same live section init used to write.
+    result = runner.invoke(
+        app, ["target", "create", "dev", "--project-dir", str(tmp_path)], env=cli_env
+    )
+    assert result.exit_code == 0, result.output
 
 
 def test_target_delete_removes_section(

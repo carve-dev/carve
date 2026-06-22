@@ -2,7 +2,7 @@
 
 > Rebuilds `carve init` around the positioning: Postgres-from-day-one, bundled docker-compose, flat dlt layout, per-backend repo topology, project memory scaffolding, full dlt/dbt symmetry. Per [PRD §6.1](../PRD.md), [PRD §6.2](../PRD.md), [PRD §6.3 project memory](../PRD.md), [ARCHITECTURE §3 code layout](../ARCHITECTURE.md), and [ARCHITECTURE §10.5 convention inference](../ARCHITECTURE.md). Replaces the archived [P1-03 init-per-target-layout draft](../_archive/pillar-1-extract-load/03-init-per-target-layout.md), whose premise (`targets/<target>/el/`) is broken by the flat-layout decision in spec 03.
 
-> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md); concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). The rendered `carve.toml` is the **control-plane config**: `[project]` + `[state_store]` + `[components.<name>]` blocks ([layout](./layout.md)). In **simple mode** (same-repo dbt/dlt — detected brownfield *or* a `--with-*` greenfield scaffold), init writes **no** `[components.*]` blocks — components are discovered by convention. A `[components.<name>]` block is written **only** for a component that lives elsewhere (`--dbt-path`/`--dbt-url`/`--dlt-path`/`--dlt-url`, i.e. separate-local / separate-remote). The old singular `[dbt]` / `[dlt]` / `[models]` blocks are **retired** (this reconciles spec 05 to spec 03; agent-model tiers are per-agent frontmatter in [extensibility](./extensibility.md) + the install default, not a `carve.toml` block).
+> **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md); concrete shapes in [../_strategy/control-plane-reference-model.md](../_strategy/control-plane-reference-model.md)). The rendered `carve.toml` is the **control-plane config**: `[project]` + `[paths]` + `[components.<name>]` blocks ([layout](./layout.md)). (No `[state_store]` block is written — the loader raises on an unset `${VAR}`, so a `url = "${DATABASE_URL}"` line would break `load_config` on a fresh project before `.env` exists; the state-store URL flows from the `DATABASE_URL` env via resolve precedence. See Templates.) In **simple mode** (same-repo dbt/dlt — detected brownfield *or* a `--with-*` greenfield scaffold), init writes **no** `[components.*]` blocks — components are discovered by convention. A `[components.<name>]` block is written **only** for a component that lives elsewhere (`--dbt-path`/`--dbt-url`/`--dlt-path`/`--dlt-url`, i.e. separate-local / separate-remote). The old singular `[dbt]` / `[dlt]` / `[models]` blocks are **retired** (this reconciles spec 05 to spec 03; agent-model tiers are per-agent frontmatter in [extensibility](./extensibility.md) + the install default, not a `carve.toml` block).
 
 ## Status
 
@@ -47,8 +47,6 @@ carve init [OPTIONS]
 OPTIONS:
   --non-interactive            Disable prompts; fail if required input missing
   --external-postgres URL      Use external Postgres; skip docker-compose scaffold
-  --postgres-bundled           Force the bundled compose path even if --external-postgres-looking
-                                env vars are set (escape hatch)
 
   --with-dbt                   Scaffold a new dbt project at the root (greenfield)
   --dbt-path PATH              Use existing dbt project at this filesystem path
@@ -62,14 +60,21 @@ OPTIONS:
 
   --migrate-from-targets       Migrate an existing targets/<target>/el/ layout to flat el/ (per spec 03)
 
-  --project-name NAME          Override project name (default: directory name slugified)
+  --project-name NAME          Override project name (default: directory name)
   --default-target NAME        Target name to make the default (default: "dev")
-  --destination-kind KIND      Destination type for the default target (default: "snowflake";
-                                supports any dlt destination: postgres, bigquery, duckdb, etc.)
 
-  --skip-postgres-bootstrap    Don't try to connect to Postgres during init (defers to first carve serve)
   --no-git-init                Don't run git init even if no git repo present
 ```
+
+> **Landed vs deferred (lean init — see Status).** Landed: `--external-postgres`,
+> the `--with-/--*-path/--*-url/--*-branch` dbt+dlt flags, `--project-name`,
+> `--default-target`, `--no-git-init`. `--non-interactive` is accepted but a
+> no-op (resolution is always non-interactive). Deferred (tracked):
+> `--migrate-from-targets`, `--skip-postgres-bootstrap`, eager
+> `--dbt-engine`/`--dbt-version`. **Cut** (not planned): `--postgres-bundled`
+> (no env-var auto-detection to escape from) and `--destination-kind` (the lean
+> init always scaffolds a commented Snowflake target; multi-destination
+> scaffolding is a later capability).
 
 ### Flow
 
@@ -151,7 +156,6 @@ Postgres setup:
     Connect to an external Postgres (managed RDS, Cloud SQL, etc.)
 
 Default target name [dev]:
-Destination kind for the default target [snowflake]:
 ```
 
 When the user has provided flags for some but not all decisions, only the unresolved ones get prompted.
@@ -161,13 +165,13 @@ When the user has provided flags for some but not all decisions, only the unreso
 Re-running `carve init` in a directory with an existing `carve.toml`:
 
 - Re-runs detection — surfaces any new brownfield projects (e.g., user added a dbt subdirectory after the first init)
-- Does **not** overwrite any of: `carve.toml`, `carve/connections.toml`, `carve/runtime.toml`, `carve/standards.md`, `carve/decisions.md`, `docker-compose.yml`, `.env`, `dbt_project.yml`, `.dlt/config.toml` (if it exists), user-authored files in `el/`
-- **Does** refresh: `carve/conventions.md` (re-runs inference; this file is owned by Carve), `.env.example` (template), `.gitignore` (Carve's section, identified by marker comments)
-- Prints a summary of what was kept, what was refreshed, and any new detections
+- Does **not** overwrite any of: `carve.toml`, `carve/connections.toml`, `carve/runner.toml`, `carve/models.toml`, `carve/conventions.md`, `carve/standards.md`, `carve/decisions.md`, `docker-compose.yml`, `.env`, `.env.example`, `.gitignore`, `dbt_project.yml`, `.dlt/config.toml` (if it exists), user-authored files in `el/`
+- **Re-init is skip-only as shipped** — every existing scaffold file is kept verbatim (the symlink-safe `_write` skips if-exists). The `.env.example` dev-target block is the one append, guarded against duplication. *Marker-comment **refresh** of `conventions.md` / `.env.example` / `.gitignore` is deferred — it's coupled to convention inference (see Status) and a not-yet-existent upgrade story.*
+- Prints a summary of what was kept and any new detections
 
 ### Non-interactive (CI) mode
 
-`--non-interactive` requires all decisions to be supplied via flags or env vars. Each unresolved decision triggers a clean error pointing at the relevant flag. The exit code is 3 (config error per spec 01).
+`--non-interactive` requires all decisions to be supplied via flags or env vars. Each unresolved decision triggers a clean error pointing at the relevant flag. **Exit codes (as shipped):** bad/conflicting input and resolution errors → **2** (matches the CLI-wide `ConfigError`/usage-error convention used by `carve plan`/`build`/`auth`); Docker-unavailable on the bundled path → **3**. (The earlier "config error = 3" note conflicted with the rest of the CLI, which uses 2; reconciled here to the shipped convention.)
 
 Example: `carve init --non-interactive --external-postgres "${DATABASE_URL}" --dbt-path ./dbt --default-target dev` is sufficient for a CI pipeline.
 
@@ -209,21 +213,26 @@ Inference is bounded by file count (default cap 5000 files scanned) and time (5 
 The Jinja templates render with:
 
 - Project metadata (name, slug, created_at)
-- Resolved decisions (postgres URL, target name, destination kind, etc.)
+- Resolved decisions (postgres URL, target name, dbt/dlt topology, etc.)
 - Detected brownfield info (paths, names)
 
 Examples:
 
 `carve.toml.j2`:
 ```toml
-# Generated by `carve init` on {{ created_at }}. Edit freely.
+# Generated by `carve init`. Edit freely.
 [project]
 name = "{{ project_name }}"
 default_target = "{{ default_target }}"
-carve_version = "{{ carve_version }}"
 
-[state_store]
-url = "${DATABASE_URL}"
+[paths]
+config_dir = "carve"
+agents_dir = "carve/agents"
+
+# No [state_store] block: the loader raises on an unset ${VAR}, so a
+# url = "${DATABASE_URL}" line would break load_config on a fresh project
+# before .env exists. The state-store URL flows from the DATABASE_URL env
+# (documented in .env.example) via the resolve precedence.
 
 # SIMPLE MODE writes NO [components.*] blocks: same-repo dbt/dlt (detected or
 # scaffolded) is discovered by convention (each el/<name>/ is a dlt component; the
