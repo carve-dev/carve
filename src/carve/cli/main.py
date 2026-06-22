@@ -22,6 +22,7 @@ from carve.cli.commands import (
 from carve.cli.commands.agents import app as agents_app
 from carve.cli.commands.auth import app as auth_app
 from carve.cli.commands.el import app as el_app
+from carve.cli.commands.memory import app as memory_app
 from carve.cli.commands.skills import app as skills_app
 from carve.cli.commands.target import app as target_app
 from carve.cli.dotenv import load_dotenv
@@ -92,6 +93,7 @@ app.command(name="version")(version.command)
 app.add_typer(auth_app, name="auth")
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
+app.add_typer(memory_app, name="memory")
 app.add_typer(agents_app, name="agents")
 app.add_typer(skills_app, name="skills")
 app.add_typer(mcp_servers.app, name="mcp-servers")

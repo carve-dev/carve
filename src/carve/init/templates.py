@@ -123,7 +123,8 @@ DECISIONS_MD_CONTENT = """\
     **Reviewers:** alice@, bob@
     **Impact:** Which pipelines / models / schemas this affects.
 
-## (No decisions recorded yet)
+<!-- Decisions are appended below this line, newest first, by
+     `carve memory append-decision`. -->
 """
 
 # Convention inference is deferred (see DELIVERY). The body is intentionally
