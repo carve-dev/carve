@@ -76,7 +76,5 @@ def get_metadata(fn: SkillFn) -> SkillMetadata:
     """
     metadata = getattr(fn, "_skill_metadata", None)
     if not isinstance(metadata, SkillMetadata):
-        raise ValueError(
-            f"Function {fn.__name__!r} is not a @skill — no metadata attached."
-        )
+        raise ValueError(f"Function {fn.__name__!r} is not a @skill — no metadata attached.")
     return metadata

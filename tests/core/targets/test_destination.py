@@ -33,9 +33,7 @@ class TestParseFqnFromGoal:
         [
             (
                 "Daily ingest of Iowa liquor sales into ANALYTICS.SALES.IOWA_LIQUOR",
-                Destination(
-                    database="ANALYTICS", schema="SALES", table="IOWA_LIQUOR"
-                ),
+                Destination(database="ANALYTICS", schema="SALES", table="IOWA_LIQUOR"),
             ),
             (
                 "ingest the iowa data and load into sales.iowa_sales daily",
@@ -59,9 +57,7 @@ class TestParseFqnFromGoal:
             ),
         ],
     )
-    def test_recognises_destination_phrases(
-        self, goal: str, expected: Destination
-    ) -> None:
+    def test_recognises_destination_phrases(self, goal: str, expected: Destination) -> None:
         assert parse_fqn_from_goal(goal) == expected
 
     @pytest.mark.parametrize(
@@ -103,16 +99,8 @@ class TestWriteDestinationToml:
         assert '# schema = "RAW"' in content
         # No live override lines (count by-line so we don't false-match
         # the commented-out form).
-        live_db = [
-            line
-            for line in content.splitlines()
-            if line.startswith('database =')
-        ]
-        live_schema = [
-            line
-            for line in content.splitlines()
-            if line.startswith('schema =')
-        ]
+        live_db = [line for line in content.splitlines() if line.startswith("database =")]
+        live_schema = [line for line in content.splitlines() if line.startswith("schema =")]
         assert live_db == []
         assert live_schema == []
 
@@ -129,27 +117,17 @@ class TestWriteDestinationToml:
         content = path.read_text(encoding="utf-8")
         assert 'table = "IOWA_SALES"' in content
         # schema is a live override.
-        live_schema = [
-            line
-            for line in content.splitlines()
-            if line.startswith('schema =')
-        ]
+        live_schema = [line for line in content.splitlines() if line.startswith("schema =")]
         assert live_schema == ['schema = "CURATED"']
         # database stays commented (matches env).
-        live_db = [
-            line
-            for line in content.splitlines()
-            if line.startswith('database =')
-        ]
+        live_db = [line for line in content.splitlines() if line.startswith("database =")]
         assert live_db == []
 
     def test_database_and_schema_override(self, tmp_path: Path) -> None:
         path = tmp_path / "iowa" / "destination.toml"
         write_destination_toml(
             path,
-            Destination(
-                table="IOWA", database="ANALYTICS", schema="CURATED"
-            ),
+            Destination(table="IOWA", database="ANALYTICS", schema="CURATED"),
             target="dev",
             env_database="DEV_DB",
             env_schema="RAW",
@@ -178,11 +156,7 @@ class TestWriteDestinationToml:
             env_schema="RAW",
         )
         content = path.read_text(encoding="utf-8")
-        live_db = [
-            line
-            for line in content.splitlines()
-            if line.startswith('database =')
-        ]
+        live_db = [line for line in content.splitlines() if line.startswith("database =")]
         assert live_db == []  # not promoted to live line
         assert '# database = "DEV_DB"' in content
 
@@ -252,9 +226,7 @@ class TestResolveAtRuntime:
             "DEV_SNOWFLAKE_DATABASE": "DEV_DB",
             "DEV_SNOWFLAKE_SCHEMA": "RAW",
         }
-        result = resolve_at_runtime(
-            Destination(table="IOWA"), env=env, target="dev"
-        )
+        result = resolve_at_runtime(Destination(table="IOWA"), env=env, target="dev")
         assert result == ("DEV_DB", "RAW", "IOWA")
 
     def test_schema_override_wins_over_env(self) -> None:
@@ -277,9 +249,7 @@ class TestResolveAtRuntime:
         """
         env = {"DEV_SNOWFLAKE_DATABASE": "DEV_DB"}  # no SCHEMA
         with pytest.raises(KeyError, match="DEV_SNOWFLAKE_SCHEMA"):
-            resolve_at_runtime(
-                Destination(table="IOWA"), env=env, target="dev"
-            )
+            resolve_at_runtime(Destination(table="IOWA"), env=env, target="dev")
 
     def test_target_uppercased_for_env_lookup(self) -> None:
         env = {
@@ -287,7 +257,5 @@ class TestResolveAtRuntime:
             "PROD_SNOWFLAKE_SCHEMA": "ANALYTICS_RAW",
         }
         # `target` lowercase; resolve uppercases for env lookup.
-        result = resolve_at_runtime(
-            Destination(table="IOWA"), env=env, target="prod"
-        )
+        result = resolve_at_runtime(Destination(table="IOWA"), env=env, target="prod")
         assert result == ("PROD_DB", "ANALYTICS_RAW", "IOWA")

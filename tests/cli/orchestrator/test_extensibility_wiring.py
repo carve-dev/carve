@@ -65,18 +65,12 @@ def _usage(input_tokens: int = 100, output_tokens: int = 50) -> SimpleNamespace:
     )
 
 
-def _tool_use_block(
-    name: str, input_: dict[str, Any], tool_id: str
-) -> SimpleNamespace:
+def _tool_use_block(name: str, input_: dict[str, Any], tool_id: str) -> SimpleNamespace:
     return SimpleNamespace(type="tool_use", id=tool_id, name=name, input=input_)
 
 
-def _response(
-    *, content: list[Any], stop_reason: str
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        content=content, stop_reason=stop_reason, usage=_usage()
-    )
+def _response(*, content: list[Any], stop_reason: str) -> SimpleNamespace:
+    return SimpleNamespace(content=content, stop_reason=stop_reason, usage=_usage())
 
 
 def _client_returning(*responses: Any) -> MagicMock:
@@ -120,9 +114,7 @@ def test_hooks_from_fixture_fire_through_a_constructed_loop(
 ) -> None:
     """A fixture hooks.toml pre_tool hook blocks a tool call in a live loop."""
     (tmp_path / "carve").mkdir()
-    (tmp_path / "carve" / "hooks.toml").write_text(
-        _BLOCKING_HOOKS_TOML, encoding="utf-8"
-    )
+    (tmp_path / "carve" / "hooks.toml").write_text(_BLOCKING_HOOKS_TOML, encoding="utf-8")
 
     pre_hook, post_hook = build_extensibility_hooks(
         project_dir=tmp_path,
@@ -196,9 +188,7 @@ def test_missing_hooks_file_yields_no_hooks(tmp_path: Path) -> None:
 def test_malformed_hooks_file_is_fail_closed(tmp_path: Path) -> None:
     """A present-but-malformed hooks.toml raises HookConfigError (fail-closed)."""
     (tmp_path / "carve").mkdir()
-    (tmp_path / "carve" / "hooks.toml").write_text(
-        _MALFORMED_HOOKS_TOML, encoding="utf-8"
-    )
+    (tmp_path / "carve" / "hooks.toml").write_text(_MALFORMED_HOOKS_TOML, encoding="utf-8")
     with pytest.raises(HookConfigError):
         build_extensibility_hooks(
             project_dir=tmp_path,
@@ -416,9 +406,7 @@ def test_generate_plan_aborts_on_malformed_hooks_toml(
     """
     config = _config(postgres_state_store_url)
     (tmp_path / "carve").mkdir()
-    (tmp_path / "carve" / "hooks.toml").write_text(
-        _MALFORMED_HOOKS_TOML, encoding="utf-8"
-    )
+    (tmp_path / "carve" / "hooks.toml").write_text(_MALFORMED_HOOKS_TOML, encoding="utf-8")
     # The client must never be reached — fail-closed happens first.
     client = _client_returning()
     with pytest.raises(HookConfigError):
@@ -453,9 +441,7 @@ def test_build_plan_aborts_on_malformed_hooks_toml(
     )
     # Now drop a malformed hooks.toml and build the saved plan.
     (tmp_path / "carve").mkdir(exist_ok=True)
-    (tmp_path / "carve" / "hooks.toml").write_text(
-        _MALFORMED_HOOKS_TOML, encoding="utf-8"
-    )
+    (tmp_path / "carve" / "hooks.toml").write_text(_MALFORMED_HOOKS_TOML, encoding="utf-8")
     build_client = _client_returning()
     with pytest.raises(HookConfigError):
         build_plan(

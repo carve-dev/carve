@@ -127,9 +127,9 @@ def test_model_metadata_reflects_against_postgres(
         inspector = inspect(engine)
 
         table_names = set(inspector.get_table_names())
-        assert {"runs", "logs", "plans", "pipelines", "builds"}.issubset(
-            table_names
-        ), f"expected M1-shape tables; got {sorted(table_names)}"
+        assert {"runs", "logs", "plans", "pipelines", "builds"}.issubset(table_names), (
+            f"expected M1-shape tables; got {sorted(table_names)}"
+        )
 
         plan_cols = {c["name"]: c for c in inspector.get_columns("plans")}
         build_cols = {c["name"]: c for c in inspector.get_columns("builds")}
@@ -151,8 +151,7 @@ def test_model_metadata_reflects_against_postgres(
                 f"plans.{col_name} must be TIMESTAMP type; got {col_type!r}"
             )
             assert col_type.timezone is True, (
-                f"plans.{col_name} must be TIMESTAMPTZ (timezone=True); "
-                f"got {col_type!r}"
+                f"plans.{col_name} must be TIMESTAMPTZ (timezone=True); got {col_type!r}"
             )
 
         run_cols = {c["name"]: c for c in inspector.get_columns("runs")}

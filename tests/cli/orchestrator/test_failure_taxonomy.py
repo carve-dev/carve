@@ -21,7 +21,7 @@ from carve.cli.orchestrator.failure_taxonomy import (
 def test_classify_failure_dict_binding_pattern() -> None:
     """Iowa-liquor regression: dict-binding traceback → code_fix."""
     error = (
-        'snowflake.connector.errors.ProgrammingError: 100096: Failed to bind '
+        "snowflake.connector.errors.ProgrammingError: 100096: Failed to bind "
         "parameter LOCATION: argument of type 'dict' is not JSON serializable"
     )
     assert classify_failure(error) == FailureCategory.CODE_FIX

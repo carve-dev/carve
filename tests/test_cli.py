@@ -134,9 +134,14 @@ def test_deploy_alias_requires_from_and_to(runner: CliRunner) -> None:
     ``tests/cli/commands/el/test_deploy.py``.
     """
     result = runner.invoke(app, ["deploy", "my_pipeline"])
-    # Missing --from / --to → typer exits 2 with a usage message.
+    # Missing --from / --to → typer exits 2 with a usage error. We assert the
+    # contract (exit 2 + a usage message), not the rendered option list:
+    # typer's rich error only prints the options panel at wider terminal
+    # widths, so asserting "--from" is environment-brittle (passes locally,
+    # fails under CI's no-TTY width). The forwarded flags are covered in
+    # tests/cli/commands/el/test_deploy.py.
     assert result.exit_code == 2
-    assert "--from" in result.output
+    assert "Usage" in result.output
 
 
 @pytest.mark.parametrize(
@@ -389,13 +394,13 @@ def test_init_uses_add_target_to_project(
             "--project-dir",
             str(create_dir),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--project-dir", str(create_dir)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -473,8 +478,8 @@ def test_top_level_target_flag_wired(
     result = runner.invoke(app, ["init", str(tmp_path)], env=cli_env)
     assert result.exit_code == 0, result.output
     result = runner.invoke(
-        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 0, result.output
 
     # Pass the top-level --target flag and verify it's captured. We use
@@ -492,7 +497,7 @@ def test_top_level_target_flag_wired(
             "--project-dir",
             str(tmp_path),
         ],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 

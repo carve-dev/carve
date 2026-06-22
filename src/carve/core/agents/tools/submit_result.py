@@ -34,8 +34,7 @@ SUBMIT_RESULT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": sorted(_VALID_STATUS),
             "description": (
-                "succeeded / needs_user_input / failed — the orchestrator "
-                "branches on this."
+                "succeeded / needs_user_input / failed — the orchestrator branches on this."
             ),
         },
         "summary": {

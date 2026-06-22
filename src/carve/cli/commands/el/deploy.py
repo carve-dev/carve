@@ -149,9 +149,7 @@ def command(
 
     auto_fix_enabled = (not no_auto_fix) and config.runner.auto_fix.enabled
     attempts_resolved = (
-        max_fix_attempts
-        if max_fix_attempts is not None
-        else config.runner.auto_fix.max_attempts
+        max_fix_attempts if max_fix_attempts is not None else config.runner.auto_fix.max_attempts
     )
 
     try:
@@ -265,9 +263,7 @@ def run_deploy(
             recovery = NullRecoveryHandler()
 
     attempts = (
-        max_fix_attempts
-        if max_fix_attempts is not None
-        else config.runner.auto_fix.max_attempts
+        max_fix_attempts if max_fix_attempts is not None else config.runner.auto_fix.max_attempts
     )
 
     try:
@@ -314,9 +310,7 @@ def _run_deploy_inner(
     # ---- Phase 1: Validate ------------------------------------------------
     available = sorted(config.connections.snowflake.keys())
     if source_target == dest_target:
-        console.print(
-            f"[red]✗[/red] --from and --to must differ; got {source_target!r}."
-        )
+        console.print(f"[red]✗[/red] --from and --to must differ; got {source_target!r}.")
         return 2
     for label, target in (("--from", source_target), ("--to", dest_target)):
         if target not in config.connections.snowflake:
@@ -402,9 +396,7 @@ def _run_deploy_inner(
     except Exception as exc:
         logger.exception("deploy crashed unexpectedly")
         repository.update_run_status(run_id, "crashed", error=str(exc))
-        repository.record_pipeline_run(
-            pipeline_name=pipeline_name, run_id=run_id, status="crashed"
-        )
+        repository.record_pipeline_run(pipeline_name=pipeline_name, run_id=run_id, status="crashed")
         console.print(f"[red]✗[/red] deploy crashed: {exc}")
         return 1
 
@@ -438,9 +430,7 @@ def _execute_phases(
     # P1.1-01 shim: the DDL companion file lives next to main.py in
     # the flat artifact tree (``el/<name>/snowflake.sql``). P1.1-03
     # will rename to ``.sql.j2`` and templatize.
-    ddl_path = (
-        ctx.project_dir / "el" / ctx.pipeline_name / "snowflake.sql"
-    )
+    ddl_path = ctx.project_dir / "el" / ctx.pipeline_name / "snowflake.sql"
 
     preflight = run_preflight(
         deploy_connection=deploy_conn,
@@ -473,9 +463,7 @@ def _execute_phases(
             f"catalog context: {ctx.source_target} → {ctx.dest_target}"
         )
         if ddl_path.is_file():
-            ctx.console.print(
-                f"  DDL:   el/{ctx.pipeline_name}/snowflake.sql"
-            )
+            ctx.console.print(f"  DDL:   el/{ctx.pipeline_name}/snowflake.sql")
 
         # Surface destination.toml overrides — particularly the case
         # where an override differs from the destination target's env
@@ -523,9 +511,7 @@ def _execute_phases(
 
     # ---- Phase 5: Apply DDL ----------------------------------------------
     if not ddl_path.is_file():
-        ctx.console.print(
-            f"[yellow]No DDL file at {ddl_path}; skipping DDL apply.[/yellow]"
-        )
+        ctx.console.print(f"[yellow]No DDL file at {ddl_path}; skipping DDL apply.[/yellow]")
     else:
         ddl_outcome = _apply_ddl_with_recovery(
             ctx=ctx,
@@ -560,10 +546,7 @@ def _execute_phases(
     ctx.repository.record_pipeline_run(
         pipeline_name=ctx.pipeline_name, run_id=run_id, status="success"
     )
-    ctx.console.print(
-        f"[green]✓[/green] deployed {ctx.pipeline_name} "
-        f"to {ctx.dest_target}"
-    )
+    ctx.console.print(f"[green]✓[/green] deployed {ctx.pipeline_name} to {ctx.dest_target}")
     return 0
 
 
@@ -632,9 +615,7 @@ def _maybe_recover(
     if child_run_id is not None:
         try:
             if result.success:
-                ctx.repository.update_run_status(
-                    child_run_id, "success", error=result.diagnosis
-                )
+                ctx.repository.update_run_status(child_run_id, "success", error=result.diagnosis)
             else:
                 ctx.repository.update_run_status(
                     child_run_id,
@@ -686,9 +667,7 @@ def _apply_ddl_with_recovery(
         # the index and the driver's error string. The full SQL is
         # still available in-memory via `RecoveryContext.failing_sql`
         # for the recovery handler's own use.
-        last_error = (
-            f"DDL statement #{failure.index} failed: {failure.error}"
-        )
+        last_error = f"DDL statement #{failure.index} failed: {failure.error}"
         if not ctx.auto_fix:
             return last_error
         attempts += 1
@@ -762,9 +741,7 @@ def _verify_with_recovery(
             ctx.console.print(f"[red]✗[/red] {exc}")
             return str(exc)
         if not ddl_result.success and ddl_result.failure is not None:
-            return (
-                f"verify-recovery DDL re-apply failed: {ddl_result.failure.error}"
-            )
+            return f"verify-recovery DDL re-apply failed: {ddl_result.failure.error}"
     return last_error or "verify exhausted recovery budget"
 
 
@@ -836,9 +813,7 @@ def _build_default_recovery_handler(
             runtime_query_runner=runtime_conn,
         )
     except ConfigError:  # pragma: no cover — defensive fallback
-        logger.exception(
-            "failed to construct LLMRecoveryHandler; falling back to no-op"
-        )
+        logger.exception("failed to construct LLMRecoveryHandler; falling back to no-op")
         return NullRecoveryHandler()
 
 
@@ -888,15 +863,11 @@ def _render_destination_override_warning(ctx: DeployContext) -> None:
     # P1.1-02 will sectionize it with `[default]` + per-target blocks;
     # for now the file is shared across targets and back-to-back builds
     # with different active targets are last-write-wins.
-    src_path = (
-        ctx.project_dir / "el" / ctx.pipeline_name / "destination.toml"
-    )
+    src_path = ctx.project_dir / "el" / ctx.pipeline_name / "destination.toml"
     try:
         destination = read_destination_toml(src_path)
     except ValueError as exc:
-        ctx.console.print(
-            f"[red]✗[/red] {src_path} is malformed: {exc}"
-        )
+        ctx.console.print(f"[red]✗[/red] {src_path} is malformed: {exc}")
         return
     if destination is None:
         return  # nothing to surface
@@ -910,17 +881,11 @@ def _render_destination_override_warning(ctx: DeployContext) -> None:
     # the user what the override differs from (the high-friction case).
     dest_section = ctx.config.connections.snowflake.get(ctx.dest_target)
     dest_env_db = dest_section.database if dest_section is not None else None
-    dest_env_schema = (
-        dest_section.schema_ if dest_section is not None else None
-    )
+    dest_env_schema = dest_section.schema_ if dest_section is not None else None
 
     ctx.console.print()
-    ctx.console.print(
-        "[bold yellow]⚠ destination.toml carries overrides:[/bold yellow]"
-    )
-    ctx.console.print(
-        f"  table:    [bold]{destination.table}[/bold]  [dim](always literal)[/dim]"
-    )
+    ctx.console.print("[bold yellow]⚠ destination.toml carries overrides:[/bold yellow]")
+    ctx.console.print(f"  table:    [bold]{destination.table}[/bold]  [dim](always literal)[/dim]")
     if has_db_override:
         if dest_env_db == destination.database:
             ctx.console.print(

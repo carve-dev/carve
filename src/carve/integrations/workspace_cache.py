@@ -273,8 +273,7 @@ def _run_git(
         )
     except FileNotFoundError as exc:  # git not installed
         raise WorkspaceSyncError(
-            "`git` was not found on PATH; it is required for separate-remote "
-            "components."
+            "`git` was not found on PATH; it is required for separate-remote components."
         ) from exc
     except subprocess.TimeoutExpired as exc:
         subject = f"component {name!r}" if name else f"workspace {cwd}"

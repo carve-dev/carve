@@ -82,14 +82,10 @@ def load_skill_pack(directory: Path) -> SkillPack:
     directory = directory.resolve()
     skill_md = directory / SKILL_FILENAME
     if not skill_md.is_file():
-        raise SkillPackError(
-            f"Skill pack {directory} has no {SKILL_FILENAME}."
-        )
+        raise SkillPackError(f"Skill pack {directory} has no {SKILL_FILENAME}.")
 
     try:
-        frontmatter, body = read_frontmatter_file(
-            skill_md, max_bytes=MAX_SKILL_FILE_BYTES
-        )
+        frontmatter, body = read_frontmatter_file(skill_md, max_bytes=MAX_SKILL_FILE_BYTES)
     except AgentLoadError as exc:
         # Re-wrap so callers catch one pack-specific error type.
         raise SkillPackError(str(exc)) from exc
@@ -118,33 +114,24 @@ def _inert_paths(subdir: Path) -> tuple[Path, ...]:
     """
     if not subdir.is_dir():
         return ()
-    return tuple(
-        sorted(p.resolve() for p in subdir.rglob("*") if p.is_file())
-    )
+    return tuple(sorted(p.resolve() for p in subdir.rglob("*") if p.is_file()))
 
 
 def _require_str(frontmatter: dict[str, Any], key: str, path: Path) -> str:
     value = frontmatter.get(key)
     if not isinstance(value, str) or not value.strip():
         raise SkillPackError(
-            f"Skill pack {path}: '{key}' is required and must be a "
-            "non-empty string."
+            f"Skill pack {path}: '{key}' is required and must be a non-empty string."
         )
     return value.strip()
 
 
-def _str_list(
-    frontmatter: dict[str, Any], key: str, path: Path
-) -> tuple[str, ...]:
+def _str_list(frontmatter: dict[str, Any], key: str, path: Path) -> tuple[str, ...]:
     if key not in frontmatter or frontmatter[key] is None:
         return ()
     value = frontmatter[key]
-    if not isinstance(value, list) or not all(
-        isinstance(item, str) for item in value
-    ):
-        raise SkillPackError(
-            f"Skill pack {path}: '{key}' must be a list of strings."
-        )
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise SkillPackError(f"Skill pack {path}: '{key}' must be a list of strings.")
     return tuple(item.strip() for item in value)
 
 

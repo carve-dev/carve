@@ -123,11 +123,7 @@ class Repository:
         the recovery loop's iteration order). Used by
         ``carve runs <id> --recovery`` to render the chain.
         """
-        stmt = (
-            select(Run)
-            .where(Run.parent_run_id == parent_run_id)
-            .order_by(Run.created_at.asc())
-        )
+        stmt = select(Run).where(Run.parent_run_id == parent_run_id).order_by(Run.created_at.asc())
         with self._session_factory() as session:
             return list(session.scalars(stmt).all())
 

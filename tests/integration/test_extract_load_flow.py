@@ -215,9 +215,7 @@ def project_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_extract_load_flow_end_to_end(
-    project_dir: Path, postgres_state_store_url: str
-) -> None:
+def test_extract_load_flow_end_to_end(project_dir: Path, postgres_state_store_url: str) -> None:
     task = _task()
     client = _scripted_client()
     result = run_extract_load_agent(

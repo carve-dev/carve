@@ -105,9 +105,7 @@ def test_el_list_table_format(project_dir: Path, repository: Repository) -> None
     assert "never" in output
 
 
-def test_list_shows_per_target_rollup(
-    project_dir: Path, repository: Repository
-) -> None:
+def test_list_shows_per_target_rollup(project_dir: Path, repository: Repository) -> None:
     """P1.1-01: the "Last run" column shows a per-target rollup like
     `dev=success prod=failed staging=failed` so users can see all
     targets' state for an artifact at a glance."""
@@ -127,9 +125,7 @@ def test_list_shows_per_target_rollup(
             target=target,
         )
         repository.update_run_status(run_id, status)
-        repository.record_pipeline_run(
-            pipeline_name="iowa", run_id=run_id, status=status
-        )
+        repository.record_pipeline_run(pipeline_name="iowa", run_id=run_id, status=status)
 
     renderable = render_el_list(
         repository=repository,

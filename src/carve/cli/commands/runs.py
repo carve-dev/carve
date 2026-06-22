@@ -61,9 +61,7 @@ def command(
             renderable, exit_code = render_recovery_tree(repository, recovery)
             console.print(renderable)
         else:
-            renderable = render_runs_table(
-                repository, limit=limit, pipeline_name=pipeline
-            )
+            renderable = render_runs_table(repository, limit=limit, pipeline_name=pipeline)
             console.print(renderable)
     finally:
         engine.dispose()

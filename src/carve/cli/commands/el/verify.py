@@ -125,8 +125,7 @@ def run_verify_command(
     build = repository.latest_build_for(pipeline_name, target)
     if build is None:
         console.print(
-            f"[red]✗[/red] No successful Build for pipeline "
-            f"{pipeline_name!r} in target {target!r}."
+            f"[red]✗[/red] No successful Build for pipeline {pipeline_name!r} in target {target!r}."
         )
         return 2
 
@@ -159,14 +158,10 @@ def run_verify_command(
         )
 
         if result.ok:
-            console.print(
-                f"[green]✓[/green] {pipeline_name} verifies clean against {target!r}"
-            )
+            console.print(f"[green]✓[/green] {pipeline_name} verifies clean against {target!r}")
             return 0
 
-        console.print(
-            f"[red]✗[/red] verify failed for {pipeline_name} against {target!r}:"
-        )
+        console.print(f"[red]✗[/red] verify failed for {pipeline_name} against {target!r}:")
         for failure in result.failures:
             console.print(f"  - {failure}")
         return 1

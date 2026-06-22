@@ -84,9 +84,7 @@ _ALLOW_PATTERNS: tuple[re.Pattern[str], ...] = (
     # GRANT statements
     re.compile(r"^GRANT\b"),
     # ALTER TABLE ... ADD COLUMN IF NOT EXISTS (idempotent column add)
-    re.compile(
-        r"^ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b"
-    ),
+    re.compile(r"^ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b"),
     # USE statements (set context; harmless and sometimes emitted at
     # the head of a DDL file)
     re.compile(r"^USE\s+(?:WAREHOUSE|DATABASE|SCHEMA|ROLE)\b"),
@@ -95,9 +93,7 @@ _ALLOW_PATTERNS: tuple[re.Pattern[str], ...] = (
     # DROP TABLE IF EXISTS — safe explicit cleanup
     re.compile(r"^DROP\s+TABLE\s+IF\s+EXISTS\b"),
     # ALTER TABLE ... DROP COLUMN IF EXISTS — safe explicit cleanup
-    re.compile(
-        r"^ALTER\s+TABLE\s+\S+\s+DROP\s+COLUMN\s+IF\s+EXISTS\b"
-    ),
+    re.compile(r"^ALTER\s+TABLE\s+\S+\s+DROP\s+COLUMN\s+IF\s+EXISTS\b"),
     # DROP SCHEMA IF EXISTS <name> RESTRICT
     re.compile(r"^DROP\s+SCHEMA\s+IF\s+EXISTS\s+\S+\s+RESTRICT\b"),
 )
@@ -113,9 +109,7 @@ _FORBID_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "ALTER TABLE ... RENAME",
     ),
     (
-        re.compile(
-            r"^ALTER\s+TABLE\s+\S+\s+ALTER\s+COLUMN\b.*SET\s+DATA\s+TYPE\b"
-        ),
+        re.compile(r"^ALTER\s+TABLE\s+\S+\s+ALTER\s+COLUMN\b.*SET\s+DATA\s+TYPE\b"),
         "ALTER COLUMN SET DATA TYPE",
     ),
     (re.compile(r"^INSERT\b"), "INSERT (DML)"),

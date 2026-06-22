@@ -44,9 +44,7 @@ def _make_config(
     (``state_store.url``) and the legacy M1 alias (``server.state_store``).
     """
     state_store = (
-        StateStoreConfig(url=state_store_url)
-        if state_store_url is not None
-        else StateStoreConfig()
+        StateStoreConfig(url=state_store_url) if state_store_url is not None else StateStoreConfig()
     )
     server = (
         ServerConfig(state_store=legacy_state_store)

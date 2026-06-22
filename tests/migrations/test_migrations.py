@@ -103,12 +103,10 @@ def test_alembic_upgrade_head_on_empty_postgres(
             for col_name in cols_to_check:
                 col_type = cols[col_name]["type"]
                 assert isinstance(col_type, TIMESTAMP), (
-                    f"{table_name}.{col_name} expected TIMESTAMP; "
-                    f"got {col_type!r}"
+                    f"{table_name}.{col_name} expected TIMESTAMP; got {col_type!r}"
                 )
                 assert col_type.timezone is True, (
-                    f"{table_name}.{col_name} expected TIMESTAMPTZ; "
-                    f"got {col_type!r}"
+                    f"{table_name}.{col_name} expected TIMESTAMPTZ; got {col_type!r}"
                 )
 
         # The 0006 parent_run_id index landed.
@@ -121,9 +119,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
 
         # Alembic version row stamps at head.
         with engine.connect() as conn:
-            head_rev = conn.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one()
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0007_workspaces"
     finally:
         engine.dispose()
@@ -141,9 +137,7 @@ def test_fresh_db_lands_on_pipeline_centric_schema(
 
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
-        assert {"runs", "logs", "plans", "pipelines", "alembic_version"}.issubset(
-            tables
-        )
+        assert {"runs", "logs", "plans", "pipelines", "alembic_version"}.issubset(tables)
 
         plan_cols = {c["name"] for c in inspector.get_columns("plans")}
         assert {"phase", "pipeline_name"}.issubset(plan_cols)
@@ -300,9 +294,7 @@ def test_0004_drops_vestigial_plan_columns(
         assert "estimates_json" not in plan_cols
         assert "deployed_at" not in plan_cols
         assert "deploy_run_id" not in plan_cols
-        assert {"id", "phase", "pipeline_name", "task_graph_json"}.issubset(
-            plan_cols
-        )
+        assert {"id", "phase", "pipeline_name", "task_graph_json"}.issubset(plan_cols)
     finally:
         engine.dispose()
 
@@ -360,17 +352,12 @@ def test_0004_backfills_builds_from_existing_pipelines(
 
         with engine.begin() as conn:
             build_id = conn.execute(
-                text(
-                    "SELECT current_build_id FROM pipelines WHERE name = 'ingest'"
-                )
+                text("SELECT current_build_id FROM pipelines WHERE name = 'ingest'")
             ).scalar_one()
             assert isinstance(build_id, str) and build_id.startswith("build_")
 
             build = conn.execute(
-                text(
-                    "SELECT pipeline_name, plan_id, target "
-                    "FROM builds WHERE id = :id"
-                ),
+                text("SELECT pipeline_name, plan_id, target FROM builds WHERE id = :id"),
                 {"id": build_id},
             ).one()
             assert build[0] == "ingest"
@@ -452,10 +439,7 @@ def test_0005_backfills_runs_target_from_latest_build(
                 {"now": now},
             )
             conn.execute(
-                text(
-                    "UPDATE pipelines SET current_build_id = 'build_a' "
-                    "WHERE name = 'ingest'"
-                ),
+                text("UPDATE pipelines SET current_build_id = 'build_a' WHERE name = 'ingest'"),
             )
             # Run linked to the pipeline -> should inherit `staging`.
             conn.execute(
@@ -549,9 +533,7 @@ def test_0006_existing_runs_get_null_parent_run_id(
 
         with engine.begin() as conn:
             parent = conn.execute(
-                text(
-                    "SELECT parent_run_id FROM runs WHERE id = 'run_pre_existing'"
-                )
+                text("SELECT parent_run_id FROM runs WHERE id = 'run_pre_existing'")
             ).scalar_one()
         assert parent is None
     finally:
@@ -569,11 +551,7 @@ def test_0006_fk_constraint_declared_against_runs_id(
 
         inspector = inspect(engine)
         fks = inspector.get_foreign_keys("runs")
-        parent_fks = [
-            fk
-            for fk in fks
-            if fk.get("constrained_columns") == ["parent_run_id"]
-        ]
+        parent_fks = [fk for fk in fks if fk.get("constrained_columns") == ["parent_run_id"]]
         assert len(parent_fks) == 1, parent_fks
         fk = parent_fks[0]
         assert fk["referred_table"] == "runs"
@@ -674,9 +652,7 @@ def test_0007_downgrade_drops_workspaces(
         assert "workspaces" not in set(inspect(engine).get_table_names())
 
         with engine.connect() as conn:
-            head_rev = conn.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one()
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0006_recovery_chains"
     finally:
         engine.dispose()

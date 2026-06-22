@@ -124,9 +124,7 @@ class _FakePool:
         if target not in self._by_target:
             from carve.core.connectors.exceptions import SnowflakeError
 
-            raise SnowflakeError(
-                f"No Snowflake connection configured for target {target!r}."
-            )
+            raise SnowflakeError(f"No Snowflake connection configured for target {target!r}.")
         return self._by_target[target]
 
 
@@ -178,9 +176,7 @@ def _make_config(
         runner=RunnerConfig(default_timeout_seconds=60),
         server=ServerConfig(),
         state_store=StateStoreConfig(url=state_db),
-        connections=ConnectionsConfig(
-            snowflake={t: _snowflake_section(t) for t in targets}
-        ),
+        connections=ConnectionsConfig(snowflake={t: _snowflake_section(t) for t in targets}),
         config_hash="cafef00dbeefcafe",
     )
 
@@ -225,8 +221,7 @@ def _design() -> dict[str, Any]:
 
 def _full_grants(role: str = "R") -> list[dict[str, Any]]:
     return [
-        {"grantee_name": role, "privilege": p}
-        for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
+        {"grantee_name": role, "privilege": p} for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
     ]
 
 
@@ -260,9 +255,7 @@ def repository_with_build(
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
 
-    repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="el/iowa"
-    )
+    repo.create_or_update_pipeline(name="iowa", description="", pipeline_dir="el/iowa")
     plan = Plan(
         id="plan_1",
         goal="iowa goal",
@@ -361,9 +354,7 @@ def test_deploy_no_build_exits_2(project_dir: Path, postgres_state_store_url: st
     assert "Build" in console.export_text() or "build" in console.export_text()
 
 
-def test_deploy_missing_deploy_connection(
-    project_dir: Path, postgres_state_store_url: str
-) -> None:
+def test_deploy_missing_deploy_connection(project_dir: Path, postgres_state_store_url: str) -> None:
     """No `prod_deploy` block → exit 2 with doc-link error."""
     config = _make_config(
         state_db=postgres_state_store_url,
@@ -372,9 +363,7 @@ def test_deploy_missing_deploy_connection(
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     repo = Repository(create_session_factory(engine))
-    repo.create_or_update_pipeline(
-        name="iowa", description="", pipeline_dir="el/iowa"
-    )
+    repo.create_or_update_pipeline(name="iowa", description="", pipeline_dir="el/iowa")
     plan = Plan(
         id="plan_1",
         goal="g",
@@ -384,9 +373,7 @@ def test_deploy_missing_deploy_connection(
         file_path=".carve/plans/plan_1.json",
     )
     repo.save_plan(plan)
-    repo.create_build(
-        pipeline_name="iowa", plan_id="plan_1", target="dev", manifest={"files": []}
-    )
+    repo.create_build(pipeline_name="iowa", plan_id="plan_1", target="dev", manifest={"files": []})
     _plant_artifact(project_dir, "dev", "iowa")
 
     console = Console(record=True, width=120)
@@ -425,9 +412,7 @@ def test_deploy_preflight_drift_invokes_recovery(
             role_rows=[{"name": "R"}],
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     handler = _FakeRecoveryHandler(
@@ -463,9 +448,7 @@ def test_deploy_ddl_apply_failure_invokes_recovery(
             ddl_fail_error="GRANT failed: insufficient privileges",
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     # Recovery refuses, so deploy exits 1 after handoff.
@@ -495,9 +478,7 @@ def test_deploy_verify_failure_invokes_recovery(
     project_dir: Path, repository_with_build: tuple[Repository, Config, str]
 ) -> None:
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
     # Runtime has a missing INSERT grant, so verify fails.
     runtime_fake = _FakeSnowflake(
         _FakeBehavior(
@@ -506,9 +487,7 @@ def test_deploy_verify_failure_invokes_recovery(
         )
     )
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
-    handler = _FakeRecoveryHandler(
-        {RecoveryStage.VERIFY: [RecoveryResult(False, "missing grant")]}
-    )
+    handler = _FakeRecoveryHandler({RecoveryStage.VERIFY: [RecoveryResult(False, "missing grant")]})
 
     console = Console(record=True, width=120)
     code = deploy_cmd.run_deploy(
@@ -541,9 +520,7 @@ def test_deploy_recovery_unrecoverable_exits_2(
             role_rows=[{"name": "R"}],
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     handler = _FakeRecoveryHandler(
@@ -581,9 +558,7 @@ def test_deploy_recovery_disabled_with_flag(
             role_rows=[{"name": "R"}],
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     handler = _FakeRecoveryHandler(
@@ -618,12 +593,8 @@ def test_deploy_copies_files_to_dest_target(
     project_dir: Path, repository_with_build: tuple[Repository, Config, str]
 ) -> None:
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     code = deploy_cmd.run_deploy(
@@ -647,12 +618,8 @@ def test_deploy_copies_ddl_file(
     project_dir: Path, repository_with_build: tuple[Repository, Config, str]
 ) -> None:
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
     code = deploy_cmd.run_deploy(
         pipeline_name="iowa",
@@ -674,12 +641,8 @@ def test_deploy_applies_ddl_in_order(
     project_dir: Path, repository_with_build: tuple[Repository, Config, str]
 ) -> None:
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
     deploy_cmd.run_deploy(
         pipeline_name="iowa",
@@ -702,12 +665,8 @@ def test_deploy_idempotent(
 ) -> None:
     """Re-running on an unchanged source produces no further changes."""
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     code1 = deploy_cmd.run_deploy(
@@ -748,9 +707,7 @@ def test_deploy_dest_uncommitted_changes_refused(
     repo, config, _ = repository_with_build
     # Plant a destination version, then init git, then dirty it.
     _plant_artifact(project_dir, "prod", "iowa")
-    subprocess.run(
-        ["git", "init", "-q"], cwd=project_dir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q"], cwd=project_dir, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "t@e.com"],
         cwd=project_dir,
@@ -769,9 +726,7 @@ def test_deploy_dest_uncommitted_changes_refused(
         check=True,
         capture_output=True,
     )
-    subprocess.run(
-        ["git", "add", "-A"], cwd=project_dir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "add", "-A"], cwd=project_dir, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "initial"],
         cwd=project_dir,
@@ -779,16 +734,10 @@ def test_deploy_dest_uncommitted_changes_refused(
         capture_output=True,
     )
     # Dirty the (flat) artifact tree after commit.
-    (project_dir / "el" / "iowa" / "main.py").write_text(
-        "print('user edits')\n"
-    )
+    (project_dir / "el" / "iowa" / "main.py").write_text("print('user edits')\n")
 
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     console = Console(record=True, width=120)
@@ -812,12 +761,8 @@ def test_deploy_records_deploy_run_row(
     project_dir: Path, repository_with_build: tuple[Repository, Config, str]
 ) -> None:
     repo, config, build_id = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     code = deploy_cmd.run_deploy(
@@ -832,11 +777,7 @@ def test_deploy_records_deploy_run_row(
         pool=pool,  # type: ignore[arg-type]
     )
     assert code == 0
-    deploy_runs = [
-        r
-        for r in repo.list_runs(pipeline_name="iowa")
-        if r.kind == "deploy"
-    ]
+    deploy_runs = [r for r in repo.list_runs(pipeline_name="iowa") if r.kind == "deploy"]
     assert len(deploy_runs) == 1
     run = deploy_runs[0]
     assert run.target == "prod"
@@ -849,9 +790,7 @@ def test_deploy_smoke_verify_failure_exits_non_zero(
 ) -> None:
     """DDL succeeds but verify fails → exit non-zero, run.status='failed'."""
     repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
     # Runtime missing the STORE column.
     runtime_fake = _FakeSnowflake(
         _FakeBehavior(
@@ -1004,9 +943,7 @@ def test_record_terminal_failure_does_not_persist_sql_text(
             ddl_fail_error="boom",
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     console = Console(record=True, width=120)
@@ -1023,9 +960,7 @@ def test_record_terminal_failure_does_not_persist_sql_text(
         auto_fix=False,
     )
     assert code != 0
-    deploy_runs = [
-        r for r in repo.list_runs(pipeline_name="iowa") if r.kind == "deploy"
-    ]
+    deploy_runs = [r for r in repo.list_runs(pipeline_name="iowa") if r.kind == "deploy"]
     assert deploy_runs
     err = deploy_runs[0].error_message or ""
     assert "secret_passw0rd" not in err
@@ -1038,16 +973,13 @@ def test_record_terminal_failure_does_not_persist_sql_text(
 def test_carve_deploy_legacy_alias_warns_and_forwards(
     project_dir: Path,
     repository_with_build: tuple[Repository, Config, str],
-    monkeypatch: pytest.MonkeyPatch, cli_env: dict[str, str]
+    monkeypatch: pytest.MonkeyPatch,
+    cli_env: dict[str, str],
 ) -> None:
     """`carve deploy` (root-level) prints deprecation banner and runs."""
     _repo, config, _ = repository_with_build
-    deploy_fake = _FakeSnowflake(
-        _FakeBehavior(columns=[], role_rows=[{"name": "R"}])
-    )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    deploy_fake = _FakeSnowflake(_FakeBehavior(columns=[], role_rows=[{"name": "R"}]))
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     # Patch SnowflakePool to return our fake pool whenever the deploy
@@ -1086,7 +1018,7 @@ def test_carve_deploy_legacy_alias_warns_and_forwards(
             "prod",
             "--yes",
         ],
-    env=cli_env,
+        env=cli_env,
     )
     # Banner should appear regardless of underlying success/fail.
     assert "deprecated" in result.output.lower()
@@ -1115,9 +1047,7 @@ def test_deploy_recovery_persists_child_run_rows_linked_to_deploy(
             ddl_fail_error="missing schema",
         )
     )
-    runtime_fake = _FakeSnowflake(
-        _FakeBehavior(columns=_good_columns(), grants=_full_grants())
-    )
+    runtime_fake = _FakeSnowflake(_FakeBehavior(columns=_good_columns(), grants=_full_grants()))
     pool = _FakePool({"prod_deploy": deploy_fake, "prod": runtime_fake})
 
     handler = _FakeRecoveryHandler(

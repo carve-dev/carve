@@ -38,9 +38,7 @@ def _registry(tmp_path: Path) -> SubagentRegistry:
     user.mkdir(parents=True, exist_ok=True)
     (user / "dlt-engineer.md").write_text(_DLT, encoding="utf-8")
     (user / "dbt-engineer.md").write_text(_DBT, encoding="utf-8")
-    return AgentDiscovery.for_project(
-        agents_dir=user, builtin_dir=builtin
-    ).build_registry()
+    return AgentDiscovery.for_project(agents_dir=user, builtin_dir=builtin).build_registry()
 
 
 def test_classification_resolves_to_matching_agent_name(tmp_path: Path) -> None:
@@ -53,9 +51,7 @@ def test_explicit_name_override_short_circuits(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     # Even with a dlt classification, an explicit dbt name wins.
     assert (
-        select_agent(
-            registry, classification="new_pipeline", override="dbt-engineer"
-        )
+        select_agent(registry, classification="new_pipeline", override="dbt-engineer")
         == "dbt-engineer"
     )
 
@@ -86,14 +82,9 @@ def test_router_sees_user_override(tmp_path: Path) -> None:
     )
     (user / "dlt-engineer.md").write_text(override, encoding="utf-8")
 
-    registry = AgentDiscovery.for_project(
-        agents_dir=user, builtin_dir=builtin
-    ).build_registry()
+    registry = AgentDiscovery.for_project(agents_dir=user, builtin_dir=builtin).build_registry()
 
     # The override's classification routes; the built-in's no longer does.
-    assert (
-        select_agent(registry, classification="incremental_pipeline")
-        == "dlt-engineer"
-    )
+    assert select_agent(registry, classification="incremental_pipeline") == "dlt-engineer"
     with pytest.raises(NoAgentMatch):
         select_agent(registry, classification="new_pipeline")

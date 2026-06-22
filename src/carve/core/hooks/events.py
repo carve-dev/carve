@@ -42,9 +42,7 @@ class HookEvent(StrEnum):
 
 # Events whose emitters exist in this slice (the loop fires them). A
 # subscription to one of these is live immediately.
-EMITTED_EVENTS: frozenset[HookEvent] = frozenset(
-    {HookEvent.PRE_TOOL, HookEvent.POST_TOOL}
-)
+EMITTED_EVENTS: frozenset[HookEvent] = frozenset({HookEvent.PRE_TOOL, HookEvent.POST_TOOL})
 
 # Events whose subscription is wired but whose emitter is a later
 # increment. Registering a handler here is allowed (and tested); it simply
@@ -73,9 +71,7 @@ class HookRegistry:
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[HookEvent, list[HookHandler]] = {
-            event: [] for event in HookEvent
-        }
+        self._handlers: dict[HookEvent, list[HookHandler]] = {event: [] for event in HookEvent}
 
     def subscribe(self, event: HookEvent, handler: HookHandler) -> None:
         """Register ``handler`` for ``event`` (any event, incl. deferred)."""

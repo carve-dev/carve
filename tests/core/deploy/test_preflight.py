@@ -290,9 +290,7 @@ def test_preflight_drift_dataclass_fields() -> None:
         ("table", "tab\nbreak"),
     ],
 )
-def test_preflight_refuses_unsafe_destination_identifier(
-    field: str, bad: str
-) -> None:
+def test_preflight_refuses_unsafe_destination_identifier(field: str, bad: str) -> None:
     """Malformed db/schema/table values surface as preflight drift, never SQL."""
     design: dict[str, Any] = {
         "destination": {

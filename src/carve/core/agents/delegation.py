@@ -65,9 +65,7 @@ SubagentHook = Callable[[str, dict[str, Any]], None]
 # The structural type matches ``extensibility_wiring.HookFactory`` — the
 # wiring module owns the concrete builder; `core` only consumes this shape so
 # it never imports up into `cli`.
-HookFactory = Callable[
-    [PermissionMode], tuple[SubagentHook | None, SubagentHook | None]
-]
+HookFactory = Callable[[PermissionMode], tuple[SubagentHook | None, SubagentHook | None]]
 
 
 class SubagentError(AgentError):
@@ -224,8 +222,7 @@ class SubagentRunner:
             return DelegationResult(
                 status="failed",
                 result_summary=(
-                    agent_result.text
-                    or "Subagent finished without calling submit_result."
+                    agent_result.text or "Subagent finished without calling submit_result."
                 ),
                 files_changed=files_changed,
                 outputs={},

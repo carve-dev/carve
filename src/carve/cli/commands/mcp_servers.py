@@ -91,9 +91,10 @@ def list_servers(
     for server in config.server:
         endpoint = server.command or server.url or "?"
         tools = import_server_tools(server)
-        rendered = "\n".join(
-            f"{t.name}  [{'writes' if t.writes else 'read-only'}]" for t in tools
-        ) or "(none declared)"
+        rendered = (
+            "\n".join(f"{t.name}  [{'writes' if t.writes else 'read-only'}]" for t in tools)
+            or "(none declared)"
+        )
         table.add_row(server.name, endpoint, rendered)
     console.print(table)
     raise typer.Exit(code=0)

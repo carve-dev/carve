@@ -31,9 +31,7 @@ def test_python_step_config_defaults_are_sensible() -> None:
 
 def test_python_step_config_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        PythonStepConfig.model_validate(
-            {"id": "s1", "script": "x.py", "unknown": True}
-        )
+        PythonStepConfig.model_validate({"id": "s1", "script": "x.py", "unknown": True})
 
 
 def test_python_step_holds_its_config_and_step_type_string() -> None:

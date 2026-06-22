@@ -107,10 +107,7 @@ def render_el_list(
                 artifact_names.append(entry.name)
 
     if not artifact_names:
-        return (
-            "No EL artifacts under el/. "
-            "Run carve plan ... to create one."
-        )
+        return "No EL artifacts under el/. Run carve plan ... to create one."
 
     table = Table(title="EL artifacts")
     table.add_column("Name", style="bold cyan", no_wrap=True)
@@ -122,18 +119,14 @@ def render_el_list(
     for name in artifact_names:
         latest_build = repository.latest_build_for(name, active_target)
         built_str = (
-            _format_relative(latest_build.created_at, now)
-            if latest_build is not None
-            else "-"
+            _format_relative(latest_build.created_at, now) if latest_build is not None else "-"
         )
 
         pipeline = repository.get_pipeline(name)
         last_run_at: datetime | None = None
         if pipeline is not None:
             last_run_at = pipeline.last_run_at
-        last_run_str = (
-            _format_relative(last_run_at, now) if last_run_at is not None else "never"
-        )
+        last_run_str = _format_relative(last_run_at, now) if last_run_at is not None else "never"
 
         rollup = _per_target_rollup(repository, name)
 

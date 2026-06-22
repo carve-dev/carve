@@ -76,9 +76,7 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def el_invocation(
-    project_dir: Path, postgres_state_store_url: str
-) -> ElRunInvocation:
+def el_invocation(project_dir: Path, postgres_state_store_url: str) -> ElRunInvocation:
     return ElRunInvocation(
         pipeline_name="iowa",
         active_target="dev",
@@ -180,9 +178,7 @@ def _execute_factory(
         if successes_after is not None and state["call_count"] >= successes_after:
             repository.update_run_status(run_id, "success")
             return ExecutionResult(run_id=run_id, success=True, error="")
-        err = (
-            f"{error} (#{state['call_count']})" if distinct_errors else error
-        )
+        err = f"{error} (#{state['call_count']})" if distinct_errors else error
         repository.update_run_status(run_id, "failed", error=err)
         return ExecutionResult(run_id=run_id, success=False, error=err)
 
@@ -263,12 +259,8 @@ def test_recovery_deploy_phase1_drift_recovered(
             )
         ],
     )
-    execute = _execute_factory(
-        repository, successes_after=2, error="STORE column type mismatch"
-    )
-    outcome = run_with_recovery(
-        invocation, execute=execute, repository=repository, max_attempts=3
-    )
+    execute = _execute_factory(repository, successes_after=2, error="STORE column type mismatch")
+    outcome = run_with_recovery(invocation, execute=execute, repository=repository, max_attempts=3)
     assert isinstance(outcome, Recovered)
     assert outcome.attempts == 1
 
@@ -303,12 +295,8 @@ def test_recovery_deploy_phase2_ddl_failure_recovered(
             )
         ],
     )
-    execute = _execute_factory(
-        repository, successes_after=2, error="object does not exist"
-    )
-    outcome = run_with_recovery(
-        invocation, execute=execute, repository=repository, max_attempts=3
-    )
+    execute = _execute_factory(repository, successes_after=2, error="object does not exist")
+    outcome = run_with_recovery(invocation, execute=execute, repository=repository, max_attempts=3)
     assert isinstance(outcome, Recovered)
     assert outcome.attempts == 1
 
@@ -341,12 +329,8 @@ def test_recovery_deploy_phase3_verify_failure_recovered(
             )
         ],
     )
-    execute = _execute_factory(
-        repository, successes_after=2, error="missing INSERT grant"
-    )
-    outcome = run_with_recovery(
-        invocation, execute=execute, repository=repository, max_attempts=3
-    )
+    execute = _execute_factory(repository, successes_after=2, error="missing INSERT grant")
+    outcome = run_with_recovery(invocation, execute=execute, repository=repository, max_attempts=3)
     assert isinstance(outcome, Recovered)
     assert outcome.attempts == 1
 
@@ -392,9 +376,7 @@ def test_recovery_budget_exhausted(
             target="dev",
             parent_run_id=parent_run_id,
         )
-        repository.update_run_status(
-            run_id, "failed", error=f"failure-{state['n']}"
-        )
+        repository.update_run_status(run_id, "failed", error=f"failure-{state['n']}")
         return ExecutionResult(run_id=run_id, success=False, error=f"failure-{state['n']}")
 
     outcome = run_with_recovery(
@@ -415,9 +397,7 @@ def test_recovery_refuses_auth_failure(
 ) -> None:
     """Auth failure → Refused, no LLM call."""
     agent = _patch_agent(monkeypatch, [])
-    execute = _execute_factory(
-        repository, error="Authentication failed: bad password"
-    )
+    execute = _execute_factory(repository, error="Authentication failed: bad password")
     outcome = run_with_recovery(
         el_invocation,
         execute=execute,
@@ -453,9 +433,7 @@ def test_recovery_refuses_repeated_identical_failure(
         ],
     )
     # Same error each time triggers the post-retry guard.
-    execute = _execute_factory(
-        repository, error="dict not JSON serializable"
-    )
+    execute = _execute_factory(repository, error="dict not JSON serializable")
     outcome = run_with_recovery(
         el_invocation,
         execute=execute,
@@ -715,9 +693,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
         project_dir = tmp_path / "p"
         (project_dir / "carve").mkdir(parents=True)
         (project_dir / ".carve").mkdir(parents=True)
-        (project_dir / "carve.toml").write_text(
-            '[project]\nname = "p"\ndefault_target = "dev"\n'
-        )
+        (project_dir / "carve.toml").write_text('[project]\nname = "p"\ndefault_target = "dev"\n')
         (project_dir / "carve" / "connections.toml").write_text(
             '[snowflake.dev]\naccount = "a"\nuser = "u"\nrole = "R"\n'
             'warehouse = "W"\ndatabase = "D"\n'
@@ -777,9 +753,7 @@ class TestLLMRecoveryHandlerConnectionRoles:
         project_dir = tmp_path / "p2"
         (project_dir / "carve").mkdir(parents=True)
         (project_dir / ".carve").mkdir(parents=True)
-        (project_dir / "carve.toml").write_text(
-            '[project]\nname = "p"\ndefault_target = "dev"\n'
-        )
+        (project_dir / "carve.toml").write_text('[project]\nname = "p"\ndefault_target = "dev"\n')
         (project_dir / "carve" / "connections.toml").write_text(
             '[snowflake.dev]\naccount = "a"\nuser = "u"\nrole = "R"\n'
             'warehouse = "W"\ndatabase = "D"\n'

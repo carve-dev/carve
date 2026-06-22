@@ -77,8 +77,8 @@ def test_target_show_missing_target_exits_2(
 ) -> None:
     _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
-        app, ["target", "show", "ghost", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "show", "ghost", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 2, result.output
 
 
@@ -87,6 +87,6 @@ def test_target_show_rejects_unsafe_name(
 ) -> None:
     _init_project(runner, tmp_path, cli_env)
     result = runner.invoke(
-        app, ["target", "show", "../escape", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "show", "../escape", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 2, result.output

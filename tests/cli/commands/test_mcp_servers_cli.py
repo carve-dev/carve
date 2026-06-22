@@ -33,17 +33,13 @@ def test_add_then_list(tmp_path: Path) -> None:
     config = load_mcp_config(tmp_path / "carve" / "mcp.toml")
     assert config.by_name("jira") is not None
 
-    listed = runner.invoke(
-        app, ["mcp-servers", "list", "--project-dir", str(tmp_path)]
-    )
+    listed = runner.invoke(app, ["mcp-servers", "list", "--project-dir", str(tmp_path)])
     assert listed.exit_code == 0, listed.output
     assert "jira" in listed.output
 
 
 def test_add_requires_endpoint(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["mcp-servers", "add", "bad", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["mcp-servers", "add", "bad", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
 
 
@@ -60,24 +56,18 @@ def test_remove(tmp_path: Path) -> None:
             str(tmp_path),
         ],
     )
-    removed = runner.invoke(
-        app, ["mcp-servers", "remove", "jira", "--project-dir", str(tmp_path)]
-    )
+    removed = runner.invoke(app, ["mcp-servers", "remove", "jira", "--project-dir", str(tmp_path)])
     assert removed.exit_code == 0, removed.output
     assert load_mcp_config(tmp_path / "carve" / "mcp.toml").by_name("jira") is None
 
 
 def test_remove_unknown_fails(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["mcp-servers", "remove", "ghost", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["mcp-servers", "remove", "ghost", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
 
 
 def test_list_empty(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["mcp-servers", "list", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["mcp-servers", "list", "--project-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "No MCP servers" in result.output
 

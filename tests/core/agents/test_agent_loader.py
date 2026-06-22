@@ -60,9 +60,7 @@ def test_model_parses_and_absence_is_none(tmp_path: Path) -> None:
     with_model = load_agent_file(_write(tmp_path, "a.md", _VALID))
     assert spec_from_agent_file(with_model).model == "claude-sonnet-4-5-20250929"
 
-    no_model_text = _VALID.replace(
-        "model: claude-sonnet-4-5-20250929\n", ""
-    )
+    no_model_text = _VALID.replace("model: claude-sonnet-4-5-20250929\n", "")
     no_model = load_agent_file(_write(tmp_path, "b.md", no_model_text))
     assert no_model.model is None
     assert spec_from_agent_file(no_model).model is None
@@ -110,9 +108,7 @@ def test_oversized_file_fails_with_no_partial_register(tmp_path: Path) -> None:
     """A file over MAX_AGENT_FILE_BYTES fails the load; nothing registers."""
     # Build a file whose body pushes it just over the limit.
     filler = "x" * (MAX_AGENT_FILE_BYTES + 1)
-    text = (
-        "---\nname: big\ndescription: d\nmax_mode: read_only\n---\n" + filler
-    )
+    text = "---\nname: big\ndescription: d\nmax_mode: read_only\n---\n" + filler
     path = _write(tmp_path, "big.md", text)
     assert path.stat().st_size > MAX_AGENT_FILE_BYTES
 

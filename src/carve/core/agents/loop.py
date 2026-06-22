@@ -94,9 +94,7 @@ class TokenUsage:
         """Accumulate a single response's `usage` block."""
         self.input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
         self.output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
-        self.cache_creation_tokens += int(
-            getattr(usage, "cache_creation_input_tokens", 0) or 0
-        )
+        self.cache_creation_tokens += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
         self.cache_read_tokens += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
 
     def cost_usd(self, model: str) -> float:
@@ -180,9 +178,7 @@ class AgentLoop:
                         "Skill and tool names share a single namespace."
                     )
             if skill_context is None:
-                raise ValueError(
-                    "skill_context is required when skills are passed to AgentLoop."
-                )
+                raise ValueError("skill_context is required when skills are passed to AgentLoop.")
         self.skill_executor = skill_executor
         self.skill_context = skill_context
         self.system_prompt = system_prompt
@@ -295,9 +291,7 @@ class AgentLoop:
                     )
                 continue
 
-            raise UnexpectedStopReason(
-                f"Unexpected stop_reason from Anthropic: {stop_reason!r}"
-            )
+            raise UnexpectedStopReason(f"Unexpected stop_reason from Anthropic: {stop_reason!r}")
 
         raise MaxTurnsExceeded(f"Agent exceeded max turns ({max_turns})")
 
@@ -312,9 +306,7 @@ class AgentLoop:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                tool_schemas: list[dict[str, Any]] = [
-                    t.to_schema() for t in self.tools.values()
-                ]
+                tool_schemas: list[dict[str, Any]] = [t.to_schema() for t in self.tools.values()]
                 if self.skills is not None:
                     tool_schemas.extend(self.skills.to_tool_schemas())
                 return self.client.messages.create(
@@ -367,11 +359,7 @@ class AgentLoop:
             self._tool_calls_total += 1
 
             tool = self.tools.get(tool_name)
-            is_skill = (
-                tool is None
-                and self.skills is not None
-                and tool_name in self.skills
-            )
+            is_skill = tool is None and self.skills is not None and tool_name in self.skills
             if tool is None and not is_skill:
                 msg = f"Unknown tool: {tool_name!r}"
                 results.append(
@@ -382,9 +370,7 @@ class AgentLoop:
                         "is_error": True,
                     }
                 )
-                self.observer.on_tool_result(
-                    tool_name, ok=False, summary=msg, duration_ms=0
-                )
+                self.observer.on_tool_result(tool_name, ok=False, summary=msg, duration_ms=0)
                 continue
 
             # --- Gate first: the authoritative pre-execution boundary. ---
@@ -394,13 +380,9 @@ class AgentLoop:
             # in both cases the tool/skill executor is NOT called. When no
             # gate is wired (M1/legacy), every call proceeds as before.
             if self.gate is not None:
-                decision = self.gate.check(
-                    tool_name, dict(tool_input), approver=self.approver
-                )
+                decision = self.gate.check(tool_name, dict(tool_input), approver=self.approver)
                 if not decision.allowed:
-                    results.append(
-                        self._gate_blocked_result(tool_use_id, decision)
-                    )
+                    results.append(self._gate_blocked_result(tool_use_id, decision))
                     self.observer.on_tool_result(
                         tool_name,
                         ok=False,
@@ -467,11 +449,7 @@ class AgentLoop:
         adapt (pick a different tool, narrow a path) or surface the
         approval need — the executor never ran.
         """
-        prefix = (
-            "Permission denied"
-            if decision.outcome.value == "deny"
-            else "Needs user approval"
-        )
+        prefix = "Permission denied" if decision.outcome.value == "deny" else "Needs user approval"
         return {
             "type": "tool_result",
             "tool_use_id": tool_use_id,
@@ -512,11 +490,7 @@ class AgentLoop:
             "data": result.data,
             "truncated": result.truncated,
             "total_count": result.total_count,
-            **(
-                {"next_cursor": result.next_cursor}
-                if result.next_cursor is not None
-                else {}
-            ),
+            **({"next_cursor": result.next_cursor} if result.next_cursor is not None else {}),
         }
 
     def _terminator_invoked(self, response: Any) -> bool:

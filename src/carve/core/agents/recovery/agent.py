@@ -248,10 +248,7 @@ def make_read_run_logs_tool(
         # actual error, not the bootstrap noise.
         if len(logs) > limit:
             logs = logs[-limit:]
-        lines = [
-            f"[{log.level}] {log.source}: {log.message}"
-            for log in logs
-        ]
+        lines = [f"[{log.level}] {log.source}: {log.message}" for log in logs]
         return {"run_id": run_id, "lines": lines, "count": len(lines)}
 
     return Tool(
@@ -291,8 +288,7 @@ class _DdlExecutor(Protocol):
     The real Snowflake connector and the test fakes both qualify.
     """
 
-    def execute(self, sql: str) -> int:
-        ...
+    def execute(self, sql: str) -> int: ...
 
 
 def make_run_snowflake_ddl_tool(executor: _DdlExecutor) -> Tool:
@@ -315,8 +311,7 @@ def make_run_snowflake_ddl_tool(executor: _DdlExecutor) -> Tool:
         semi = sql.find(";")
         if semi != -1 and sql[semi + 1 :].strip():
             raise ToolExecutionError(
-                "Multi-statement input is not allowed; submit one DDL "
-                "statement at a time."
+                "Multi-statement input is not allowed; submit one DDL statement at a time."
             )
         # Route through the P1-08 allow-list so destructive DDL (DROP
         # DATABASE, CREATE OR REPLACE, DML, etc.) is rejected before it
@@ -448,15 +443,9 @@ def build_tools_for_invocation(
     if allowed_paths is not None and allowed_paths:
         tools.append(make_write_file_tool(project_dir, allowed_paths))
 
-    if (
-        invocation.trigger == TriggerContext.DEPLOY_DDL_APPLY
-        and snowflake_ddl_executor is not None
-    ):
+    if invocation.trigger == TriggerContext.DEPLOY_DDL_APPLY and snowflake_ddl_executor is not None:
         tools.append(make_run_snowflake_ddl_tool(snowflake_ddl_executor))
-    elif (
-        invocation.trigger == TriggerContext.DEPLOY_VERIFY
-        and snowflake_ddl_executor is not None
-    ):
+    elif invocation.trigger == TriggerContext.DEPLOY_VERIFY and snowflake_ddl_executor is not None:
         tools.append(make_run_snowflake_ddl_tool(snowflake_ddl_executor))
 
     return _Tools(tools=tools, submit_diagnosis_capture=capture)
@@ -555,9 +544,7 @@ def _render_invocation_block(invocation: Invocation) -> str:
         lines.append(f"- **DDL path:** `{invocation.ddl_path}`")
     if isinstance(invocation, DeployDdlApplyInvocation):
         if invocation.failing_statement_index is not None:
-            lines.append(
-                f"- **Failing statement index:** {invocation.failing_statement_index}"
-            )
+            lines.append(f"- **Failing statement index:** {invocation.failing_statement_index}")
     if isinstance(invocation, DeployPreflightInvocation) and invocation.drift:
         lines.append("")
         lines.append("### Drift report")

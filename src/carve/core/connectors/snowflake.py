@@ -61,9 +61,7 @@ def _format_error(sql: str, exc: BaseException) -> tuple[str, str | None, str | 
     else:
         # Snowflake codes are 6-digit zero-padded strings like "002003".
         # `errno` may come back as int — normalize.
-        error_code = (
-            error_code_raw if isinstance(error_code_raw, str) else f"{error_code_raw:06d}"
-        )
+        error_code = error_code_raw if isinstance(error_code_raw, str) else f"{error_code_raw:06d}"
     hint = _ERROR_HINTS.get(error_code) if error_code else None
     return str(exc), hint, error_code
 
@@ -86,9 +84,7 @@ def is_read_only(sql: str) -> bool:
         else:
             close = stripped.find("*/")
             stripped = stripped[close + 2 :].strip() if close > 0 else ""
-    return any(
-        stripped.startswith(verb) for verb in ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC")
-    )
+    return any(stripped.startswith(verb) for verb in ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC"))
 
 
 def _has_limit(sql: str) -> bool:
@@ -144,7 +140,7 @@ class SnowflakeConnection:
                 "No authentication method configured.",
                 hint=(
                     "Provide `password`, `private_key_path`, or set "
-                    "`authenticator = \"externalbrowser\"` for the connection."
+                    '`authenticator = "externalbrowser"` for the connection.'
                 ),
             )
 

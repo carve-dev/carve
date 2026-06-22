@@ -45,8 +45,7 @@ def command(
 
     if not names:
         console.print(
-            "[yellow]No targets yet.[/yellow] "
-            "Run `carve init` or `carve target create <name>`."
+            "[yellow]No targets yet.[/yellow] Run `carve init` or `carve target create <name>`."
         )
         raise typer.Exit(code=0)
 

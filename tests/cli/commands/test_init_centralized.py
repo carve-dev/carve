@@ -177,9 +177,7 @@ def test_init_initializes_state_store(
         inspector = inspect(engine)
         assert "alembic_version" in inspector.get_table_names()
         with engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).fetchone()
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
             assert row is not None
             assert row[0] == expected_head
     finally:
@@ -240,8 +238,8 @@ def test_init_then_target_create_produces_two_sections(
     assert result.exit_code == 0, result.output
 
     result = runner.invoke(
-        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 0, result.output
 
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -343,8 +341,8 @@ def test_target_create_does_not_create_targets_dir(
     assert init_result.exit_code == 0, init_result.output
 
     result = runner.invoke(
-        app, ["target", "create", "staging", "--project-dir", str(tmp_path)]
-    , env=cli_env)
+        app, ["target", "create", "staging", "--project-dir", str(tmp_path)], env=cli_env
+    )
     assert result.exit_code == 0, result.output
 
     # Config got the new section / env-example block.

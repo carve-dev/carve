@@ -176,10 +176,7 @@ def _success_responses(
                     {
                         "path": f"{base}/main.py",
                         "content": (
-                            "# generated\n"
-                            "import os\n"
-                            "import snowflake.connector\n"
-                            "print('hi')\n"
+                            "# generated\nimport os\nimport snowflake.connector\nprint('hi')\n"
                         ),
                     },
                     tool_id="tu_1",
@@ -724,9 +721,7 @@ def test_build_writes_destination_toml(
     # Table is always live.
     assert 'table = "RAW_CSV"' in content
     # Database differs from env default → live override.
-    live_db_lines = [
-        line for line in content.splitlines() if line.startswith("database =")
-    ]
+    live_db_lines = [line for line in content.splitlines() if line.startswith("database =")]
     assert live_db_lines == ['database = "ANALYTICS"']
 
 
@@ -754,9 +749,7 @@ def test_build_destination_override_applies_before_agent_runs(
     assert 'table = "OVERRIDDEN_TABLE"' in content
     # schema=STAGING differs from default (test config has schema_=None) →
     # live override.
-    live_schema_lines = [
-        line for line in content.splitlines() if line.startswith("schema =")
-    ]
+    live_schema_lines = [line for line in content.splitlines() if line.startswith("schema =")]
     assert live_schema_lines == ['schema = "STAGING"']
 
 
@@ -784,7 +777,5 @@ def test_build_destination_override_empty_string_clears_field(
     dest_path = project_dir / "el/csv_ingest/destination.toml"
     content = dest_path.read_text(encoding="utf-8")
     # database now matches env (None); should NOT be a live line.
-    live_db_lines = [
-        line for line in content.splitlines() if line.startswith("database =")
-    ]
+    live_db_lines = [line for line in content.splitlines() if line.startswith("database =")]
     assert live_db_lines == []

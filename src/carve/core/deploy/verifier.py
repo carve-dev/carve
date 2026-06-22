@@ -82,9 +82,7 @@ def run_verify(
         return result
 
     if not expected:
-        result.failures.append(
-            "no destinations found in build manifest or plan design"
-        )
+        result.failures.append("no destinations found in build manifest or plan design")
         return result
 
     for database, schema, table, expected_columns in expected:
@@ -106,14 +104,10 @@ def run_verify(
                 table=table,
             )
         except Exception as exc:
-            result.failures.append(
-                f"could not list columns for {qualified}: {exc}"
-            )
+            result.failures.append(f"could not list columns for {qualified}: {exc}")
             continue
         if actual is None:
-            result.failures.append(
-                f"destination {qualified} does not exist"
-            )
+            result.failures.append(f"destination {qualified} does not exist")
             continue
         for drift in _compare_columns(
             qualified=qualified,
@@ -133,27 +127,20 @@ def run_verify(
                     runtime_role=runtime_role,
                 )
             except Exception as exc:
-                result.failures.append(
-                    f"could not check grants on {qualified}: {exc}"
-                )
+                result.failures.append(f"could not check grants on {qualified}: {exc}")
                 continue
             for required in _REQUIRED_GRANTS:
                 if required not in granted:
                     result.failures.append(
-                        f"{qualified}: runtime role {runtime_role!r} missing "
-                        f"{required} privilege"
+                        f"{qualified}: runtime role {runtime_role!r} missing {required} privilege"
                     )
 
         # 3. Smoke test — single-row fetch to confirm queryability.
         if smoke_test:
             try:
-                runtime_connection.query(
-                    f"SELECT 1 AS smoke FROM {qualified} LIMIT 1"
-                )
+                runtime_connection.query(f"SELECT 1 AS smoke FROM {qualified} LIMIT 1")
             except Exception as exc:
-                result.failures.append(
-                    f"{qualified}: smoke test SELECT failed: {exc}"
-                )
+                result.failures.append(f"{qualified}: smoke test SELECT failed: {exc}")
 
     return result
 
@@ -181,9 +168,7 @@ def _fetch_grants(
     granted: set[str] = set()
     runtime_upper = runtime_role.upper()
     for row in rows:
-        grantee = _coerce_str(
-            row.get("grantee_name") or row.get("GRANTEE_NAME")
-        ).upper()
+        grantee = _coerce_str(row.get("grantee_name") or row.get("GRANTEE_NAME")).upper()
         if grantee != runtime_upper:
             continue
         priv = _coerce_str(row.get("privilege") or row.get("PRIVILEGE")).upper()

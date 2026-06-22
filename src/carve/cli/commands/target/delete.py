@@ -85,10 +85,7 @@ def command(
         raise typer.Exit(code=2)
 
     if not yes:
-        message = (
-            f'Delete target "{name}" — section in connections.toml and '
-            f"lines in .env.example?"
-        )
+        message = f'Delete target "{name}" — section in connections.toml and lines in .env.example?'
         if not typer.confirm(message, default=False):
             console.print("Aborted.")
             raise typer.Exit(code=1)

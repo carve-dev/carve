@@ -70,13 +70,9 @@ def _make_config(
     return Config(
         project=ProjectConfig(name="el-test", default_target=default_target),
         models=ModelsConfig(anthropic_api_key="sk-test"),
-        runner=RunnerConfig(
-            venv_cache_dir=str(venv_cache_dir), default_timeout_seconds=60
-        ),
+        runner=RunnerConfig(venv_cache_dir=str(venv_cache_dir), default_timeout_seconds=60),
         server=ServerConfig(state_store=state_db),
-        connections=ConnectionsConfig(
-            snowflake={t: _snowflake_section(t) for t in targets}
-        ),
+        connections=ConnectionsConfig(snowflake={t: _snowflake_section(t) for t in targets}),
         config_hash="cafef00dbeefcafe",
     )
 
@@ -199,10 +195,7 @@ def test_el_run_target_flag_stamps_run_row(
         project_dir,
         target="dev",
         name="iowa_liquor",
-        body=(
-            "import os\n"
-            "print('CARVE_ACTIVE_TARGET=' + os.environ['CARVE_ACTIVE_TARGET'])\n"
-        ),
+        body=("import os\nprint('CARVE_ACTIVE_TARGET=' + os.environ['CARVE_ACTIVE_TARGET'])\n"),
     )
     console = Console(record=True, width=120)
     exit_code = run_pipeline_by_name(
@@ -734,15 +727,11 @@ def test_el_run_watch_picks_up_requirements_change(
     assert len(repository.list_runs(pipeline_name="reqs_watched")) >= 1
 
     # Change requirements.txt and fire a synthetic event referring to it.
-    (project_dir / "el" / "reqs_watched" / "requirements.txt").write_text(
-        "# bumped\n"
-    )
+    (project_dir / "el" / "reqs_watched" / "requirements.txt").write_text("# bumped\n")
 
     class _FakeEvent:
         is_directory = False
-        src_path = str(
-            project_dir / "el" / "reqs_watched" / "requirements.txt"
-        )
+        src_path = str(project_dir / "el" / "reqs_watched" / "requirements.txt")
 
     sync_observer.fire(_FakeEvent())
 
@@ -790,9 +779,7 @@ def test_el_run_watch_returns_sentinel_when_stopped_before_first_run(
         state_db=postgres_state_store_url,
         targets=("dev",),
     )
-    _plant_target_artifact(
-        project_dir, target="dev", name="never_runs", body="print('x')\n"
-    )
+    _plant_target_artifact(project_dir, target="dev", name="never_runs", body="print('x')\n")
 
     sync_observer = el_run._SyncObserver()
     stop = threading.Event()
@@ -815,7 +802,8 @@ def test_el_run_watch_returns_sentinel_when_stopped_before_first_run(
 def test_el_run_watch_refuses_symlinked_artifact_dir_outside_project(
     repository: Repository,
     venv_cache_dir: Path,
-    tmp_path_factory: pytest.TempPathFactory, postgres_state_store_url: str
+    tmp_path_factory: pytest.TempPathFactory,
+    postgres_state_store_url: str,
 ) -> None:
     """A symlinked artifact directory pointing outside the project root is
     refused with exit 2 before the watcher schedules. Defense-in-depth:

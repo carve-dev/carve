@@ -209,9 +209,7 @@ def test_verify_no_design_no_destinations() -> None:
         ("database", "1LEADING_DIGIT_BAD"),
     ],
 )
-def test_verifier_refuses_unsafe_destination_identifier(
-    field: str, bad: str
-) -> None:
+def test_verifier_refuses_unsafe_destination_identifier(field: str, bad: str) -> None:
     """Malformed db/schema/table values surface as a failure, never reach SQL."""
     design: dict[str, Any] = {
         "destination": {

@@ -39,18 +39,14 @@ def test_agents_list_shows_user_agent(tmp_path: Path) -> None:
 
 def test_agents_show_prints_prompt(tmp_path: Path) -> None:
     _write_user_agent(tmp_path)
-    result = runner.invoke(
-        app, ["agents", "show", "my-agent", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "show", "my-agent", "--project-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "You are my-agent." in result.output
     assert "read_only" in result.output
 
 
 def test_agents_show_unknown_fails(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["agents", "show", "ghost", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "show", "ghost", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
 
 
@@ -75,9 +71,7 @@ def test_agents_show_surfaces_malformed_file_error(tmp_path: Path) -> None:
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / "broken.md").write_text(_MALFORMED_AGENT, encoding="utf-8")
 
-    result = runner.invoke(
-        app, ["agents", "show", "broken", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "show", "broken", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "failed to load" in result.output
     # And it is NOT reported as merely unknown.
@@ -85,17 +79,13 @@ def test_agents_show_surfaces_malformed_file_error(tmp_path: Path) -> None:
 
 
 def test_agents_create_scaffolds_a_loadable_agent(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["agents", "create", "fresh", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "create", "fresh", "--project-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     created = tmp_path / "carve" / "agents" / "fresh.md"
     assert created.is_file()
 
     # The scaffold is a working agent: it re-loads + shows.
-    show = runner.invoke(
-        app, ["agents", "show", "fresh", "--project-dir", str(tmp_path)]
-    )
+    show = runner.invoke(app, ["agents", "show", "fresh", "--project-dir", str(tmp_path)])
     assert show.exit_code == 0, show.output
     assert "fresh" in show.output
 
@@ -122,9 +112,7 @@ def test_agents_create_from_template(tmp_path: Path) -> None:
 
 def test_agents_create_refuses_overwrite(tmp_path: Path) -> None:
     _write_user_agent(tmp_path)
-    result = runner.invoke(
-        app, ["agents", "create", "my-agent", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "create", "my-agent", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
 
 
@@ -150,9 +138,7 @@ def test_agents_show_rejects_traversal_name(tmp_path: Path) -> None:
     # `<tmp>/carve/agents`); `../../secret` from there lands at `<tmp>`.
     (tmp_path / "secret.md").write_text(_OUT_OF_TREE_SECRET, encoding="utf-8")
 
-    result = runner.invoke(
-        app, ["agents", "show", "../../secret", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "show", "../../secret", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
     # Reported as unknown (name rejected) — NOT read-and-surfaced.
     assert "No agent named" in result.output
@@ -173,9 +159,7 @@ def test_agents_show_rejects_out_of_tree_symlink(tmp_path: Path) -> None:
     secret.write_text(_OUT_OF_TREE_SECRET, encoding="utf-8")
     (agents_dir / "evil.md").symlink_to(secret)
 
-    result = runner.invoke(
-        app, ["agents", "show", "evil", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "show", "evil", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "No agent named" in result.output
     assert "failed to load" not in result.output
@@ -184,9 +168,7 @@ def test_agents_show_rejects_out_of_tree_symlink(tmp_path: Path) -> None:
 
 def test_agents_create_rejects_traversal_name(tmp_path: Path) -> None:
     """`create ../../evil` must not write a file outside the agents dir."""
-    result = runner.invoke(
-        app, ["agents", "create", "../../evil", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "create", "../../evil", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "Invalid agent name" in result.output
     # Nothing written outside the user agents dir.
@@ -207,9 +189,7 @@ def test_agents_create_refuses_symlink_target(tmp_path: Path) -> None:
     outside = tmp_path / "outside.md"  # does NOT exist → dangling link
     (agents_dir / "trap.md").symlink_to(outside)
 
-    result = runner.invoke(
-        app, ["agents", "create", "trap", "--project-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["agents", "create", "trap", "--project-dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "symlink" in result.output
     # write_text did not follow the link out of tree.
@@ -239,15 +219,11 @@ def test_agents_discovery_does_not_follow_out_of_tree_symlink(
     secret.write_text(_OUT_OF_TREE_AGENT, encoding="utf-8")
     (agents_dir / "evil.md").symlink_to(secret)
 
-    listed = runner.invoke(
-        app, ["agents", "list", "--project-dir", str(tmp_path)]
-    )
+    listed = runner.invoke(app, ["agents", "list", "--project-dir", str(tmp_path)])
     assert "leaked-agent" not in listed.output
     assert "DISCOVERY_BODY_MARKER" not in listed.output
 
-    shown = runner.invoke(
-        app, ["agents", "show", "leaked-agent", "--project-dir", str(tmp_path)]
-    )
+    shown = runner.invoke(app, ["agents", "show", "leaked-agent", "--project-dir", str(tmp_path)])
     assert shown.exit_code == 1
     assert "No agent named" in shown.output
     assert "DISCOVERY_BODY_MARKER" not in shown.output

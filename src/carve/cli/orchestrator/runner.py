@@ -119,17 +119,14 @@ def run_pipeline_by_name(
     # a pathological pipeline name (e.g. ``..`` or absolute path) can't
     # escape the project root.
     primary_dir = (project_dir / "el" / pipeline_name).resolve()
-    legacy_dir = (
-        project_dir / "targets" / active_target / "el" / pipeline_name
-    ).resolve()
+    legacy_dir = (project_dir / "targets" / active_target / "el" / pipeline_name).resolve()
     project_root = project_dir.resolve()
     for candidate in (primary_dir, legacy_dir):
         try:
             candidate.relative_to(project_root)
         except ValueError:
             console.print(
-                f"[red]✗[/red] Pipeline directory escapes project root: "
-                f"{_escape(pipeline_name)}"
+                f"[red]✗[/red] Pipeline directory escapes project root: {_escape(pipeline_name)}"
             )
             return 1
 
@@ -183,9 +180,7 @@ def run_pipeline_by_name(
     else:
         auto_fix_resolved = auto_fix
     max_fix_attempts_resolved = (
-        max_fix_attempts
-        if max_fix_attempts is not None
-        else config.runner.auto_fix.max_attempts
+        max_fix_attempts if max_fix_attempts is not None else config.runner.auto_fix.max_attempts
     )
 
     if auto_fix_resolved:
@@ -236,9 +231,7 @@ def run_pipeline_by_plan(
     project_dir = project_dir.resolve()
 
     if not PLAN_ID_RE.match(plan_id):
-        console.print(
-            f"[red]✗[/red] Invalid plan id format: {_escape(plan_id)}"
-        )
+        console.print(f"[red]✗[/red] Invalid plan id format: {_escape(plan_id)}")
         return 2
 
     plan_row = repository.get_plan(plan_id)
@@ -408,16 +401,10 @@ def _run_pipeline_dir(
     )
 
     if final_status == "success":
-        console.print(
-            f"[green]✓[/green] Run succeeded "
-            f"({_format_duration(duration_ms)})"
-        )
+        console.print(f"[green]✓[/green] Run succeeded ({_format_duration(duration_ms)})")
         return 0
 
-    console.print(
-        f"[red]✗[/red] Run {final_status} "
-        f"({_format_duration(duration_ms)})"
-    )
+    console.print(f"[red]✗[/red] Run {final_status} ({_format_duration(duration_ms)})")
     if error_message:
         console.print(f"  {error_message}")
     return 1
@@ -501,9 +488,7 @@ def _run_pipeline_with_recovery(
 
     if isinstance(outcome, Recovered):
         if outcome.attempts > 0:
-            console.print(
-                f"[green]✓[/green] Recovered after {outcome.attempts} attempt(s)"
-            )
+            console.print(f"[green]✓[/green] Recovered after {outcome.attempts} attempt(s)")
         return 0
     if isinstance(outcome, Exhausted):
         console.print(
@@ -513,14 +498,11 @@ def _run_pipeline_with_recovery(
         return 1
     if isinstance(outcome, Refused):
         console.print(
-            f"[red]✗[/red] Failure category={outcome.category!r}: "
-            f"{_escape(outcome.diagnosis)}"
+            f"[red]✗[/red] Failure category={outcome.category!r}: {_escape(outcome.diagnosis)}"
         )
         return 1
     # Aborted
-    console.print(
-        f"[yellow]Aborted[/yellow] after {outcome.attempts} attempt(s)."
-    )
+    console.print(f"[yellow]Aborted[/yellow] after {outcome.attempts} attempt(s).")
     return 1
 
 
@@ -570,8 +552,7 @@ def _read_requirements(path: Path) -> list[str]:
             continue
         if line.startswith("-"):
             logger.warning(
-                "skipping flag-shaped requirement %r from %s; M1 only "
-                "accepts plain package specs.",
+                "skipping flag-shaped requirement %r from %s; M1 only accepts plain package specs.",
                 line,
                 path,
             )

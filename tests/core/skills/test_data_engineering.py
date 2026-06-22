@@ -13,10 +13,7 @@ from pathlib import Path
 
 import pytest
 
-SKILL_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "src/carve/core/skills/data_engineering.md"
-)
+SKILL_PATH = Path(__file__).resolve().parents[3] / "src/carve/core/skills/data_engineering.md"
 
 
 @pytest.fixture
@@ -49,8 +46,7 @@ def test_skill_has_top_heading(skill_text: str) -> None:
 def test_skill_has_section_anchor(skill_text: str, anchor: str) -> None:
     """Every advertised sub-section header is present and unique."""
     assert skill_text.count(anchor) == 1, (
-        f"{anchor!r} should appear exactly once; found "
-        f"{skill_text.count(anchor)}"
+        f"{anchor!r} should appear exactly once; found {skill_text.count(anchor)}"
     )
 
 

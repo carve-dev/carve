@@ -28,7 +28,7 @@ def test_target_create_appends_section_to_connections(
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -50,7 +50,7 @@ def test_target_create_appends_block_to_env_example(
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
 
@@ -71,7 +71,7 @@ def test_target_create_does_not_create_targets_dir(
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     assert not (tmp_path / "targets").exists()
@@ -86,7 +86,7 @@ def test_target_create_refuses_existing_section(
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
     assert "already exists" in result.output
@@ -101,7 +101,7 @@ def test_target_create_refuses_invalid_name(
     result = runner.invoke(
         app,
         ["target", "create", "Staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 2, result.output
     assert "must match" in result.output
@@ -116,7 +116,7 @@ def test_target_create_force_overwrites(
     result = runner.invoke(
         app,
         ["target", "create", "dev", "--force", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = (tmp_path / "carve" / "connections.toml").read_text()
@@ -142,7 +142,7 @@ def test_target_create_preserves_comments_round_trip(
     result = runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     assert result.exit_code == 0, result.output
     content = conn.read_text()

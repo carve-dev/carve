@@ -54,8 +54,7 @@ def list_agents(
     registry = discovery.build_registry()
     if not registry.names():
         console.print(
-            "[yellow]No agents discovered.[/yellow] "
-            "Add one with `carve agents create <name>`."
+            "[yellow]No agents discovered.[/yellow] Add one with `carve agents create <name>`."
         )
         raise typer.Exit(code=0)
 
@@ -101,10 +100,7 @@ def show_agent(
         # isn't reported as merely "unknown" — the user sees *why* it's gone.
         load_error = _load_error_for(user_dir, name)
         if load_error is not None:
-            console.print(
-                f"[red]Agent {name!r} exists but failed to load:[/red] "
-                f"{load_error}"
-            )
+            console.print(f"[red]Agent {name!r} exists but failed to load:[/red] {load_error}")
             raise typer.Exit(code=1)
         console.print(f"[red]No agent named {name!r}.[/red] Known: {registry.names()}")
         raise typer.Exit(code=1)
@@ -168,9 +164,7 @@ def create_agent(
     # symlink; refuse one (incl. a *dangling* link, which `.exists()` reports
     # absent yet `write_text` would follow out of tree).
     if target.is_symlink():
-        console.print(
-            f"[red]{target} is a symlink; refusing to write through it.[/red]"
-        )
+        console.print(f"[red]{target} is a symlink; refusing to write through it.[/red]")
         raise typer.Exit(code=1)
     if target.exists():
         console.print(f"[red]{target} already exists.[/red]")
@@ -196,9 +190,7 @@ def create_agent(
     raise typer.Exit(code=0)
 
 
-def _template_from(
-    root: Path, user_dir: Path, template: str, new_name: str
-) -> str:
+def _template_from(root: Path, user_dir: Path, template: str, new_name: str) -> str:
     """Build new-agent content from an existing agent's file."""
     discovery = AgentDiscovery.for_project(agents_dir=user_dir)
     for agent in discovery.discover():

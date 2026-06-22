@@ -214,7 +214,7 @@ def generate_plan(
         if existing is None:
             raise PlanGenerationError(
                 f"Pipeline {pipeline_name!r} not found. Use "
-                "`carve plan \"<goal>\"` to design a new pipeline."
+                '`carve plan "<goal>"` to design a new pipeline.'
             )
 
     capture = SubmitPlanCapture()
@@ -232,9 +232,7 @@ def generate_plan(
     # Extensibility (spec 16): make discovered skill packs loadable at
     # runtime by adding the content-injection lookup tool to the agent's
     # tool list. Discovery is inert (no bundled script runs at load).
-    tools.append(
-        build_skill_pack_tool(project_dir=project_dir, paths=config.paths)
-    )
+    tools.append(build_skill_pack_tool(project_dir=project_dir, paths=config.paths))
 
     # Extensibility (spec 16): route through the classification router. With
     # no classification the router falls back to None — the M1 plan flow is
@@ -261,9 +259,7 @@ def generate_plan(
     # FQN parsed from the goal text. The combined dict is the
     # "instruction" the system prompt advertises to the agent and
     # the floor we enforce after submit_plan.
-    user_destination = _resolve_user_destination(
-        goal=goal, destination_hint=destination_hint
-    )
+    user_destination = _resolve_user_destination(goal=goal, destination_hint=destination_hint)
 
     system_prompt = _compose_plan_system_prompt(
         config=config,
@@ -494,9 +490,7 @@ def _render_existing_pipeline_section(
     main_py = pipeline_dir / "main.py"
     requirements = pipeline_dir / "requirements.txt"
     if not main_py.is_file():
-        legacy_dir = (
-            project_dir / "targets" / active_target / "el" / pipeline_name
-        )
+        legacy_dir = project_dir / "targets" / active_target / "el" / pipeline_name
         legacy_main = legacy_dir / "main.py"
         if not legacy_main.is_file():
             return None
@@ -567,10 +561,7 @@ def _compose_initial_user_message(
     if parent_plan_row is not None:
         return f"User feedback on plan {parent_plan_row.id}:\n\n{goal}"
     if target_pipeline is not None:
-        return (
-            f"Modify pipeline `{target_pipeline}`. Change requested:\n\n"
-            f"{goal}"
-        )
+        return f"Modify pipeline `{target_pipeline}`. Change requested:\n\n{goal}"
     return goal
 
 
@@ -681,15 +672,11 @@ def _validate_pipeline_name(
 ) -> str:
     """Reject malformed pipeline names; lock to ``target_pipeline`` if set."""
     if not isinstance(candidate, str) or not candidate:
-        raise PlanGenerationError(
-            "design.pipeline_name is missing or not a string."
-        )
+        raise PlanGenerationError("design.pipeline_name is missing or not a string.")
     try:
         validate_artifact_name(candidate)
     except InvalidArtifactNameError as exc:
-        raise PlanGenerationError(
-            f"design.pipeline_name {candidate!r} is invalid: {exc}"
-        ) from exc
+        raise PlanGenerationError(f"design.pipeline_name {candidate!r} is invalid: {exc}") from exc
     if target_pipeline is not None and candidate != target_pipeline:
         raise PlanGenerationError(
             f"design.pipeline_name {candidate!r} does not match the "

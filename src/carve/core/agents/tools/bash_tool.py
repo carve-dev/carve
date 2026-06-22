@@ -217,9 +217,7 @@ BASH_SCHEMA: dict[str, Any] = {
         },
         "timeout": {
             "type": "integer",
-            "description": (
-                "Wall-clock timeout in seconds (default 120, max 600)."
-            ),
+            "description": ("Wall-clock timeout in seconds (default 120, max 600)."),
             "default": _DEFAULT_TIMEOUT,
         },
     },

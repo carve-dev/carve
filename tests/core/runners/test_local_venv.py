@@ -74,9 +74,7 @@ def repo(project_dir: Path, postgres_state_store_url: str) -> Repository:
 
 
 @pytest.fixture
-def runner(
-    project_dir: Path, repo: Repository, postgres_state_store_url: str
-) -> LocalVenvRunner:
+def runner(project_dir: Path, repo: Repository, postgres_state_store_url: str) -> LocalVenvRunner:
     cache = project_dir / ".carve" / "venvs"
     cache.mkdir(parents=True, exist_ok=True)
     config = _build_config(postgres_state_store_url, venv_cache_dir=str(cache))
@@ -211,9 +209,7 @@ def test_failing_script_records_failed_status_with_exit_code(
     script = project_dir / "boom.py"
     script.write_text("import sys\nsys.exit(7)\n")
 
-    step = PythonStep(
-        PythonStepConfig(id="boom", script="boom.py", timeout_seconds=60)
-    )
+    step = PythonStep(PythonStepConfig(id="boom", script="boom.py", timeout_seconds=60))
     context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
@@ -238,9 +234,7 @@ def test_timeout_triggers_cancellation(
     script = project_dir / "slow.py"
     script.write_text("import time\ntime.sleep(60)\n")
 
-    step = PythonStep(
-        PythonStepConfig(id="slow", script="slow.py", timeout_seconds=1)
-    )
+    step = PythonStep(PythonStepConfig(id="slow", script="slow.py", timeout_seconds=1))
     context = _make_context(project_dir, repo, postgres_state_store_url)
 
     runner.execute(step, context)
@@ -359,9 +353,7 @@ def test_snowflake_env_is_injected_into_subprocess(
             database="d",
         )
     }
-    step = PythonStep(
-        PythonStepConfig(id="env", script="show_env.py", timeout_seconds=60)
-    )
+    step = PythonStep(PythonStepConfig(id="env", script="show_env.py", timeout_seconds=60))
     context = _make_context(project_dir, repo, postgres_state_store_url, snowflake=snowflake)
 
     runner.execute(step, context)
@@ -379,9 +371,7 @@ def test_step_env_overrides_are_passed_through(
     postgres_state_store_url: str,
 ) -> None:
     script = project_dir / "show_my_var.py"
-    script.write_text(
-        "import os\nprint('VAL=' + os.environ.get('CARVE_TEST_VAR', 'MISSING'))\n"
-    )
+    script.write_text("import os\nprint('VAL=' + os.environ.get('CARVE_TEST_VAR', 'MISSING'))\n")
 
     step = PythonStep(
         PythonStepConfig(
@@ -498,7 +488,9 @@ async def test_stream_logs_yields_lines_and_terminates(
 # Sanity: the runner's `python_executable` defaults to the current interpreter
 # so tests don't need an alternative interpreter configured.
 def test_python_executable_defaults_to_sys_executable(
-    project_dir: Path, repo: Repository, postgres_state_store_url: str,
+    project_dir: Path,
+    repo: Repository,
+    postgres_state_store_url: str,
 ) -> None:
     import sys
 
@@ -506,9 +498,7 @@ def test_python_executable_defaults_to_sys_executable(
     runner = LocalVenvRunner(config.runner, repo)
     assert runner.python_executable == sys.executable
 
-    runner_custom = LocalVenvRunner(
-        config.runner, repo, python_executable="/custom/python"
-    )
+    runner_custom = LocalVenvRunner(config.runner, repo, python_executable="/custom/python")
     assert runner_custom.python_executable == "/custom/python"
 
 
@@ -524,9 +514,7 @@ def test_step_env_overrides_inherited_env(
     monkeypatch.setenv("CARVE_OVERRIDE_ME", "from-parent")
 
     script = project_dir / "ovr.py"
-    script.write_text(
-        "import os\nprint('V=' + os.environ['CARVE_OVERRIDE_ME'])\n"
-    )
+    script.write_text("import os\nprint('V=' + os.environ['CARVE_OVERRIDE_ME'])\n")
 
     step = PythonStep(
         PythonStepConfig(
@@ -602,10 +590,7 @@ def test_step_env_can_reintroduce_anthropic_key_intentionally(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-parent")
 
     script = project_dir / "want_anth.py"
-    script.write_text(
-        "import os\n"
-        "print('K=' + os.environ.get('ANTHROPIC_API_KEY', '<unset>'))\n"
-    )
+    script.write_text("import os\nprint('K=' + os.environ.get('ANTHROPIC_API_KEY', '<unset>'))\n")
 
     step = PythonStep(
         PythonStepConfig(
@@ -692,6 +677,5 @@ def test_cancel_kills_forked_child_of_user_script(
             break
         last_mtime = cur_mtime
     assert stable, (
-        "forked child kept writing the sentinel after cancel(); "
-        "process-group signalling is broken"
+        "forked child kept writing the sentinel after cancel(); process-group signalling is broken"
     )

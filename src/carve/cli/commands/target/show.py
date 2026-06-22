@@ -75,15 +75,9 @@ def command(
     if not referenced:
         console.print("  Secrets:        (literal values; no env vars referenced)")
     elif missing_vars:
-        console.print(
-            f"  Secrets:        [red]✗ missing[/red] "
-            f"({', '.join(sorted(missing_vars))})"
-        )
+        console.print(f"  Secrets:        [red]✗ missing[/red] ({', '.join(sorted(missing_vars))})")
     else:
-        console.print(
-            f"  Secrets:        [green]✓ all set[/green] "
-            f"({', '.join(sorted(set_vars))})"
-        )
+        console.print(f"  Secrets:        [green]✓ all set[/green] ({', '.join(sorted(set_vars))})")
     console.print()
     console.print("[bold]Connection (resolved)[/bold]")
     console.print(f"  snowflake.{name}:")
@@ -95,7 +89,6 @@ def command(
         console.print(f"    {value.key}: {display}")
     console.print()
     console.print(
-        "[dim]EL artifacts are shared across targets — run "
-        "`carve el list` to see them.[/dim]"
+        "[dim]EL artifacts are shared across targets — run `carve el list` to see them.[/dim]"
     )
     raise typer.Exit(code=0)

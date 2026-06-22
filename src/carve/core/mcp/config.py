@@ -90,13 +90,10 @@ class McpServer(BaseModel):
     @model_validator(mode="after")
     def _require_endpoint(self) -> McpServer:
         if not self.command and not self.url:
-            raise ValueError(
-                f"MCP server {self.name!r} needs either a `command` or a `url`."
-            )
+            raise ValueError(f"MCP server {self.name!r} needs either a `command` or a `url`.")
         if self.command and self.url:
             raise ValueError(
-                f"MCP server {self.name!r} has both `command` and `url`; "
-                "set exactly one."
+                f"MCP server {self.name!r} has both `command` and `url`; set exactly one."
             )
         return self
 

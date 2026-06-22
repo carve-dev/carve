@@ -145,10 +145,7 @@ class DeployVerifyInvocation:
 # carries its own field set; the ``trigger`` enum tag makes branch
 # selection cheap without isinstance walks.
 Invocation = (
-    ElRunInvocation
-    | DeployPreflightInvocation
-    | DeployDdlApplyInvocation
-    | DeployVerifyInvocation
+    ElRunInvocation | DeployPreflightInvocation | DeployDdlApplyInvocation | DeployVerifyInvocation
 )
 
 

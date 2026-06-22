@@ -76,9 +76,7 @@ def test_same_repo_dbt_at_root_resolves(project: ProjectPaths) -> None:
 def test_same_repo_dbt_one_level_down_resolves(project: ProjectPaths) -> None:
     _make_dbt(project.root / "analytics")
     block = ComponentConfig(type="dbt", mode="same-repo")
-    resolved = resolve_component(
-        "analytics", components={"analytics": block}, paths=project
-    )
+    resolved = resolve_component("analytics", components={"analytics": block}, paths=project)
     assert resolved.code_path == project.root / "analytics"
 
 
@@ -122,23 +120,17 @@ def test_dbt_detection_ignores_control_plane_dirs(project: ProjectPaths) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_separate_local_present_path_resolves(
-    project: ProjectPaths, tmp_path: Path
-) -> None:
+def test_separate_local_present_path_resolves(project: ProjectPaths, tmp_path: Path) -> None:
     external = tmp_path / "external-ingest"
     external.mkdir()
     block = ComponentConfig(type="dlt", mode="separate-local", path=str(external))
-    resolved = resolve_component(
-        "ingest", components={"ingest": block}, paths=project
-    )
+    resolved = resolve_component("ingest", components={"ingest": block}, paths=project)
     assert resolved.code_path == external
     assert resolved.ref is None
 
 
 def test_separate_local_missing_path_errors(project: ProjectPaths) -> None:
-    block = ComponentConfig(
-        type="dlt", mode="separate-local", path="/nonexistent/ingest"
-    )
+    block = ComponentConfig(type="dlt", mode="separate-local", path="/nonexistent/ingest")
     with pytest.raises(ComponentResolutionError, match="does not exist"):
         resolve_component("ingest", components={"ingest": block}, paths=project)
 
@@ -157,9 +149,7 @@ def test_separate_remote_resolves_to_workspace_cache_path(
         url="git@github.com:org/analytics.git",
         branch="main",
     )
-    resolved = resolve_component(
-        "analytics", components={"analytics": block}, paths=project
-    )
+    resolved = resolve_component("analytics", components={"analytics": block}, paths=project)
     assert resolved.code_path.parent == project.workspaces_dir
     assert resolved.code_path.name.endswith("-main")
     # branch-tracking: not pinned.
@@ -174,9 +164,7 @@ def test_separate_remote_ref_is_carried_as_pin(project: ProjectPaths) -> None:
         ref="9f3a1c7",
         branch="main",
     )
-    resolved = resolve_component(
-        "analytics", components={"analytics": block}, paths=project
-    )
+    resolved = resolve_component("analytics", components={"analytics": block}, paths=project)
     assert resolved.ref == "9f3a1c7"
     # ref wins over branch in the derived dir name too.
     assert resolved.code_path.name.endswith("-9f3a1c7")
@@ -198,9 +186,7 @@ def test_separate_remote_is_pure_no_clone(project: ProjectPaths) -> None:
 
 def test_convention_resolves_el_dir_as_dlt(project: ProjectPaths) -> None:
     _make_el(project, "salesforce_accounts")
-    resolved = resolve_component(
-        "salesforce_accounts", components={}, paths=project
-    )
+    resolved = resolve_component("salesforce_accounts", components={}, paths=project)
     assert resolved.type is ComponentType.DLT
     assert resolved.code_path == project.el_dir / "salesforce_accounts"
 
@@ -261,7 +247,5 @@ def test_block_overrides_convention(project: ProjectPaths, tmp_path: Path) -> No
     external = tmp_path / "external"
     external.mkdir()
     block = ComponentConfig(type="dlt", mode="separate-local", path=str(external))
-    resolved = resolve_component(
-        "ingest", components={"ingest": block}, paths=project
-    )
+    resolved = resolve_component("ingest", components={"ingest": block}, paths=project)
     assert resolved.code_path == external

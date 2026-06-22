@@ -126,9 +126,7 @@ class PermissionGate:
         # Explicit write-tier clamp. The permitted set already excludes
         # these below `build`, but we re-assert here so the invariant is
         # legible at the gate and survives any future widening of the set.
-        if tool_name in WRITE_TOOLS and not mode_permits(
-            self._policy.mode, PermissionMode.BUILD
-        ):
+        if tool_name in WRITE_TOOLS and not mode_permits(self._policy.mode, PermissionMode.BUILD):
             return Decision.deny(
                 f"Write tool {tool_name!r} is denied in {self._policy.mode} mode; "
                 "writes require build or deploy."
@@ -139,8 +137,7 @@ class PermissionGate:
             self._policy.mode, PermissionMode.DEPLOY
         ):
             return Decision.deny(
-                f"Warehouse DDL is denied in {self._policy.mode} mode; "
-                "it requires deploy."
+                f"Warehouse DDL is denied in {self._policy.mode} mode; it requires deploy."
             )
 
         if tool_name == "bash":
@@ -175,9 +172,7 @@ class PermissionGate:
             )
         if approver(tool_name, dict(tool_input)):
             return Decision.allow()
-        return Decision.needs_user_input(
-            f"{reason} The approver declined; held for user input."
-        )
+        return Decision.needs_user_input(f"{reason} The approver declined; held for user input.")
 
     def _check_bash(
         self,

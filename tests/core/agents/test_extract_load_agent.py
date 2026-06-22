@@ -56,9 +56,7 @@ def _text_block(text: str) -> SimpleNamespace:
     return SimpleNamespace(type="text", text=text)
 
 
-def _tool_use_block(
-    name: str, input_: dict[str, Any], tool_id: str
-) -> SimpleNamespace:
+def _tool_use_block(name: str, input_: dict[str, Any], tool_id: str) -> SimpleNamespace:
     return SimpleNamespace(type="tool_use", id=tool_id, name=name, input=input_)
 
 
@@ -201,10 +199,7 @@ def _ddl_text(
             f"ADD COLUMN IF NOT EXISTS {col_name} {col_type};\n\n"
         )
     if use_bare_rename:
-        out += (
-            "ALTER TABLE ANALYTICS_DEV.RAW.IOWA_LIQUOR_SALES "
-            "RENAME TO IOWA_LIQUOR_SALES_V2;\n\n"
-        )
+        out += "ALTER TABLE ANALYTICS_DEV.RAW.IOWA_LIQUOR_SALES RENAME TO IOWA_LIQUOR_SALES_V2;\n\n"
     out += (
         "-- === Grants ===\n"
         "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
@@ -303,9 +298,7 @@ def _scripted_run(
     for tool_name, tool_input in extra_pre_calls:
         responses.append(
             _response(
-                content=[
-                    _tool_use_block(tool_name, tool_input, tool_id=next_id())
-                ],
+                content=[_tool_use_block(tool_name, tool_input, tool_id=next_id())],
                 stop_reason="tool_use",
             )
         )
@@ -319,11 +312,7 @@ def _scripted_run(
         }
         responses.append(
             _response(
-                content=[
-                    _tool_use_block(
-                        "submit_step", submit_payload, tool_id=next_id()
-                    )
-                ],
+                content=[_tool_use_block("submit_step", submit_payload, tool_id=next_id())],
                 stop_reason="tool_use",
             )
         )
@@ -379,11 +368,7 @@ def _scripted_run(
         }
         responses.append(
             _response(
-                content=[
-                    _tool_use_block(
-                        "submit_step", submit_payload, tool_id=next_id()
-                    )
-                ],
+                content=[_tool_use_block("submit_step", submit_payload, tool_id=next_id())],
                 stop_reason="tool_use",
             )
         )
@@ -438,9 +423,7 @@ def test_emits_three_files_for_socrata_merge_upsert(
     )
     # Files actually landed on disk under the active-target tree.
     assert (project_dir / "el/iowa_liquor_sales/main.py").is_file()
-    assert (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).is_file()
+    assert (project_dir / "el/iowa_liquor_sales/snowflake.sql").is_file()
 
 
 def test_rejects_out_of_scope(tmp_path: Path, postgres_state_store_url: str) -> None:
@@ -644,14 +627,13 @@ def test_uses_target_prefixed_env_vars(tmp_path: Path, postgres_state_store_url:
         ddl_sql=_ddl_text(),
     )
     _run(project_dir, client, postgres_state_store_url)
-    written = (
-        project_dir / "el/iowa_liquor_sales/main.py"
-    ).read_text(encoding="utf-8")
+    written = (project_dir / "el/iowa_liquor_sales/main.py").read_text(encoding="utf-8")
     assert "DEV_SNOWFLAKE_USER" in written
 
 
 def test_connection_context_uses_env_var_references_for_script(
-    tmp_path: Path, postgres_state_store_url: str,
+    tmp_path: Path,
+    postgres_state_store_url: str,
 ) -> None:
     """The script-side connection-context block must show env-var
     references (`os.environ['DEV_SNOWFLAKE_ACCOUNT']`), NOT resolved
@@ -709,9 +691,9 @@ def test_requirements_minimality(tmp_path: Path, postgres_state_store_url: str) 
         ddl_sql=_ddl_text(),
     )
     _run(project_dir, client, postgres_state_store_url)
-    requirements = (
-        project_dir / "el/iowa_liquor_sales/requirements.txt"
-    ).read_text(encoding="utf-8")
+    requirements = (project_dir / "el/iowa_liquor_sales/requirements.txt").read_text(
+        encoding="utf-8"
+    )
     assert "snowflake-connector-python" in requirements
     # No pandas (we don't use write_pandas), no pyarrow (no parquet).
     assert "pandas" not in requirements
@@ -776,9 +758,7 @@ def test_ddl_idempotent_create_table_if_not_exists(
         ddl_sql=ddl,
     )
     _run(project_dir, client, postgres_state_store_url)
-    on_disk = (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).read_text(encoding="utf-8")
+    on_disk = (project_dir / "el/iowa_liquor_sales/snowflake.sql").read_text(encoding="utf-8")
     assert "CREATE SCHEMA IF NOT EXISTS" in on_disk
     assert "CREATE TABLE IF NOT EXISTS" in on_disk
     assert "GRANT" in on_disk
@@ -818,17 +798,14 @@ def test_ddl_never_uses_bare_rename(tmp_path: Path, postgres_state_store_url: st
         ddl_sql="",
         error=True,
         error_summary=(
-            "Snowflake doesn't support idempotent RENAME; please drop and "
-            "re-create or hand-edit."
+            "Snowflake doesn't support idempotent RENAME; please drop and re-create or hand-edit."
         ),
     )
     result = _run(project_dir, client, postgres_state_store_url, task=task)
     assert result.error is True
     assert "rename" in result.summary.lower()
     # The on-disk DDL never appeared — the agent didn't write any files.
-    assert not (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).exists()
+    assert not (project_dir / "el/iowa_liquor_sales/snowflake.sql").exists()
 
 
 def test_ddl_destructive_intent_surfaces_in_tradeoffs(
@@ -848,9 +825,7 @@ def test_ddl_destructive_intent_surfaces_in_tradeoffs(
         ddl_sql=ddl,
     )
     result = _run(project_dir, client, postgres_state_store_url, task=task)
-    on_disk = (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).read_text(encoding="utf-8")
+    on_disk = (project_dir / "el/iowa_liquor_sales/snowflake.sql").read_text(encoding="utf-8")
     assert "DROP COLUMN IF EXISTS foo" in on_disk
     assert result.success is True
 
@@ -875,9 +850,7 @@ def test_ddl_modify_path_emits_alter_add_column(
         ddl_sql=ddl,
     )
     _run(project_dir, client, postgres_state_store_url, task=task)
-    on_disk = (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).read_text(encoding="utf-8")
+    on_disk = (project_dir / "el/iowa_liquor_sales/snowflake.sql").read_text(encoding="utf-8")
     assert "ADD COLUMN IF NOT EXISTS CITY_NAME" in on_disk
 
 
@@ -890,9 +863,7 @@ def test_ddl_grants_runtime_role(tmp_path: Path, postgres_state_store_url: str) 
         ddl_sql=_ddl_text(),
     )
     _run(project_dir, client, postgres_state_store_url)
-    on_disk = (
-        project_dir / "el/iowa_liquor_sales/snowflake.sql"
-    ).read_text(encoding="utf-8")
+    on_disk = (project_dir / "el/iowa_liquor_sales/snowflake.sql").read_text(encoding="utf-8")
     # The config fixture sets role=TRANSFORMER_DEV.
     assert "TO ROLE TRANSFORMER_DEV" in on_disk
 
@@ -906,9 +877,7 @@ def test_build_manifest_includes_ddl_file(tmp_path: Path, postgres_state_store_u
         ddl_sql=_ddl_text(),
     )
     result = _run(project_dir, client, postgres_state_store_url)
-    assert any(
-        f.endswith("iowa_liquor_sales/snowflake.sql") for f in result.file_list
-    )
+    assert any(f.endswith("iowa_liquor_sales/snowflake.sql") for f in result.file_list)
     # The build flow records the manifest as a serializable list.
     assert json.dumps({"files": result.file_list})
 
@@ -926,7 +895,8 @@ def test_build_manifest_includes_ddl_file(tmp_path: Path, postgres_state_store_u
     ],
 )
 def test_supports_each_source_pattern(
-    tmp_path: Path, postgres_state_store_url: str,
+    tmp_path: Path,
+    postgres_state_store_url: str,
     source_type: str,
     extra_imports: str,
 ) -> None:
@@ -949,7 +919,8 @@ def test_supports_each_source_pattern(
     ["merge_upsert", "truncate_load", "append_only", "watermark_incremental"],
 )
 def test_supports_each_transformation_strategy(
-    tmp_path: Path, postgres_state_store_url: str,
+    tmp_path: Path,
+    postgres_state_store_url: str,
     strategy: str,
 ) -> None:
     project_dir = _project(tmp_path)

@@ -82,8 +82,7 @@ class SkillPackLibrary:
                     continue
                 if pack.name in seen:
                     logger.info(
-                        "Skill pack %r at %s shadowed by an earlier root; "
-                        "keeping the first.",
+                        "Skill pack %r at %s shadowed by an earlier root; keeping the first.",
                         pack.name,
                         pack.directory,
                     )
@@ -122,14 +121,11 @@ class SkillPackLibrary:
         def _execute(input_: ToolInput) -> ToolResult:
             name = input_.get("pack_name")
             if not isinstance(name, str) or not name:
-                raise ToolExecutionError(
-                    "`pack_name` must be a non-empty string."
-                )
+                raise ToolExecutionError("`pack_name` must be a non-empty string.")
             by_name = {p.name: p for p in self.discover()}
             if name not in by_name:
                 raise ToolExecutionError(
-                    f"Unknown skill pack {name!r}. Available: "
-                    f"{sorted(by_name)}"
+                    f"Unknown skill pack {name!r}. Available: {sorted(by_name)}"
                 )
             return _render_pack(by_name[name])
 

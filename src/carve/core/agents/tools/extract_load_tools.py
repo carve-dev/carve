@@ -110,17 +110,12 @@ def make_write_file_tool(
         try:
             candidate.relative_to(project_root)
         except ValueError as exc:
-            raise ToolExecutionError(
-                f"Path {path!r} is outside the project directory."
-            ) from exc
+            raise ToolExecutionError(f"Path {path!r} is outside the project directory.") from exc
 
         if candidate not in allowed_resolved:
-            permitted = sorted(
-                str(p.relative_to(project_root)) for p in allowed_resolved
-            )
+            permitted = sorted(str(p.relative_to(project_root)) for p in allowed_resolved)
             raise ToolExecutionError(
-                f"Path {path!r} is not on the write allow-list. "
-                f"Allowed: {permitted}"
+                f"Path {path!r} is not on the write allow-list. Allowed: {permitted}"
             )
 
         try:
@@ -160,8 +155,7 @@ LOOKUP_SKILL_SCHEMA: dict[str, Any] = {
         "skill_name": {
             "type": "string",
             "description": (
-                "Name of the skill to load. One of: data_engineering, "
-                "snowflake_destination."
+                "Name of the skill to load. One of: data_engineering, snowflake_destination."
             ),
             "enum": ["data_engineering", "snowflake_destination"],
         },
@@ -190,14 +184,11 @@ def make_lookup_skill_tool(skills_dir: Path | None = None) -> Tool:
             raise ToolExecutionError("`skill_name` must be a non-empty string.")
         if name not in _ALLOWED_SKILL_NAMES:
             raise ToolExecutionError(
-                f"Unknown skill {name!r}. Allowed: "
-                f"{sorted(_ALLOWED_SKILL_NAMES)}"
+                f"Unknown skill {name!r}. Allowed: {sorted(_ALLOWED_SKILL_NAMES)}"
             )
         path = base_dir / f"{name}.md"
         if not path.is_file():
-            raise ToolExecutionError(
-                f"Skill content not found on disk: {path}"
-            )
+            raise ToolExecutionError(f"Skill content not found on disk: {path}")
         return path.read_text(encoding="utf-8")
 
     return Tool(

@@ -110,9 +110,7 @@ def build_extensibility_hook_factory(
         # Rebuild the gate at *this* mode — the clamp the firing loop runs
         # at — so the hook never inherits a wider authority than the loop.
         gate = PermissionGate(build_policy(mode))
-        runner = HookRunner(
-            gate=gate, project_dir=project_dir, approver=approver
-        )
+        runner = HookRunner(gate=gate, project_dir=project_dir, approver=approver)
         return build_tool_hooks(specs, runner)
 
     return _factory
@@ -197,9 +195,7 @@ def resolve_agent_or_fallback(
     agents_dir = (project_dir / paths.agents_dir).resolve()
     registry = AgentDiscovery.for_project(agents_dir=agents_dir).build_registry()
     try:
-        return select_agent(
-            registry, classification=classification, override=override
-        )
+        return select_agent(registry, classification=classification, override=override)
     except NoAgentMatch:
         if override is not None:
             # An explicit override that did not resolve is a user error, not

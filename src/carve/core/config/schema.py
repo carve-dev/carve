@@ -149,9 +149,7 @@ class ModelsConfig(BaseModel):
     @classmethod
     def _valid_auth_mode(cls, value: str | None) -> str | None:
         if value is not None and value not in ("api_key", "oauth"):
-            raise ValueError(
-                f"auth_mode must be 'api_key' or 'oauth', got {value!r}"
-            )
+            raise ValueError(f"auth_mode must be 'api_key' or 'oauth', got {value!r}")
         return value
 
     def resolve_model(self, ref: str | None) -> str:
@@ -316,9 +314,7 @@ class ComponentConfig(BaseModel):
         if not url:
             raise ValueError("url must not be empty")
         if url.startswith("-"):
-            raise ValueError(
-                f"url must not start with '-' (option-shaped); got {value!r}"
-            )
+            raise ValueError(f"url must not start with '-' (option-shaped); got {value!r}")
         if url.startswith(("https://", "ssh://", "git://", "file://")):
             return value
         # scp-style `[user@]host:path`: no scheme, a single `:` splitting a
@@ -347,9 +343,7 @@ class ComponentConfig(BaseModel):
         if not value or value != value.strip():
             raise ValueError(f"ref/branch must be non-empty and unpadded; got {value!r}")
         if value.startswith("-"):
-            raise ValueError(
-                f"ref/branch must not start with '-' (option-shaped); got {value!r}"
-            )
+            raise ValueError(f"ref/branch must not start with '-' (option-shaped); got {value!r}")
         if re.search(r"[\x00-\x20\x7f~^:?*\[\\]", value):
             raise ValueError(f"ref/branch contains an illegal character; got {value!r}")
         if (
@@ -374,12 +368,8 @@ class ComponentConfig(BaseModel):
         # silently ignoring it, so a mis-set block is caught at load time.
         if self.mode is not ComponentMode.SEPARATE_LOCAL and self.path:
             raise ValueError("`path` is only valid when mode == 'separate-local'")
-        if self.mode is not ComponentMode.SEPARATE_REMOTE and (
-            self.url or self.branch or self.ref
-        ):
-            raise ValueError(
-                "`url`/`branch`/`ref` are only valid when mode == 'separate-remote'"
-            )
+        if self.mode is not ComponentMode.SEPARATE_REMOTE and (self.url or self.branch or self.ref):
+            raise ValueError("`url`/`branch`/`ref` are only valid when mode == 'separate-remote'")
         return self
 
 

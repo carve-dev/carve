@@ -27,7 +27,7 @@ def test_target_list_marks_default(
     runner.invoke(
         app,
         ["target", "create", "staging", "--project-dir", str(tmp_path)],
-    env=cli_env,
+        env=cli_env,
     )
     # Set DEV_* env vars so the secrets column doesn't matter for this test.
     for var in (

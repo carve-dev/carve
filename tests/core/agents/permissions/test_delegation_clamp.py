@@ -171,9 +171,7 @@ class TestModeClamp:
 
 
 class TestContextIsolation:
-    def test_child_prompt_holds_only_named_context_not_transcript(
-        self, tmp_path: Path
-    ) -> None:
+    def test_child_prompt_holds_only_named_context_not_transcript(self, tmp_path: Path) -> None:
         client = _ScriptedClient(
             [
                 _response(

@@ -38,9 +38,7 @@ def _copy_fixture(name: str, dest: Path) -> Path:
 
 def _write_minimal_project(root: Path, *, anthropic_key: str = "sk-test") -> None:
     """Write the smallest valid project tree directly into `root`."""
-    (root / "carve.toml").write_text(
-        '[project]\nname = "tmp"\n\n[paths]\nconfig_dir = "carve"\n'
-    )
+    (root / "carve.toml").write_text('[project]\nname = "tmp"\n\n[paths]\nconfig_dir = "carve"\n')
     (root / "carve").mkdir()
     (root / "carve" / "models.toml").write_text(f'anthropic_api_key = "{anthropic_key}"\n')
 
@@ -50,9 +48,7 @@ def _write_minimal_project(root: Path, *, anthropic_key: str = "sk-test") -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_loads_full_config_with_env_vars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_loads_full_config_with_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = _copy_fixture("valid_full", tmp_path)
     monkeypatch.setenv("SNOWFLAKE_ACCOUNT", "acct123")
     monkeypatch.setenv("SNOWFLAKE_USER", "alice")
@@ -95,12 +91,12 @@ def test_loads_from_carve_init_layout(tmp_path: Path) -> None:
     # Run init via CliRunner-like direct call would be circular; instead
     # mimic the layout it produces.
     (tmp_path / "carve.toml").write_text(
-        '[project]\n'
+        "[project]\n"
         'name = "my-carve-project"\n'
         'version = "0.0.1"\n'
         'default_target = "dev"\n'
-        '\n'
-        '[paths]\n'
+        "\n"
+        "[paths]\n"
         'config_dir = "carve"\n'
     )
     (tmp_path / "carve").mkdir()
@@ -128,9 +124,7 @@ def test_project_dir_argument_is_used(tmp_path: Path) -> None:
     assert cfg.project.name == "tmp"
 
 
-def test_default_project_dir_is_cwd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_project_dir_is_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_minimal_project(tmp_path)
     monkeypatch.chdir(tmp_path)
 
@@ -192,12 +186,7 @@ def test_malformed_toml_raises(tmp_path: Path) -> None:
 def test_extra_field_rejected(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     (tmp_path / "carve.toml").write_text(
-        '[project]\n'
-        'name = "tmp"\n'
-        'unknown_field = "boom"\n'
-        '\n'
-        '[paths]\n'
-        'config_dir = "carve"\n'
+        '[project]\nname = "tmp"\nunknown_field = "boom"\n\n[paths]\nconfig_dir = "carve"\n'
     )
 
     with pytest.raises(ConfigError) as excinfo:
@@ -210,9 +199,7 @@ def test_extra_field_rejected(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_env_interpolation_in_nested_lists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_interpolation_in_nested_lists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Env vars resolve inside list values too.
 
     The schema has no list fields today, but the interpolator must still
@@ -221,37 +208,27 @@ def test_env_interpolation_in_nested_lists(
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "key-from-env")
     _write_minimal_project(tmp_path)
-    (tmp_path / "carve" / "models.toml").write_text(
-        'anthropic_api_key = "${ANTHROPIC_API_KEY}"\n'
-    )
+    (tmp_path / "carve" / "models.toml").write_text('anthropic_api_key = "${ANTHROPIC_API_KEY}"\n')
 
     cfg = load_config(tmp_path)
     assert cfg.models.anthropic_api_key == "key-from-env"
 
 
-def test_escaped_env_var_is_preserved(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_escaped_env_var_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_minimal_project(tmp_path)
     # TOML literal string (single quotes) lets us write `\${LITERAL}` without
     # extra TOML-level escaping; the loader's escape rule is `\${...}` -> `${...}`.
-    (tmp_path / "carve" / "models.toml").write_text(
-        "anthropic_api_key = '\\${LITERAL}'\n"
-    )
+    (tmp_path / "carve" / "models.toml").write_text("anthropic_api_key = '\\${LITERAL}'\n")
 
     cfg = load_config(tmp_path)
     assert cfg.models.anthropic_api_key == "${LITERAL}"
 
 
-def test_nested_env_var_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_nested_env_var_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_minimal_project(tmp_path)
     monkeypatch.setenv("INNER", "FOO")
     monkeypatch.setenv("FOO", "bar")
-    (tmp_path / "carve" / "models.toml").write_text(
-        'anthropic_api_key = "${${INNER}}"\n'
-    )
+    (tmp_path / "carve" / "models.toml").write_text('anthropic_api_key = "${${INNER}}"\n')
 
     with pytest.raises(ConfigError) as excinfo:
         load_config(tmp_path)
@@ -296,14 +273,10 @@ def test_hash_changes_when_field_changes(tmp_path: Path) -> None:
     assert a.config_hash != b.config_hash
 
 
-def test_hash_reflects_resolved_env_vars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hash_reflects_resolved_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Two configs with the same TOML but different env values must hash differently."""
     _write_minimal_project(tmp_path)
-    (tmp_path / "carve" / "models.toml").write_text(
-        'anthropic_api_key = "${ANTHROPIC_API_KEY}"\n'
-    )
+    (tmp_path / "carve" / "models.toml").write_text('anthropic_api_key = "${ANTHROPIC_API_KEY}"\n')
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "first")
     h1 = load_config(tmp_path).config_hash

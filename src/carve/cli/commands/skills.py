@@ -134,9 +134,7 @@ def test_skill(
     library = discover_pack_roots(skills_dir=_skills_dir(root))
     by_name = {p.name: p for p in library.discover()}
     if name not in by_name:
-        console.print(
-            f"[red]No skill pack named {name!r}.[/red] Available: {sorted(by_name)}"
-        )
+        console.print(f"[red]No skill pack named {name!r}.[/red] Available: {sorted(by_name)}")
         raise typer.Exit(code=1)
     pack = by_name[name]
     console.print(f"[green]Pack {name!r} loaded OK[/green] from {pack.directory}")

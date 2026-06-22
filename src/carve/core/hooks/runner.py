@@ -95,36 +95,25 @@ class HookRunner:
 
         # Same gate as the agent's bash: tier the command. A deny /
         # needs-approval is fail-closed — the action is blocked.
-        decision = self._gate.check(
-            "bash", {"command": cmd}, approver=self._approver
-        )
+        decision = self._gate.check("bash", {"command": cmd}, approver=self._approver)
         if decision.outcome is Outcome.DENY:
-            raise HookExecutionError(
-                f"Hook command denied by the bash gate: {decision.reason}"
-            )
+            raise HookExecutionError(f"Hook command denied by the bash gate: {decision.reason}")
         if decision.outcome is Outcome.NEEDS_USER_INPUT:
             raise HookExecutionError(
-                f"Hook command needs approval (held / non-interactive): "
-                f"{decision.reason}"
+                f"Hook command needs approval (held / non-interactive): {decision.reason}"
             )
 
         self._in_hook = True
         try:
-            result = run_bash(
-                cmd, cwd=self._project_dir, timeout=self._timeout
-            )
+            result = run_bash(cmd, cwd=self._project_dir, timeout=self._timeout)
         except Exception as exc:
             # Any execution error blocks the action (fail-closed).
-            raise HookExecutionError(
-                f"Hook command errored: {exc}"
-            ) from exc
+            raise HookExecutionError(f"Hook command errored: {exc}") from exc
         finally:
             self._in_hook = False
 
         if result.timed_out:
-            raise HookExecutionError(
-                f"Hook command timed out after {self._timeout}s: {cmd!r}"
-            )
+            raise HookExecutionError(f"Hook command timed out after {self._timeout}s: {cmd!r}")
         if result.exit_code != 0:
             raise HookExecutionError(
                 f"Hook command exited {result.exit_code} (non-zero blocks "

@@ -82,9 +82,7 @@ def load_hooks_config(path: Path) -> list[HookSpec]:
     return parse_hooks_config(data, source=path)
 
 
-def parse_hooks_config(
-    data: dict[str, Any], *, source: Path | None = None
-) -> list[HookSpec]:
+def parse_hooks_config(data: dict[str, Any], *, source: Path | None = None) -> list[HookSpec]:
     """Validate a parsed-TOML dict into :class:`HookSpec` entries.
 
     Split from :func:`load_hooks_config` so tests can drive it with an
@@ -119,9 +117,7 @@ def _parse_one(entry: Any, index: int, where: str) -> HookSpec:
 
     run = entry.get("run")
     if not isinstance(run, str) or not run.strip():
-        raise HookConfigError(
-            f"hook #{index} ({on}) needs a non-empty string `run`{where}."
-        )
+        raise HookConfigError(f"hook #{index} ({on}) needs a non-empty string `run`{where}.")
 
     match = _parse_match(entry.get("match"), index, where)
     return HookSpec(event=event, run=run.strip(), match=match)
@@ -135,13 +131,9 @@ def _parse_match(raw: Any, index: int, where: str) -> HookMatch:
     tool = raw.get("tool")
     command = raw.get("command")
     if tool is not None and not isinstance(tool, str):
-        raise HookConfigError(
-            f"hook #{index} `match.tool` must be a string{where}."
-        )
+        raise HookConfigError(f"hook #{index} `match.tool` must be a string{where}.")
     if command is not None and not isinstance(command, str):
-        raise HookConfigError(
-            f"hook #{index} `match.command` must be a string{where}."
-        )
+        raise HookConfigError(f"hook #{index} `match.command` must be a string{where}.")
     return HookMatch(tool=tool, command=command)
 
 

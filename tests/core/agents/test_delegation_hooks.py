@@ -175,9 +175,7 @@ class TestHookReachesChildLoop:
         # child loop, not just the parent).
         assert ("read_file", {}) in recorded
 
-    def test_raising_pre_tool_hook_aborts_child_call_not_loop(
-        self, tmp_path: Path
-    ) -> None:
+    def test_raising_pre_tool_hook_aborts_child_call_not_loop(self, tmp_path: Path) -> None:
         """A raising pre_tool hook → is_error tool_result, child keeps running."""
 
         def _factory(_mode: PermissionMode) -> tuple[Any, Any]:
@@ -203,9 +201,7 @@ class TestHookReachesChildLoop:
         # The probe executor never ran: the raising hook aborted the call.
         assert ran == []
 
-    def test_post_tool_hook_fires_after_successful_child_call(
-        self, tmp_path: Path
-    ) -> None:
+    def test_post_tool_hook_fires_after_successful_child_call(self, tmp_path: Path) -> None:
         """The post_tool hook fires once the child's probe executes."""
         post_calls: list[str] = []
 
@@ -270,16 +266,12 @@ run = "git status"
 
 def _real_hook_factory(project_dir: Path) -> HookFactory:
     """A live factory over the fixture carve/hooks.toml (gated, mode-clamped)."""
-    return build_extensibility_hook_factory(
-        project_dir=project_dir, paths=PathsConfig()
-    )
+    return build_extensibility_hook_factory(project_dir=project_dir, paths=PathsConfig())
 
 
 def _init_git_repo(project_dir: Path) -> None:
     """A real (empty) git repo so `git status` exits 0 inside the sandbox."""
-    subprocess.run(
-        ["git", "init"], cwd=project_dir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
 
 
 def _run_prober_capturing(
@@ -298,9 +290,7 @@ def _run_prober_capturing(
         model="claude-sonnet-4-5-20250929",
         hook_factory=_real_hook_factory(project_dir),
     )
-    result = runner.run(
-        "prober", "go", {}, parent_mode=parent_mode, depth=depth
-    )
+    result = runner.run("prober", "go", {}, parent_mode=parent_mode, depth=depth)
     return result, ran
 
 

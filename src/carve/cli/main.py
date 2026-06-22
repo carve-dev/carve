@@ -47,8 +47,7 @@ def _main_callback(
         None,
         "--project-dir",
         help=(
-            "Project root (the directory containing carve.toml). "
-            "Defaults to the current directory."
+            "Project root (the directory containing carve.toml). Defaults to the current directory."
         ),
     ),
     env_file: Path | None = typer.Option(

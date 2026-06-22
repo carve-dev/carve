@@ -87,9 +87,7 @@ def copy_artifact(
     dest_dir = source_dir
 
     if not source_dir.is_dir():
-        raise FileNotFoundError(
-            f"source artifact directory missing: {source_dir}"
-        )
+        raise FileNotFoundError(f"source artifact directory missing: {source_dir}")
 
     # Walk the source tree before any copy to ensure no symlinks are
     # present. ``shutil.copytree(symlinks=False)`` (the default) would

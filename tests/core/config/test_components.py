@@ -109,9 +109,7 @@ class TestComponentConfigValidation:
 
     def test_unknown_key_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            ComponentConfig.model_validate(
-                {"type": "dlt", "mode": "same-repo", "bogus": 1}
-            )
+            ComponentConfig.model_validate({"type": "dlt", "mode": "same-repo", "bogus": 1})
 
     def test_unknown_type_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -256,9 +254,7 @@ def _write_project(
         '[project]\nname = "tmp"\n\n[paths]\nconfig_dir = "carve"\n' + carve_toml_extra
     )
     (root / "carve").mkdir(exist_ok=True)
-    (root / "carve" / "models.toml").write_text(
-        f'anthropic_api_key = "{anthropic_key}"\n'
-    )
+    (root / "carve" / "models.toml").write_text(f'anthropic_api_key = "{anthropic_key}"\n')
 
 
 def test_omitted_components_block_is_simple_mode(tmp_path: Path) -> None:
@@ -321,12 +317,7 @@ def test_invalid_component_block_raises_configerror_pointing_at_carve_toml(
 
 
 def test_unknown_key_in_component_block_raises(tmp_path: Path) -> None:
-    extra = (
-        "\n[components.broken]\n"
-        'type = "dlt"\n'
-        'mode = "same-repo"\n'
-        'bogus = "nope"\n'
-    )
+    extra = '\n[components.broken]\ntype = "dlt"\nmode = "same-repo"\nbogus = "nope"\n'
     _write_project(tmp_path, carve_toml_extra=extra)
     with pytest.raises(ConfigError):
         load_config(tmp_path)

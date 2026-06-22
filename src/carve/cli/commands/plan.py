@@ -89,17 +89,13 @@ def command(
 ) -> None:
     """Generate (or refine) a plan."""
     if refine is not None and pipeline is not None:
-        console.print(
-            "[red]✗[/red] --refine and --pipeline are mutually exclusive."
-        )
+        console.print("[red]✗[/red] --refine and --pipeline are mutually exclusive.")
         raise typer.Exit(code=2)
 
     # Build a destination-override hint for the planner. Goal-text
     # parsing happens INSIDE generate_plan as a fallback when no flag
     # value is provided — flags always win.
-    destination_hint = _destination_hint_from_flags(
-        table=table, database=database, schema=schema
-    )
+    destination_hint = _destination_hint_from_flags(table=table, database=database, schema=schema)
 
     project_dir = Path.cwd()
 
@@ -210,7 +206,7 @@ def _render_plan_summary(artifact: PlanArtifact, *, refining: bool) -> None:
     console.print(f"  Cost:           ${artifact.cost_usd:.4f}")
     console.print()
     console.print(f"Next:  carve build {plan_id}")
-    console.print(f"       carve plan --refine {plan_id} \"<feedback>\"")
+    console.print(f'       carve plan --refine {plan_id} "<feedback>"')
 
 
 def _load_design(plan_row: object) -> dict[str, Any]:
