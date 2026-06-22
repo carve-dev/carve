@@ -31,12 +31,36 @@ EXPECTED_COMMANDS = [
     "serve",
     "target",
     "version",
+    "auth",
 ]
 
 
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def test_auth_status_reports_mode_without_leaking_secret(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`carve auth status` resolves the active mode and prints no secret.
+
+    Uses a minimal hand-written project (no snowflake target) — `auth status`
+    only needs `load_config`, not the state store.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-value")
+    for var in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CARVE_HOSTED"):
+        monkeypatch.delenv(var, raising=False)
+
+    (tmp_path / "carve.toml").write_text('[project]\nname = "authtest"\n')
+    (tmp_path / "carve").mkdir()
+    (tmp_path / "carve" / "models.toml").write_text("# commented placeholder\n")
+
+    res = runner.invoke(app, ["auth", "status", "--project-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert "api_key" in res.output
+    assert "claude-opus-4-8" in res.output
+    assert "sk-secret-value" not in res.output
 
 
 def test_help_lists_all_eight_commands(runner: CliRunner) -> None:
@@ -175,7 +199,7 @@ def test_init_writes_models_toml_placeholder(
     content = (tmp_path / "carve" / "models.toml").read_text()
     # Anchor strings — these are the field names a user needs to recognise.
     assert "# anthropic_api_key = " in content
-    assert '# default_model = "claude-sonnet-4-5-20250929"' in content
+    assert '# default_model = "claude-opus-4-8"' in content
     # `models.toml`'s body *is* the [models] section — the loader merges it
     # under that key, so the file must not declare its own header.
     assert "[models]" not in content
@@ -275,7 +299,7 @@ def test_init_produces_loadable_config(
     config = load_config(tmp_path)
     assert config.project.name == tmp_path.name
     assert config.models.anthropic_api_key is None
-    assert config.models.default_model == "claude-sonnet-4-5-20250929"
+    assert config.models.default_model == "claude-opus-4-8"
     assert config.runner.type == "local_venv"
     assert "dev" in config.connections.snowflake
     assert config.connections.snowflake["dev"].account == "acc"

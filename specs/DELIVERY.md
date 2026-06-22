@@ -27,7 +27,7 @@ Each increment is a shippable, dependency-respecting slice:
 Shipped and in `src/` — every increment plans *against* this:
 
 - **M1 — walking skeleton.** CLI foundation (Typer), config loader, state store, the Anthropic agent loop, the Python step + `LocalVenvRunner` subprocess primitive, the Snowflake connector. The smallest end-to-end loop.
-- **M1.1 — lifecycle + UX.** `carve init` templates, Claude-subscription OAuth, dotenv autoload, plan progress, agent-prompt tightening, the **plan / build / run** separation, run-retry-permits-redo. (The OAuth and the plan/build/run separation are the shipped cores of [model-auth](./capabilities/model-auth.md) + [plan-build](./capabilities/plan-build.md) — Increment 0 formalizes them.)
+- **M1.1 — lifecycle + UX.** `carve init` templates, **API-key model auth** (`${ANTHROPIC_API_KEY}` via `models.toml`), dotenv autoload, plan progress, agent-prompt tightening, the **plan / build / run** separation, run-retry-permits-redo. (The plan/build/run separation is the shipped core of [plan-build](./capabilities/plan-build.md). The M1.1-02 *Claude-subscription OAuth* follow-up was **planned but never built** — only the API-key path of [model-auth](./capabilities/model-auth.md) shipped, with the Anthropic client constructed directly at four call sites; see Increment 1b.)
 - **Spec 01 — state store → Postgres.** Landed (SQLite retired; Postgres baseline + the six audited migrations). Followups landed: the M1 test sweep and `DATABASE_URL` precedence. ~300 tests passing. **Increment 0 (state-store formalization) complete 2026-06-18** — spec reconciled to the shipped code.
 
 - **Layout (Increment 1) — control-plane `carve.toml`.** Landed 2026-06-18: the `[components.<name>]` schema (transport-validated `url`/`ref`/`branch`), `ProjectPaths`, the component locator (`resolve_component` / `discover_components` / `workspace_dirname`), the git workspace cache (ref-pin, credential redaction, hardened env, bounded `timeout`), the provenance reader, and the `Workspace` model + migration `0007`. 879 tests passing.
@@ -36,7 +36,9 @@ Shipped and in `src/` — every increment plans *against* this:
 
 - **Extensibility (Increment 1) — declarative agents, skill packs, hooks, MCP-consume.** Landed 2026-06-19: safe markdown-frontmatter agent loader (`agents/loader.py`, `yaml.safe_load`, `MAX_AGENT_FILE_BYTES=64 KiB`, fail-closed/no-partial), dispatch-time mtime-cached discovery with user-over-builtin override (`agents/discovery.py`), the classification router `select_agent` replacing the retired `AGENT_REGISTRY` (`agents/routing.py`), the advisory `max_mode` lint (`agents/lint.py`); skill packs as description-matched **content** via the `lookup_skill_pack` tool (`skills/packs.py`, `skills/pack_discovery.py`, added to the read-tools floor); `hooks.toml`-driven gated/mode-clamped/fail-closed hooks (`hooks/{config,events,runner,wiring}.py`) with `pre_tool`/`post_tool` live and `pre_deploy`/`post_build`/`on_run_failed` as wired-but-deferred-emitter seams; MCP-consume namespaced `mcp:<server>:<tool>` + effects-tagged + **fail-closed on missing effects** (`mcp/{config,client}.py`, `McpToolSpec` + `mcp:` prefix precondition + `mcp:<server>:*` wildcard grant expansion in `policy.py`); and the live-wiring seam (`cli/orchestrator/extensibility_wiring.py` — the `HookFactory = (mode) -> (pre, post)` that re-clamps a delegated child's hooks at `child_mode`, the skill-pack tool builder, and `resolve_agent_or_fallback`) plus the `carve agents`/`skills`/`mcp-servers` CLIs and the `hooks_file`/`mcp_file` `PathsConfig` keys. Security + agent-loop reviewers PASS; ruff/mypy --strict/1328 pytest green. Spec reconciled to the shipped code (minor inline drift only — the hook-factory seam and the `lookup_skill_pack` tool name).
 
-The rest of Increment 1 (packaging, model-auth) and everything beyond is **designed but unbuilt**. The full corpus is internally consistent under the control-plane + AI-harness model.
+- **Model auth (Increment 1b) — credential precedence + SDK-native OAuth.** Landed 2026-06-21: the single `client_factory.make_client` precedence resolver (explicit `auth_mode` wins and suppresses a stray opposite credential via the SDK header-omit sentinel; else `ANTHROPIC_API_KEY`; else a subscription OAuth bearer built with `auth_token=` + the `anthropic-beta: oauth-2025-04-20` header from `ANTHROPIC_AUTH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN`; else a clear `ConfigError`; auto mode refuses a both-present env), collapsing the four prior `anthropic.Anthropic(api_key=…)` sites; `ModelsConfig` gained `auth_mode` (validated) + `tiers` + `resolve_model`; `default_model` → `claude-opus-4-8` with `pricing.py` updated to the current models; `carve auth status`/`login` (login wraps `claude setup-token`); per-agent model-tier resolution at delegation. Carve owns **no** browser flow or token store. Security reviewer PASS + an adversarial 27-cell precedence-matrix verification PASS (exactly-one-credential at the wire, OAuth always carries the beta header); ruff/mypy --strict/1367 pytest green. Deferred (non-blocking): thread `config.models.tiers` into the live delegation runner when the orchestrator constructs it.
+
+The rest of Increment 1 (packaging) and everything beyond is **designed but unbuilt** (model-auth landed as Increment 1b, above). The full corpus is internally consistent under the control-plane + AI-harness model.
 
 ---
 
@@ -47,7 +49,7 @@ The rest of Increment 1 (packaging, model-auth) and everything beyond is **desig
 **In scope**
 - Postgres state store — [state-store](./capabilities/state-store.md) *(landed; spec reconciled — verified green against a live Postgres testcontainer)*
 
-> **Re-slotted.** The other two M1.1-shipped capabilities first bucketed here — **model-auth** and **plan-build** — moved to where their declared deps are actually *rebuilt*: **model-auth → Increment 1** (it integrates with the rebuilt layout + harness), **plan-build → Increment 3** (its plan-synthesis rolls up the engineers' diffs/costs). Formalizing shipped code against the soon-to-be-replaced M1 shape is busywork; against the rebuilt foundation it's real.
+> **Re-slotted.** Two capabilities first bucketed here moved out. **plan-build → Increment 3** (its plan-synthesis rolls up the engineers' diffs/costs; formalizing it against the rebuilt foundation — not the soon-to-be-replaced M1 shape — is where it's real). **model-auth → Increment 1b** — and *not* as a formalize: only its `ANTHROPIC_API_KEY` path shipped in M1.1; the OAuth flow and the single credential-precedence resolver were planned (M1.1-02) but never built, so picking it up is a **net-new build**, not reconciliation of shipped code.
 
 **Depends on.** Current state only.
 
@@ -66,13 +68,31 @@ The rest of Increment 1 (packaging, model-auth) and everything beyond is **desig
 - Control-plane flat layout: `carve.toml` `[components.<name>]`, the component locator, repo topology, simple-mode convention discovery, the workspace cache — [layout](./capabilities/layout.md)
 - **The agent harness** — subagent `delegate`, terminal tools (edit/bash/grep/web), the permission gate (modes + `allowed_paths` + bash sandbox + secret-deny), verify-by-execution, interrupt/TODO/compaction — [harness](./capabilities/harness.md)
 - **Extensibility** — declarative agents (`carve/agents/*.md`), skill packs (`SKILL.md`), hooks (`hooks.toml`), MCP both directions, runtime grant attenuation — [extensibility](./capabilities/extensibility.md)
-- **Model auth** *(formalize M1.1-shipped)* — `ANTHROPIC_API_KEY` + Claude-subscription OAuth, credential precedence, `carve auth login`, against the rebuilt harness (the consumer) + layout (`models.toml`'s config-bundle home) — [model-auth](./capabilities/model-auth.md)
 
-**Depends on.** Increment 0 (the state store) + M1/M1.1 (the agent loop the harness wraps + the OAuth/API-key model-auth shipped in M1.1, which this increment formalizes).
+> *Model auth re-slotted to **Increment 1b** below — only its API-key path shipped in M1.1, so the OAuth + precedence-consolidation work is a net-new build, not a formalize.*
 
-**Delta.** 15 *wraps* the M1 agent loop (adds delegation, the gate, context management); it does not replace it. 16 is net-new. 03 introduces `carve.toml` as control-plane config (supersedes the M1 project-shaped config) + the locator (net-new). model-auth formalizes the M1.1 OAuth/API-key code against the rebuilt harness + layout (re-homing `models.toml` into the control-plane config) — verify + close the `auth login` CLI gap.
+**Depends on.** Increment 0 (the state store) + M1/M1.1 (the agent loop the harness wraps; the M1.1 API-key model auth the harness already uses).
 
-**Exit criteria.** A `carve.toml` with `[components.<name>]` resolves names to code (simple + multi mode); an agent runs under the permission gate with terminal tools and can `delegate` to a subagent that verifies by execution; a user-authored `carve/agents/*.md` overrides a built-in, attenuated to its mode; `carve auth login` + API-key precedence work against the rebuilt harness, with `models.toml` in the layout's config bundle.
+**Delta.** 15 *wraps* the M1 agent loop (adds delegation, the gate, context management); it does not replace it. 16 is net-new. 03 introduces `carve.toml` as control-plane config (supersedes the M1 project-shaped config) + the locator (net-new).
+
+**Exit criteria.** A `carve.toml` with `[components.<name>]` resolves names to code (simple + multi mode); an agent runs under the permission gate with terminal tools and can `delegate` to a subagent that verifies by execution; a user-authored `carve/agents/*.md` overrides a built-in, attenuated to its mode. *(Model auth → Increment 1b.)*
+
+---
+
+## Increment 1b — Model auth: OAuth + credential-precedence consolidation ✅ *(done 2026-06-21)*
+
+**Goal.** Make "how Carve authenticates to its model provider" an owned subsystem: one credential-precedence resolver, the `auth_mode` + model-tiers schema in `models.toml`, the OSS-vs-hosted seam, and the Claude-subscription OAuth path (`carve auth login`) — on top of the API-key path that already ships.
+
+**In scope**
+- Model auth — `auth_mode` + model `tiers` on `ModelsConfig` (+ `default_model` fixed to a current id, with the pricing table updated to match); a single `client_factory` / precedence resolver collapsing the four `anthropic.Anthropic(api_key=…)` call sites into one place; SDK-native OAuth via `auth_token=` + the `oauth-2025-04-20` header (sourced from `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`); `carve auth status` + `carve auth login` (a thin wrapper over `claude setup-token`); the OSS-vs-hosted split — [model-auth](./capabilities/model-auth.md)
+
+**Depends on.** Increment 1 (harness — the credential's consumer; layout — `models.toml`'s config-bundle home).
+
+**Delta.** *Net-new, not a formalize.* Only the `ANTHROPIC_API_KEY` path shipped in M1.1. **MODIFY:** `ModelsConfig` (add `auth_mode`/`tiers`, fix `default_model`), the four client-construction sites (→ one `client_factory`), the pricing table (add the current model ids so the new default is priced). **CREATE:** `client_factory` (the precedence resolver + SDK-native OAuth bearer wiring) and the `carve auth` CLI. Carve builds **no** browser flow or token store.
+
+**Investigation (resolved).** The M1.1-02 questions are answered: the `anthropic` SDK authenticates a subscription OAuth bearer natively via `auth_token=` (Bearer) + the `anthropic-beta: oauth-2025-04-20` header — same `messages.create` surface, no adapter, identical usage shape — so **no** `claude-agent-sdk` dependency and **no** Carve-owned browser flow / token store / refresh are needed; tokens are minted by `claude setup-token` / `ant auth login`. `api_key` stays the default.
+
+**Exit criteria.** The agent layer authenticates via **either** `ANTHROPIC_API_KEY` **or** a Claude-subscription OAuth bearer through one precedence resolver (`client_factory`), sending exactly one credential and a clear error when neither is present; the OAuth path attaches the `oauth-2025-04-20` header; `carve auth login` wraps `claude setup-token` and `carve auth status` reports the active mode without leaking secrets; `models.toml` carries `auth_mode` + `tiers` and `default_model` is a current, priced id; the OSS-vs-hosted split is explicit.
 
 ---
 
@@ -190,8 +210,12 @@ M1 / M1.1
 Incr 0  state-store                                      (formalize the shipped state store -- done)
    │
    ▼
-Incr 1  packaging · layout · harness · extensibility ·   (control-plane + AI foundation;
-        model-auth                                        + formalize M1.1 model-auth)
+Incr 1  packaging · layout · harness · extensibility     (control-plane + AI foundation)
+   │
+   ▼
+Incr 1b model-auth                                       (OAuth + precedence consolidation;
+                                                          API-key path already shipped --
+                                                          net-new build, not a formalize)
    │
    ▼
 Incr 2  init · memory · sql                              (scaffold a project + the SQL tool)
@@ -214,7 +238,7 @@ Incr 6  deploy · recovery
 Incr 7  reference-docs + initial release tag             (all 26 capabilities)
 ```
 
-- **Baseline first.** Incr 0 reconciles the shipped state store with its spec; the other M1.1-shipped capabilities (model-auth, plan-build) formalize alongside the rebuilt foundation they integrate with (model-auth in Incr 1, plan-build in Incr 3) rather than against the soon-to-be-replaced M1 shape.
+- **Baseline first.** Incr 0 reconciles the shipped state store with its spec. plan-build (Incr 3) formalizes its M1.1-shipped lifecycle core alongside the rebuilt foundation it integrates with, rather than against the soon-to-be-replaced M1 shape. Model auth is **not** a formalize: only its API-key path shipped, so its OAuth + precedence-consolidation work is a net-new slice (Incr 1b).
 - **Foundation before components.** The harness + control-plane layout (1) and the scaffold + SQL tool (2) gate everything AI- and component-shaped.
 - **dlt and dbt are co-equal components (3).** Both are authored, verified-by-execution, and composed from the start — dbt is *not* deferred. Execution (dbt-execution) + on-demand provisioning (connect) land with them, before the scheduler, so a dbt step can run the moment it's composed.
 - **Capability before interface.** Author / run / compose / schedule (3–4) before exposing over REST/MCP/UI + investigation (5).

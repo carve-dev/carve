@@ -143,7 +143,7 @@ class TestModelsConfig:
         """
         cfg = ModelsConfig()
         assert cfg.anthropic_api_key is None
-        assert cfg.default_model == "claude-sonnet-4-5-20250929"
+        assert cfg.default_model == "claude-opus-4-8"
 
     def test_anthropic_key_accepted_when_provided(self) -> None:
         cfg = ModelsConfig(anthropic_api_key="sk-foo")

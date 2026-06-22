@@ -20,6 +20,7 @@ from carve.cli.commands import (
     version,
 )
 from carve.cli.commands.agents import app as agents_app
+from carve.cli.commands.auth import app as auth_app
 from carve.cli.commands.el import app as el_app
 from carve.cli.commands.skills import app as skills_app
 from carve.cli.commands.target import app as target_app
@@ -89,6 +90,7 @@ app.command(name="logs")(logs.command)
 app.command(name="pipelines")(pipelines.command)
 app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
+app.add_typer(auth_app, name="auth")
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
 app.add_typer(agents_app, name="agents")
