@@ -238,7 +238,7 @@ When `classification = "modify_pipeline"`, the agent:
    - Surfaces a conflict: the summary returns `status = "needs_user_input"` with the conflict surfaced to the user, who picks a resolution before build proceeds
 5. **Re-verifies** via the loop above — a modification is run, not just diffed.
 
-> The skills below are registered in the spec-16 skill registry and granted to the DLT engineer via its `tools:` frontmatter. Schema introspection is **not** among them: the agent reads the real destination schema through the dialect-aware **`sql` tool** (spec 18, `op="introspect"`), which supersedes the old `destination_schema_query` skill and runs on the read role.
+> The skills below are granted to the DLT engineer via its `tools:` frontmatter and bind to real executors through the harness **grant→executor binder** (spec 16's tool-binding seam) when the engineer's runtime tool set is composed — the same path as the base tools. They are implemented as **callable Tools** (path readers / a bounded HTTP probe / a curated-pack copier), not warehouse-coupled `@skill` functions: a domain skill that needs only the project tree or the network is a Tool the binder supplies, whereas the warehouse-coupled catalog skills (which need a live `SkillContext` with a Snowflake pool) stay `@skill` functions. Schema introspection is **not** among them: the agent reads the real destination schema through the dialect-aware **`sql` tool** (spec 18, `op="introspect"`), which supersedes the old `destination_schema_query` skill and runs on the read role.
 
 ### Skill: `dlt_library` (`list` / `lookup` / `copy`) — the connector skill library
 
