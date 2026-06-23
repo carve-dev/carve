@@ -272,7 +272,9 @@ This skill is the agent's eyes for unfamiliar REST APIs (complementing `web_fetc
 
 ### Skill: `dbt_source_lookup`
 
-Reads the user's dbt project's `sources.yml` files (per the [`integrations/dbt/locator.py`](./layout.md) resolution from spec 03). Exposes:
+> **Updated during implementation (2026-06-23):** the dbt-project resolution surface is the shipped `integrations/component_locator.py` (`_detect_dbt_project`, root + one-level-down), not a separate `integrations/dbt/locator.py` — that file was never created; dbt-project detection lives in the shared component locator.
+
+Reads the user's dbt project's `sources.yml` files (per the [`integrations/component_locator.py`](./layout.md) `_detect_dbt_project` resolution from spec 03 — same-repo dbt project at `<root>/dbt_project.yml` or one level down). Exposes:
 
 - `dbt_sources_list()` → all source declarations in the project
 - `dbt_source_match(schema: str, table: str)` → does a source declaration exist for this schema+table? Returns the source's full config if so.
