@@ -45,6 +45,8 @@ carve init [OPTIONS]
 OPTIONS:
   --non-interactive            Disable prompts; fail if required input missing
   --external-postgres URL      Use external Postgres; skip docker-compose scaffold
+  --postgres-bundled           Force the bundled compose path even when external-Postgres
+                                env vars are present (escape hatch)
 
   --with-dbt                   Scaffold a new dbt project at the root (greenfield)
   --dbt-path PATH              Use existing dbt project at this filesystem path
@@ -60,6 +62,8 @@ OPTIONS:
 
   --project-name NAME          Override project name (default: directory name)
   --default-target NAME        Target name to make the default (default: "dev")
+  --destination-kind KIND      Destination type for the default target (default: "snowflake";
+                                any dlt destination: postgres, bigquery, duckdb, …)
 
   --skip-postgres-bootstrap    Don't connect to Postgres during init (defer to first carve serve)
   --no-git-init                Don't run git init even if no git repo present
@@ -145,6 +149,7 @@ Postgres setup:
     Connect to an external Postgres (managed RDS, Cloud SQL, etc.)
 
 Default target name [dev]:
+Destination kind for the default target [snowflake]:
 ```
 
 When the user has provided flags for some but not all decisions, only the unresolved ones get prompted.
@@ -202,7 +207,7 @@ Inference is bounded by file count (default cap 5000 files scanned) and time (5 
 The Jinja templates render with:
 
 - Project metadata (name, slug, created_at)
-- Resolved decisions (postgres URL, target name, dbt/dlt topology, etc.)
+- Resolved decisions (postgres URL, target name, destination kind, dbt/dlt topology, etc.)
 - Detected brownfield info (paths, names)
 
 Examples:

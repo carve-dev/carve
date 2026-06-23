@@ -4,9 +4,7 @@
 
 ## Status
 
-> **Updated during implementation (2026-06-18):** the M1 test-fixture sweep referenced here is complete (verified against the test suite — every state-store-touching test threads the `postgres_state_store_url` fixture; no test builds a live SQLite store). Status updated from "mostly landed" to "landed". The one remaining follow-up is the cosmetic dev-only label on `DEFAULT_STATE_STORE_URL` (see *Deferred work* #3).
-
-- **Status:** Landed (2026-05-19; test-fixture sweep + new unit tests confirmed 2026-06-18)
+- **Status:** Drafting
 - **Depends on:** None (foundation spec)
 - **Blocks:** every subsequent capability spec — the state store is foundational
 - **Audit reference:** M1-03 was HISTORICAL with a code-revision flag; this spec ships that revision
