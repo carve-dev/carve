@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "project_name": "analytics"
+  },
+  "nodes": {
+    "model.analytics.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "unique_id": "model.analytics.stg_orders",
+      "package_name": "analytics",
+      "path": "staging/stg_orders.sql",
+      "original_file_path": "models/staging/stg_orders.sql",
+      "schema": "analytics_staging",
+      "database": "warehouse",
+      "tags": ["staging"],
+      "config": {"materialized": "view"},
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Primary key for the order.",
+          "data_type": "integer"
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "description": "FK to the customer.",
+          "data_type": "integer"
+        }
+      },
+      "depends_on": {"nodes": ["source.analytics.shop.orders"]}
+    },
+    "model.analytics.dim_orders": {
+      "resource_type": "model",
+      "name": "dim_orders",
+      "unique_id": "model.analytics.dim_orders",
+      "package_name": "analytics",
+      "path": "marts/dim_orders.sql",
+      "original_file_path": "models/marts/dim_orders.sql",
+      "schema": "analytics",
+      "database": "warehouse",
+      "tags": ["mart"],
+      "config": {"materialized": "table"},
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Order key.",
+          "data_type": "integer"
+        }
+      },
+      "depends_on": {"nodes": ["model.analytics.stg_orders"]}
+    },
+    "test.analytics.not_null_stg_orders_order_id.abc123": {
+      "resource_type": "test",
+      "name": "not_null_stg_orders_order_id",
+      "unique_id": "test.analytics.not_null_stg_orders_order_id.abc123",
+      "package_name": "analytics",
+      "column_name": "order_id",
+      "test_metadata": {"name": "not_null"},
+      "depends_on": {"nodes": ["model.analytics.stg_orders"]}
+    },
+    "test.analytics.unique_stg_orders_order_id.def456": {
+      "resource_type": "test",
+      "name": "unique_stg_orders_order_id",
+      "unique_id": "test.analytics.unique_stg_orders_order_id.def456",
+      "package_name": "analytics",
+      "column_name": "order_id",
+      "test_metadata": {"name": "unique"},
+      "depends_on": {"nodes": ["model.analytics.stg_orders"]}
+    }
+  },
+  "sources": {
+    "source.analytics.shop.orders": {
+      "resource_type": "source",
+      "name": "orders",
+      "unique_id": "source.analytics.shop.orders",
+      "source_name": "shop",
+      "schema": "raw_shop",
+      "database": "warehouse"
+    }
+  },
+  "parent_map": {
+    "model.analytics.stg_orders": ["source.analytics.shop.orders"],
+    "model.analytics.dim_orders": ["model.analytics.stg_orders"],
+    "test.analytics.not_null_stg_orders_order_id.abc123": ["model.analytics.stg_orders"],
+    "test.analytics.unique_stg_orders_order_id.def456": ["model.analytics.stg_orders"],
+    "source.analytics.shop.orders": []
+  },
+  "child_map": {
+    "model.analytics.stg_orders": [
+      "model.analytics.dim_orders",
+      "test.analytics.not_null_stg_orders_order_id.abc123",
+      "test.analytics.unique_stg_orders_order_id.def456"
+    ],
+    "model.analytics.dim_orders": [],
+    "source.analytics.shop.orders": ["model.analytics.stg_orders"]
+  }
+}
