@@ -4,11 +4,9 @@
 
 ## Status
 
-- **Status:** Partially landed — lean core (Increment 2). The dialect-aware tool + DuckDB substrate shipped; the heavier parts are deferred (see below). This spec is the durable design *target*; the list below records the current gap.
+- **Status:** Drafting
 - **Depends on:** [harness](./harness.md) (the `sql` tool + permission modes / role-scoped access), [layout](./layout.md) (connections per target), M1 Snowflake connector (HISTORICAL — generalized here).
 - **Blocks:** the agents that query/author SQL (04 DLT, 08 pipeline + the `sql` step, 12 explorer, 17 recovery). Generalizes the M1 catalog skills + `run_snowflake_query`.
-- **Landed (lean, Increment 2):** the `carve.core.sql` package — a `sqlglot` statement **classifier** (read/write/DDL/destructive, fail-closed; catches `WITH…INSERT`, `SELECT…INTO`, multi-statement), `validate`/`transpile`/`normalize_dialect`, dialect-dispatched `introspect` (Snowflake + DuckDB), and the **`sql` tool** (ops `validate`/`transpile`/`introspect`/`run`) bound to a connection's dialect + the active `PermissionMode`, with write/DDL enforced in-tool via the shipped `warehouse_roles` floor (deploy-only) and destructive-DDL approval. A first-class **DuckDB connector** (the local/test substrate) + a `[duckdb.<target>]` connection type. `sql` registered in the permission policy. A **dormant** `sql-specialist.md` builtin (routable once goal classification lands).
-- **Deferred (not yet built; each tracked):** the **catalog-skill generalization** — the 5 `skills/builtin/catalog.py` skills and `run_snowflake_query` still run their original Snowflake path; `introspect.py` is the new parallel layer they migrate onto (the M1 paths are untouched, not broken). First-class **introspection adapters** for the four author-only dialects (postgres/bigquery/databricks/sqlserver — they validate/transpile today, but `introspect` raises). The live **orchestrator wiring** of the specialist (goal classification lands with plan-build). The `sql` **step type** (spec 08, Increment 3).
 
 ## Goal
 
@@ -17,7 +15,7 @@ One dialect-aware SQL capability, used everywhere:
 1. **Validate / transpile / introspect / run** SQL, parameterized by the **connection's dialect** (snowflake, duckdb, postgres, bigquery, databricks, sqlserver). (Authoring — *explain / write / modify* — is the SQL specialist's LLM job, grounded by these tool ops; it is not a tool op.)
 2. **`sqlglot`-backed** validation and transpile (author once, target the connection's dialect; catch dialect errors before execution — grounding for accuracy).
 3. **Per-dialect introspection** (`INFORMATION_SCHEMA` / catalog) so agents read the *real* schema, never a guessed one.
-4. **Permission-gated execution** (spec 15): reads on the **read role** in any mode; writes / DDL only in **`deploy`** mode on the **write role**, with approval required on destructive DDL. (Matches the shipped `warehouse_roles` floor, which denies warehouse writes below deploy; an earlier draft said "build" — reconciled to deploy.)
+4. **Permission-gated execution** (spec 15): reads on the **read role** in any mode; writes / DDL only in **`deploy`** mode on the **write role**, with approval required on destructive DDL (consistent with the warehouse-write floor in spec 15, which gates warehouse writes to deploy).
 5. A thin **SQL specialist** subagent for "explain this query / write me this / make this incremental."
 
 Carve ships **Snowflake + DuckDB first-class** (DuckDB powers local dev + tests); postgres/bigquery/databricks/sqlserver via `sqlglot` + adapter stubs, hardened later (matches the "Snowflake-tested, others via dlt/dbt natively" stance).
@@ -45,10 +43,8 @@ Carve ships **Snowflake + DuckDB first-class** (DuckDB powers local dev + tests)
 
 `execute.py` classifies each statement (read / write / DDL via `sqlglot`) and enforces the active **permission mode** (spec 15):
 
-- `read_only` / `plan` / `build` / explorer → **read role**; reads only (`SELECT`/`SHOW`/`DESCRIBE`/`WITH`-select). Any write/DDL is **denied** below deploy (the shipped `warehouse_roles` floor; `role_for` raises).
+- `read_only` / `plan` / `build` / explorer → **read role**; reads only (`SELECT`/`SHOW`/`DESCRIBE`/`WITH`-select). Any write/DDL is **denied** below deploy (the `warehouse_roles` floor; `role_for` raises).
 - `deploy` → reads on the read role; writes/DDL on the **write role**, with **approval required** (interactive) / **deny** (headless) on `DROP`/`TRUNCATE`/destructive DDL.
-
-(An earlier draft permitted warehouse writes in `build`; reconciled to deploy-only to match the shipped floor. Whether to relax to `build` is a future security-posture decision, revisited when the pipeline/dbt consumers land.)
 
 The read-vs-write **role** comes from the target config (Carve already models deploy-vs-runtime roles); the layer never widens privileges.
 
@@ -66,14 +62,14 @@ A declarative subagent (`sql-specialist.md`) for explicit SQL tasks — "explain
 - **Unit (dialect):** `sqlglot` validates correct SQL and rejects malformed SQL pre-execution; `transpile` converts a query from one dialect to another (e.g. duckdb→snowflake); identifier quoting per dialect.
 - **Unit (permission/roles):** a `SELECT` runs (read role) in every mode; a write/DDL is denied below deploy and runs on the write role at deploy; destructive DDL needs approval. A `SELECT … INTO` is classified a write (never dispatched to the read runner).
 - **Integration (introspect):** `introspect` returns the real schema against a fixture **DuckDB** (and, later, a **Snowflake** testcontainer); caps + `truncated` honored; DuckDB results scoped to one catalog.
-- **Unit (catalog generalization):** *deferred* — the 5 catalog skills + `run_snowflake_query` migrate onto `introspect.py` (the M1 paths are untouched until then).
+- **Unit (catalog generalization):** the 5 catalog skills resolve through `introspect.py` for both Snowflake and DuckDB; `run_snowflake_query` still works via the back-compat alias.
 
 ## Acceptance
 
 - Any agent can `validate`/`transpile`/`introspect`/`run` SQL against a connection, with the dialect resolved automatically and bad SQL caught before execution.
 - Reads use the read role; writes/DDL are permission-gated (deploy-only) and use the write role; explorer/ask can never write.
-- The full stack runs end-to-end on **DuckDB** locally (no warehouse needed); the other four dialects author valid SQL via `sqlglot`. (First-class Snowflake `run`/`introspect` reuses the shipped connector; a Snowflake integration test substrate is a follow-up.)
-- *(Deferred)* The M1 Snowflake catalog skills + `run_snowflake_query` are generalized behind the dialect interface without breaking existing callers.
+- The full stack runs end-to-end on **DuckDB** locally (no warehouse needed) and on **Snowflake**; the other four dialects author valid SQL via `sqlglot`.
+- The M1 Snowflake catalog skills + `run_snowflake_query` are generalized behind the dialect interface without breaking existing callers.
 
 ## Design notes
 

@@ -6,12 +6,10 @@
 
 ## Status
 
-- **Status:** Partially landed — lean core (Increment 2). The non-interactive scaffold shipped; the heavier interactive/inference parts are deferred (see below). This spec is the durable design *target*; the list below records the current gap.
+- **Status:** Drafting
 - **Depends on:** [state-store](./state-store.md), [packaging](./packaging.md), [layout](./layout.md)
 - **Soft depends on:** [memory](./memory.md) — spec 05 scaffolds the memory files (writes empty templated `standards.md`/`decisions.md`, runs convention inference for `conventions.md`); spec 06 ships the runtime read/edit machinery that consumes them
 - **Blocks:** [runtime](./runtime.md) (init must produce a working Postgres connection before `carve serve` runs), [reference-docs](./reference-docs.md) (init writes `.env.example` which the reference docs cover)
-- **Landed (lean, Increment 2):** the `carve.init` package (`detect` → `resolve` → `scaffold`) plus the rewritten `carve init` command. Detection (dbt at root + one level, dlt via `.dlt/` or AST `import dlt`, git, docker, re-init); non-interactive axis resolution across Postgres × dbt × dlt (explicit flag > detected > default, with clean `InitError`s on conflict/ambiguity); the control-plane `carve.toml` renderer (simple mode writes **no** `[components.*]` block — same-repo dbt/dlt is convention-discovered; separate-local/-remote get a block); memory-file scaffolding as **empty templates** (`standards.md`/`decisions.md`/`conventions.md`); bundled vs external Postgres (compose for bundled, placeholder-only `.env.example` for external with the password-bearing URL printed, never committed); idempotent re-init (skip-if-exists, symlink-safe); default-target wiring + graceful state-store migration; `git init`.
-- **Deferred (not yet built):** convention *inference* (the `conventions.md` body — init writes a placeholder pointing at `carve memory refresh`); interactive prompts (`--non-interactive` is accepted but resolution is always non-interactive); `--migrate-from-targets`; dbt-engine **detection**/eager `--dbt-engine`/`--dbt-version` install; auth-token bootstrap (`.carve/token` → first-`carve serve`); and the getting-started docs. Each has a tracking issue.
 
 ## Goal
 
@@ -63,18 +61,9 @@ OPTIONS:
   --project-name NAME          Override project name (default: directory name)
   --default-target NAME        Target name to make the default (default: "dev")
 
+  --skip-postgres-bootstrap    Don't connect to Postgres during init (defer to first carve serve)
   --no-git-init                Don't run git init even if no git repo present
 ```
-
-> **Landed vs deferred (lean init — see Status).** Landed: `--external-postgres`,
-> the `--with-/--*-path/--*-url/--*-branch` dbt+dlt flags, `--project-name`,
-> `--default-target`, `--no-git-init`. `--non-interactive` is accepted but a
-> no-op (resolution is always non-interactive). Deferred (tracked):
-> `--migrate-from-targets`, `--skip-postgres-bootstrap`, eager
-> `--dbt-engine`/`--dbt-version`. **Cut** (not planned): `--postgres-bundled`
-> (no env-var auto-detection to escape from) and `--destination-kind` (the lean
-> init always scaffolds a commented Snowflake target; multi-destination
-> scaffolding is a later capability).
 
 ### Flow
 
@@ -165,13 +154,13 @@ When the user has provided flags for some but not all decisions, only the unreso
 Re-running `carve init` in a directory with an existing `carve.toml`:
 
 - Re-runs detection — surfaces any new brownfield projects (e.g., user added a dbt subdirectory after the first init)
-- Does **not** overwrite any of: `carve.toml`, `carve/connections.toml`, `carve/runner.toml`, `carve/models.toml`, `carve/conventions.md`, `carve/standards.md`, `carve/decisions.md`, `docker-compose.yml`, `.env`, `.env.example`, `.gitignore`, `dbt_project.yml`, `.dlt/config.toml` (if it exists), user-authored files in `el/`
-- **Re-init is skip-only as shipped** — every existing scaffold file is kept verbatim (the symlink-safe `_write` skips if-exists). The `.env.example` dev-target block is the one append, guarded against duplication. *Marker-comment **refresh** of `conventions.md` / `.env.example` / `.gitignore` is deferred — it's coupled to convention inference (see Status) and a not-yet-existent upgrade story.*
-- Prints a summary of what was kept and any new detections
+- Does **not** overwrite user-editable files: `carve.toml`, `carve/connections.toml`, `carve/runner.toml`, `carve/models.toml`, `carve/standards.md`, `carve/decisions.md`, `docker-compose.yml`, `.env`, `dbt_project.yml`, `.dlt/config.toml` (if it exists), user-authored files in `el/`
+- **Does** refresh Carve-owned content: `carve/conventions.md` (re-runs inference), and the Carve-owned sections of `.env.example` / `.gitignore` (marker-comment merge, user lines preserved)
+- Prints a summary of what was kept, what was refreshed, and any new detections
 
 ### Non-interactive (CI) mode
 
-`--non-interactive` requires all decisions to be supplied via flags or env vars. Each unresolved decision triggers a clean error pointing at the relevant flag. **Exit codes (as shipped):** bad/conflicting input and resolution errors → **2** (matches the CLI-wide `ConfigError`/usage-error convention used by `carve plan`/`build`/`auth`); Docker-unavailable on the bundled path → **3**. (The earlier "config error = 3" note conflicted with the rest of the CLI, which uses 2; reconciled here to the shipped convention.)
+`--non-interactive` requires all decisions to be supplied via flags or env vars. Each unresolved decision triggers a clean error pointing at the relevant flag. **Exit codes:** bad/conflicting input and resolution errors → **2** (the CLI-wide `ConfigError`/usage-error convention shared with `carve plan`/`build`/`auth`); Docker-unavailable on the bundled path → **3**.
 
 Example: `carve init --non-interactive --external-postgres "${DATABASE_URL}" --dbt-path ./dbt --default-target dev` is sufficient for a CI pipeline.
 

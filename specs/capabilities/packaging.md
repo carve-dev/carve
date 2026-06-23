@@ -4,7 +4,7 @@
 
 ## Status
 
-- **Status:** Landed (Increment 1)
+- **Status:** Drafting
 - **Depends on:** [state-store](./state-store.md) (the engine has to accept the connection string this spec produces)
 - **Blocks:** [init](./init.md) (init scaffolds the compose file produced here)
 
