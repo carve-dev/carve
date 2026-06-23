@@ -10,6 +10,10 @@ loaded, which schema changes applied, and whether any job failed).
 from __future__ import annotations
 
 from carve.integrations.dlt.code_emitter import emit_provenance_header, with_provenance_header
+from carve.integrations.dlt.skills import (
+    make_existing_dlt_inspect_tool,
+    make_rest_api_explore_tool,
+)
 from carve.integrations.dlt.verify import (
     LoadPackageReport,
     parse_dlt_run,
@@ -19,6 +23,8 @@ from carve.integrations.dlt.verify import (
 __all__ = [
     "LoadPackageReport",
     "emit_provenance_header",
+    "make_existing_dlt_inspect_tool",
+    "make_rest_api_explore_tool",
     "parse_dlt_run",
     "read_latest_load_package",
     "with_provenance_header",
