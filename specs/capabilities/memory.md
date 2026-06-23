@@ -4,12 +4,10 @@
 
 ## Status
 
-- **Status:** Partially landed — lean core (Increment 2). The read/append machinery shipped; the heavier parts are deferred (see below). This spec is the durable design *target*; the list below records the current gap.
+- **Status:** Drafting
 - **Depends on:** [layout](./layout.md), [init](./init.md) (the file scaffolding + convention-inference engine)
 - **Blocks:** [ask](./ask.md) (`carve ask "why did we do X?"` cites `decisions.md`)
 - **Coordinated with:** [dlt-engineer](./dlt-engineer.md), [runtime](./runtime.md), [pipelines](./pipelines.md) — these all read memory files via the loader this spec ships
-- **Landed (lean, Increment 2):** the `carve.core.memory` package — `MemoryLoader` (mtime-cached reads of the five file types over `ProjectPaths`, `invalidate()`), `select_for_task`/`MemoryBundle` (always conventions+standards; decisions when `is_investigative`; sidecars when present), `MemoryWriter.append_decision` (newest-first anchored to the dated-entry region, dup-by-(title,date) → `DecisionAlreadyExists`, atomic temp+`os.replace` write, loader invalidation), the `carve memory show / edit / append-decision` CLI, and the **dormant** orchestrator hook `attach_memory_to_context` (unit-tested; not yet wired — no caller produces a goal classification until plan-build).
-- **Deferred (not yet built; each tracked):** `carve memory refresh` (needs the convention-inference engine — same blocker as init's deferred `conventions.md` inference); the REST `/api/v1/memory/*` surface (no API app exists — owned by rest-api, a later increment); the MCP memory tools (auto-generated from REST — blocked behind it); the `plan_id`-gated `standards`/sidecar **writes** (the Plan/Build state model can't express the "built, not deployed" gate, and no flow produces a valid `plan_id` for a memory edit yet — so `carve memory edit` writes the file directly); and the live orchestrator **wiring** of the hook (goal classification lands with plan-build).
 
 ## Goal
 
@@ -144,7 +142,7 @@ The key invariant: **non-append memory writes require a `plan_id`**. The writer 
 **Impact:** `el/stripe_charges/`, downstream `stg_stripe_charges` model.
 ```
 
-The `append_decision` helper takes `date`, `title`, `body`, `reviewers`. As shipped, the helper enforces only the **heading** (`## YYYY-MM-DD — <title>`) and an optional trailing `**Reviewers:** …` line; the `body` is rendered as-is (markdown supported), so the **Decision/Rationale/Impact** bold labels shown above are a recommended convention the user writes in the body, not labels the helper injects. (The helper rejects a multi-line `title`, which would otherwise forge extra headings.)
+The `append_decision` helper takes `date`, `title`, `body`, `reviewers`. The helper enforces the **heading** (`## YYYY-MM-DD — <title>`) and an optional trailing `**Reviewers:** …` line; the `body` is rendered as-is (markdown supported), so the **Decision/Rationale/Impact** bold labels shown above are a recommended convention the user writes in the body, not labels the helper injects. (The helper rejects a multi-line `title`, which would otherwise forge extra headings.)
 
 ### CLI
 
