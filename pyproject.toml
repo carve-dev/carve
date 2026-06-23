@@ -30,6 +30,7 @@ dependencies = [
     "snowflake-connector-python>=3.7",
     "sqlglot>=25",
     "duckdb>=1.0",
+    "dlt>=1.0",
     "cryptography>=42",
     "tomlkit>=0.13",
     "watchdog>=4.0",

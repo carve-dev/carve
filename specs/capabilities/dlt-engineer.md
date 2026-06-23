@@ -8,8 +8,14 @@
 
 ## Status
 
-- **Status:** Drafting
-- **Depends on:** [state-store](./state-store.md), [layout](./layout.md), [harness](./harness.md) (subagent delegation, terminal tools, permission modes, the verification loop), [extensibility](./extensibility.md) (the declarative agent format this agent ships in), [sql](./sql.md) (the `sql` tool the agent uses for schema checks).
+- **Status:** Partially landed — being built toward the full spec in dependency-ordered phases (Increment 3). **Phase 1 (substrate) landed 2026-06-23.** Remaining phases below.
+- **Depends on:** [state-store](./state-store.md), [layout](./layout.md), [harness](./harness.md) (subagent delegation, terminal tools, permission modes, the verification loop + the grant→executor binder), [extensibility](./extensibility.md) (the declarative agent format this agent ships in), [sql](./sql.md) (the `sql` tool the agent uses for schema checks).
+- **Build phases (toward the full spec, not a narrowed subset):**
+  - **Phase 1 — substrate (landed 2026-06-23):** `dlt` pinned as a dependency; `carve.integrations.dlt.verify.parse_dlt_run` (reads dlt's on-disk load package — tables/schema-changes/failed-jobs — into the verification loop's `CheckResult`, exit-code-gated, fail-loud error surfacing); `code_emitter` (the provenance-header *writer* round-tripping the existing reader). Verified against real dlt runs.
+  - **Phase 2 — skills:** the four callable tools (`existing_dlt_inspect`, `dlt_library` list/lookup/copy + the `src/carve/sources/` corpus with a reference connector, `rest_api_explore`, `dbt_source_lookup`).
+  - **Phase 3 — the engineer:** `builtin/dlt-engineer.md` with all four authoring strategies (native / REST / curated-library / MCP), wired to the skills/tools; the author→run→verify vertical proven end-to-end against DuckDB via delegation (the binder makes its tools real).
+  - **Phase 4 — review:** `dlt-qa.md` + `dlt-security.md` reviewer agents + the harness review fan-out driver (shared by all engineers).
+  - **Genuinely blocked (not deferred for ease):** live orchestrator *routing* of a goal to this agent needs the plan-build goal classifier (unbuilt); the agent is delegate-invocable now via the binder.
 - **Blocks:** [init](./init.md), [runtime](./runtime.md) (the `dlt` step type executes what this agent produces), [pipelines](./pipelines.md), [recovery](./recovery.md) (recovery `delegate`s dlt fixes to this agent).
 - **Built on:** the orchestration agent and reasoning loop from M1 (HISTORICAL — preserved, not rewritten, and evolved into the harness orchestrator/main loop per spec 15). This spec defines the DLT engineer as a declarative subagent on that harness.
 
