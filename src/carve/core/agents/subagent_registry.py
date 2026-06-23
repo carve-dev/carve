@@ -97,12 +97,12 @@ def _declarative_tool_factory(tool_names: tuple[str, ...]) -> ToolFactory:
     """
 
     def _factory(_paths: ProjectPaths) -> list[Tool]:
-        return [_grant_stub_tool(name) for name in tool_names]
+        return [grant_stub_tool(name) for name in tool_names]
 
     return _factory
 
 
-def _grant_stub_tool(name: str) -> Tool:
+def grant_stub_tool(name: str) -> Tool:
     """A name-only ``Tool`` whose executor refuses to run.
 
     Declarative grants declare *which* tools an agent may use; the real
@@ -117,12 +117,22 @@ def _grant_stub_tool(name: str) -> Tool:
             "executor; the harness must supply it before invocation."
         )
 
+    # Marker so the binder can tell a name-only grant stub apart from a real
+    # tool a spec's factory already provides (test fixtures, hand-built specs),
+    # and bind only the stubs.
+    _refuse._carve_grant_stub = True  # type: ignore[attr-defined]
+
     return Tool(
         name=name,
         description=f"Declaratively-granted tool {name!r} (executor bound by the harness).",
         input_schema={"type": "object", "properties": {}},
         executor=_refuse,
     )
+
+
+def is_grant_stub(tool: Tool) -> bool:
+    """Whether ``tool`` is a name-only grant stub (vs a real, bound tool)."""
+    return getattr(tool.executor, "_carve_grant_stub", False) is True
 
 
 def spec_from_agent_file(agent: AgentFile) -> AgentSpec:
@@ -242,5 +252,7 @@ __all__ = [
     "AgentSpec",
     "SubagentRegistry",
     "ToolFactory",
+    "grant_stub_tool",
+    "is_grant_stub",
     "spec_from_agent_file",
 ]
