@@ -1,6 +1,6 @@
 # DLT engineer subagent: authors and runs dlt code
 
-> **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): the EL specialist becomes the **DLT engineer subagent** — a *declarative* agent (built-in at `src/carve/core/agents/builtin/dlt-engineer.md`, the spec-16 frontmatter format) that the orchestrator `delegate`s to (spec 15), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web_fetch`) + dlt skills + the `sql` tool (spec 18), running in **`build`** permission mode, that **closes the loop** by running `dlt pipeline run` via `bash` and self-correcting on the parsed result (the verification primitive, spec 15). Its diff then passes through **dlt-qa** and **dlt-security** review subagents (the `/build-spec` engineer→reviewers→fix pattern, brought to users' pipelines). The hardcoded `extract_load` agent class is retired in favor of this declarative agent on the harness.
+> **Revised for the AI-harness model** (see [../_strategy/2026-06-ai-harness.md](../_strategy/2026-06-ai-harness.md)): the EL specialist becomes the **DLT engineer subagent** — a *declarative* agent (built-in at `src/carve/core/agents/builtin/dlt-engineer.md`, the spec-16 frontmatter format) that the orchestrator `delegate`s to (spec 15), armed with **terminal-grade tools** (`edit`/`bash`/`grep`/`web_fetch`) + dlt skills + the `sql` tool (spec 18), running in **`build`** permission mode, that **closes the loop** by executing the component through Carve's venv runner and self-correcting on the parsed load-package result (the verification primitive, spec 15). Its diff then passes through **dlt-qa** and **dlt-security** review subagents (the `/build-spec` engineer→reviewers→fix pattern, brought to users' pipelines). The hardcoded `extract_load` agent class is retired in favor of this declarative agent on the harness.
 
 > **Still revised for the control-plane model** (see [../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md)): the DLT engineer authors *into a named `dlt` component* — its `el/<name>/` directory in simple mode, or its own repo in separate mode — not a privileged fused `el/`. Dependency hints are emitted by component name. The four authoring strategies, provenance header, skills, the component-authoring model, and CDC scope note are all preserved; this revision layers the harness model on top of them.
 
@@ -21,7 +21,7 @@ Ship the **DLT engineer** as a declarative subagent on the harness, armed to aut
 - Picks one of four authoring strategies based on the goal and context
 - Authors dlt files into the target component using the `edit` tool (read-before-edit, string-replace) — in simple mode its `el/<component_name>/` directory, resolved by name per [layout](./layout.md) — plus the relevant `.dlt/config.toml.template` / `.dlt/secrets.toml.template` entries. Writes are confined to `allowed_paths` by the permission gate (spec 15).
 - Records provenance headers per [layout](./layout.md)
-- **Closes the loop:** runs `dlt pipeline run` (and `dlt pipeline check`) via `bash`, reads the harness-parsed `CheckResult` (spec 15's verification primitive, which parses dlt `state.json`), and **self-corrects** until green — using the `sql` tool (spec 18) to confirm the real destination schema rather than guessing it.
+- **Closes the loop:** executes the authored component through Carve's venv runner (the same primitive the runtime uses — `dlt` ships no `run`/`check` CLI subcommand; a dlt pipeline is a Python entrypoint, and freeform `python` is gate-denied, so execution is the structured runner, not raw `bash`), reads the harness-parsed `CheckResult` (spec 15's verification primitive, which parses the load package's `state.json`), and **self-corrects** until green — using the `sql` tool (spec 18) to confirm the real destination schema rather than guessing it. (`dlt pipeline <name> info`/`trace` via `bash` is available for inspection.)
 - Hands its diff to the **dlt-qa** and **dlt-security** review subagents (below); the **orchestrator** routes the diff through them (sequentially) and feeds findings back to the engineer before the change is surfaced
 - Returns a structured summary to the orchestrator: files written, their hashes, the verification result, expected outputs, dependencies on dbt sources (keyed by component name)
 - Operates idempotently on modifications: re-running against an existing component diffs cleanly, preserves user edits below the provenance header
@@ -46,39 +46,38 @@ This spec ships the **declarative agent definition** (the built-in markdown agen
 
 The DLT engineer is a **declarative agent** in the spec-16 format: frontmatter + a system-prompt body. It ships as a built-in (under `src/carve/core/agents/builtin/`); a user can override it by dropping `carve/agents/dlt-engineer.md` (spec 16's name-override). The hardcoded `extract_load/` agent package is retired — the harness loads this markdown file and runs it as a subagent.
 
+> **Updated during implementation (2026-06-23):** the shipped frontmatter (a) **omits `model:`** so the agent falls back to the install `default_model` (spec 16's per-agent tiering is opt-in; the engineer doesn't pin a tier), (b) carries an explicit **`max_mode: build`** key (the advisory-lint ceiling, spec 16) rather than relying on prose, and (c) adds **`create_file`** to the grant alongside `edit` (net-new files — `__init__.py`/`requirements.txt` — vs. read-before-edit string-replace). The grant is written as a flat inline list. `lookup_skill_pack` is referenced by the body but is **intentionally not** in the grant — the orchestrator appends it at delegation time (see Open questions).
+
 ```markdown
 ---
 name: dlt-engineer
-description: Authors and runs dlt sources/pipelines into a named dlt component. Use for ingest / extract-load goals (new sources, incremental refactors, destination changes).
-model: claude-{LATEST_SONNET}          # per-agent model tiering; falls back to the install default (spec 16)
-tools:
-  - edit                               # string-replace authoring (read-before-edit), spec 15
-  - bash                               # runs `dlt pipeline run` / `dlt pipeline check` / `pip` — the verification loop, spec 15
-  - grep                               # search the component + repo for patterns
-  - glob                               # find existing el/**/*.py for brownfield context
-  - web_fetch                          # read a source API's live docs / OpenAPI spec
-  - sql                                # the dialect-aware sql tool (spec 18) — confirm the REAL destination schema, never guess
-  - dlt_library                        # list / lookup / copy the curated connector skill library
-  - rest_api_explore                   # bounded HTTP probing for API discovery
-  - dbt_source_lookup                  # match against the user's dbt sources.yml
-  - existing_dlt_inspect               # read user-authored dlt for brownfield patterns
-  - "mcp:*"                            # any MCP-imported skill the user has allowed (spec 16)
-allowed_paths:                         # write scope, enforced by the permission gate (spec 15)
-  - "el/**"
-  - ".dlt/*.template"                  # never the live .dlt/config.toml or .dlt/secrets.toml
-classifications:
-  - new_pipeline
-  - modify_pipeline
-  - refactor_pipeline_to_incremental
-  - add_resource_to_pipeline
-  - update_pipeline_destination
+description: >
+  Authors and runs dlt sources/pipelines into a named dlt component. Use for
+  ingest / extract-load goals — new sources, incremental refactors, adding a
+  resource, or destination changes. It does NOT author dbt models or compose
+  pipelines/<name>.toml; it emits dependency hints for those instead.
+# model: omitted — falls back to the install default_model (spec 16)
+tools: [edit, create_file, bash, grep, glob, web_fetch, sql, dlt_library, rest_api_explore, dbt_source_lookup, existing_dlt_inspect, "mcp:*"]
+#   edit/create_file  — string-replace authoring (read-before-edit) + net-new files, spec 15
+#   bash              — `dlt pipeline <name> info`/`trace` inspection + `pip`; component execution is via Carve's venv runner (spec 15)
+#   grep/glob         — search the component + repo (find existing el/**/*.py for brownfield context)
+#   web_fetch         — read a source API's live docs / OpenAPI spec
+#   sql               — the dialect-aware sql tool (spec 18) — confirm the REAL destination schema, never guess
+#   dlt_library       — list / lookup / copy the curated connector skill library
+#   rest_api_explore  — bounded HTTP probing for API discovery
+#   dbt_source_lookup — match against the user's dbt sources.yml
+#   existing_dlt_inspect — read user-authored dlt for brownfield patterns
+#   "mcp:*"           — any MCP-imported skill the user has allowed (spec 16)
+allowed_paths: ["el/**", ".dlt/*.template"]   # write scope (gate-enforced, spec 15); never live .dlt/config.toml or secrets.toml
+max_mode: build                               # the advisory-lint ceiling (spec 16)
+classifications: [new_pipeline, modify_pipeline, refactor_pipeline_to_incremental, add_resource_to_pipeline, update_pipeline_destination]
 ---
 <system prompt body — see "The system prompt" below>
 ```
 
-- **Permission mode = `build`** (spec 15): the harness runs this subagent in `build` mode, so `edit`/`bash` are allowed **within `allowed_paths`**; `dlt pipeline run`/`dlt pipeline check`/read queries auto-allow; writes outside `allowed_paths`, `DROP`/DDL, and `git push` **prompt** (interactive) or **deny** (headless). The old per-agent `[guardrails]` (`forbidden_write_paths`, `allowed_write_paths`, `max_skill_calls_per_invocation`, `max_result_size_bytes`) are now the harness's job: `allowed_paths` above is the write scope the gate enforces; the forbidden absolute paths (`/`, `~/`, `/etc/`, …) fall out of "writes only within `allowed_paths`, everything else denied"; call/size caps are the harness's bounded-loop + skill-category caps (spec 15/16).
+- **Permission mode = `build`** (spec 15): the harness runs this subagent in `build` mode, so `edit`/`bash` are allowed **within `allowed_paths`**; `dlt pipeline <name> info`/`trace` inspection + read queries auto-allow; writes outside `allowed_paths`, `DROP`/DDL, and `git push` **prompt** (interactive) or **deny** (headless). The old per-agent `[guardrails]` (`forbidden_write_paths`, `allowed_write_paths`, `max_skill_calls_per_invocation`, `max_result_size_bytes`) are now the harness's job: `allowed_paths` above is the write scope the gate enforces; the forbidden absolute paths (`/`, `~/`, `/etc/`, …) fall out of "writes only within `allowed_paths`, everything else denied"; call/size caps are the harness's bounded-loop + skill-category caps (spec 15/16).
 - **Tool grants are attenuated at runtime** (spec 15): the effective tool set is `grant ∩ mode-permitted`, enforced by the pre-execution gate on every call — in `build` every tool above is permitted, but the same file in `read_only` (if the orchestrator ever delegated it there) would have `edit`/`bash`-writes gated off. Spec 16's load-time check is an **advisory lint** (warns if a grant exceeds the agent's `max_mode`), not the security boundary.
-- `{LATEST_SONNET}` is interpolated from `carve.toml`'s `[models]` block (or env var). Carve ships with the current Claude Sonnet as the default; users override per-agent via the frontmatter `model` field.
+- The agent **omits** the `model:` field, so it runs on the install's `default_model` resolved from `carve.toml`'s `[models]` block (or env var) per spec 16's per-agent tiering. A user (or a later tuning pass) can pin a tier by adding a `model:` line to the frontmatter; the engineer ships without one.
 
 ### The review subagents (dlt-qa + dlt-security)
 
@@ -194,7 +193,7 @@ The subagent returns a **summary**, not its transcript (spec 15's `DelegationRes
     {"path": ".dlt/secrets.toml.template", "additions": "..."},
   ],
   "verification": {                        # the verification loop's CheckResult (spec 15), parsed from dlt state.json
-    "command": "dlt pipeline check && dlt pipeline run --pipeline stripe_charges",
+    "command": "run el/stripe_charges via venv runner; inspect via `dlt pipeline stripe_charges info`",
     "status": "green",                     # green after self-correction; or "needs_user_input" if a failure needs a human (e.g. missing creds)
     "iterations": 2,                       # how many generate→run→read→fix cycles it took
     "rows_loaded": {"charges": 1284},
@@ -220,8 +219,8 @@ The subagent returns a **summary**, not its transcript (spec 15's `DelegationRes
 
 This is the harness's accuracy primitive (spec 15) applied to dlt, and the change that turns the agent from a generator into a colleague. After authoring (any strategy), the DLT engineer **does not stop at generation** — it runs the code and reads the real result:
 
-1. **Run** via `bash`: `dlt pipeline check` (static validation), then `dlt pipeline run --pipeline <component>` against a dev/test target (the verification loop uses the dev target + read/write roles per spec 18; never prod).
-2. **Read** the parsed `CheckResult` (spec 15's `run_check`, with the dlt parser at `src/carve/integrations/dlt/verify.py` that reads `state.json` for rows-loaded/schema-changes/errors). The agent never invents what the run can report — and it uses the **`sql` tool** (spec 18) to confirm the *actual* destination schema the load produced, rather than guessing it.
+1. **Run** the component's Python entrypoint via Carve's **venv runner** (`LocalVenvRunner` — the same structured primitive the runtime's dlt/python step uses) against a dev/test target (the verification loop uses the dev target + read/write roles per spec 18; never prod). Note: `dlt` ships **no** `run`/`check` CLI subcommand — a dlt pipeline *is* a runnable Python module — and freeform `python` is denied by the bash gate, so execution goes through the structured runner, **not** raw `bash`. (`dlt pipeline <name> info`/`trace` *is* available via `bash` for read-only inspection.)
+2. **Read** the parsed `CheckResult` (spec 15's `run_check`, with the dlt parser at `src/carve/integrations/dlt/verify.py` that reads the on-disk load package's `state.json` for rows-loaded/schema-changes/errors — the verdict comes from the load package, not from the runner's exit code). The agent never invents what the run can report — and it uses the **`sql` tool** (spec 18) to confirm the *actual* destination schema the load produced, rather than guessing it.
 3. **Fix** and re-run, bounded by the harness's attempt cap, until green. A failure it cannot fix itself (e.g. missing credentials, a source-side auth error) is summarized as `status = "needs_user_input"` with the grounded evidence, not silently shipped.
 
 The agent grounds on real tool output throughout: a dlt exception, a `state.json` schema diff, or an `INFORMATION_SCHEMA` read via `sql` — never a hallucinated schema. (Recovery, spec 17, reuses exactly this machinery when it `delegate`s a fix to this agent.)
@@ -299,7 +298,7 @@ The system prompt is the **body of the declarative agent file** (`src/carve/core
 3. **Inputs** — what the context bundle contains and how to use each field
 4. **Tools & how to work** — author with `edit` (read-before-edit, minimal diffs), search with `grep`/`glob`, confirm the real destination schema with the `sql` tool, read live API docs with `web_fetch`/`rest_api_explore`, and **run** with `bash`. Stay within `allowed_paths`; never touch live `.dlt/config.toml`/`secrets.toml`.
 5. **Strategy selection** — the four strategies, when to pick each, the hierarchy; pull the matching strategy **skill pack** for detail
-6. **The verification loop** — after authoring, run `dlt pipeline check` then `dlt pipeline run` via `bash`, read the parsed `CheckResult`, and iterate until green; ground every claim in real tool output; escalate (not fabricate) on failures you can't fix (missing creds, source auth)
+6. **The verification loop** — after authoring, execute the component via Carve's venv runner (not raw `bash` — `dlt` has no `run`/`check` CLI and `python` is gate-denied; `dlt pipeline <name> info`/`trace` via `bash` is for inspection), read the parsed `CheckResult` from the load package, and iterate until green; ground every claim in real tool output; escalate (not fabricate) on failures you can't fix (missing creds, source auth)
 7. **Code requirements** — provenance header, requirements.txt pinning, no live-credentials in templates, conventions to follow from standards.md and conventions.md
 8. **Modification semantics** — how to handle classification="modify_pipeline", how to preserve user edits below the provenance header, re-verify after the change
 9. **Review handoff** — your diff goes to the dlt-qa and dlt-security reviewers; expect findings and fix them before finishing
@@ -322,7 +321,7 @@ Every Carve-generated dlt file carries the header from [layout](./layout.md). Th
 - **Unit (modification with user edits):** existing pipeline has user edits below the provenance header; agent's modification cleanly merges (where possible) or surfaces a conflict
 - **Unit (agent definition):** the built-in `dlt-engineer.md` parses (frontmatter + body) via the spec-16 loader; its `tools` grant is valid for `build` mode; a `carve/agents/dlt-engineer.md` override is picked up (spec 16 mechanics; smoke-tested here).
 - **Unit (permission gate):** in `build` mode the agent's `edit`/`bash` writes succeed within `allowed_paths` (`el/**`, `.dlt/*.template`); an attempt to write outside (e.g. `~/.bashrc`, `carve/`, live `.dlt/config.toml`) is gated (prompt interactive / deny headless) per spec 15 — replacing the old per-agent guardrail test.
-- **Integration (verification loop):** the agent authors a trivial dlt component, runs `dlt pipeline run` via `bash`, the harness parses `state.json` into a `CheckResult`; a deliberately-broken artifact (e.g. a bad cursor field) triggers a self-correction iteration to green; the agent confirms the loaded schema via the `sql` tool.
+- **Integration (verification loop):** the agent authors a trivial dlt component, executes it via the venv runner, the harness parses the load package's `state.json` into a `CheckResult`; a deliberately-broken artifact (e.g. a bad cursor field) triggers a self-correction iteration to green; the agent confirms the loaded schema via the `sql` tool.
 - **Integration (review fan-out):** the engineer's diff is routed through dlt-qa and dlt-security; an injected problem (a secret literal in `.dlt/secrets.toml.template`, or a `replace` disposition that should be `merge`) is flagged by the right reviewer and triggers a fix iteration before the summary returns `completed`.
 - **Integration (end-to-end):** full plan → build → run cycle against a mock HTTP API (httpserver fixture); rows land in a test Snowflake or DuckDB destination; Carve's own assertions verify the structural shape of the loaded data
 - **Integration (REST API explorer):** the rest_api_explore skill hits a controlled httpserver, makes the expected request shape, respects the 20-request cap and 50KB body truncation
@@ -330,7 +329,7 @@ Every Carve-generated dlt file carries the header from [layout](./layout.md). Th
 ## Acceptance
 
 - The DLT engineer loads from the built-in `dlt-engineer.md` (spec-16 format), is `delegate`-routable by classification, runs in `build` mode, and returns a **summary** (not its transcript) to the orchestrator.
-- For each of the four strategies, the agent produces a working dlt pipeline and — via the **verification loop** — actually runs it (`dlt pipeline check` + `dlt pipeline run`) against a test destination, self-correcting to green; the loaded schema is confirmed via the `sql` tool, never guessed.
+- For each of the four strategies, the agent produces a working dlt pipeline and — via the **verification loop** — actually runs it (executed via Carve's venv runner) against a test destination, self-correcting to green; the loaded schema is confirmed via the `sql` tool, never guessed.
 - The diff passes through the **dlt-qa** and **dlt-security** reviewers; a credential-in-template or risky-write-disposition problem is caught and fixed before the change is surfaced.
 - The strategy hierarchy is honored: curated library wins when available; REST API config beats native dlt for clean REST sources; native is the fallback for complex cases; Singer wrapper is rare
 - Modifications produce minimal diffs; the provenance header survives; user edits below the header are preserved or surfaced for conflict resolution; the modification is re-verified
@@ -343,7 +342,7 @@ Every Carve-generated dlt file carries the header from [layout](./layout.md). Th
 ## Design notes
 
 - **Why a declarative agent (markdown) instead of the hardcoded `extract_load/` package?** This is the harness model's core unlock (spec 16) and it resolves the built-vs-spec agent drift: the DLT engineer becomes a file anyone can read, version, override, and share — same format as user agents — hot-reloaded, not recompiled. The class disappears; the harness loads the markdown and runs it as a subagent.
-- **Why verify by execution (the loop) rather than ship generated code?** Generation-without-verification is a demo; generate→run→read→fix is a colleague (spec 15). dlt *is* a CLI — running `dlt pipeline run` and reading the real `state.json`/exception is what makes the agent accurate and self-correcting, and it grounds the agent so it can't ship a hallucinated schema. This is the single biggest accuracy gain in the revision.
+- **Why verify by execution (the loop) rather than ship generated code?** Generation-without-verification is a demo; generate→run→read→fix is a colleague (spec 15). a dlt pipeline *is a runnable Python entrypoint* — executing it (via Carve's venv runner) and reading the real load-package `state.json`/exception is what makes the agent accurate and self-correcting, and it grounds the agent so it can't ship a hallucinated schema. (dlt's `pipeline` CLI only *inspects* an already-run pipeline — `info`/`trace`/`show` — it has no `run` subcommand.) This is the single biggest accuracy gain in the revision.
 - **Why dlt-qa + dlt-security review subagents?** Carve already runs the engineer→parallel-reviewers→fix pattern on *itself* (`/build-spec`); bringing it to users' pipelines catches the classes of error the author's own loop is weakest at — schema-contract/idempotency (qa) and credential/data-loss (security) — on a fresh, adversarial, context-isolated read. Reviewers report; the engineer fixes; quality compounds without bloating one prompt.
 - **Why the agent body + strategy skill packs rather than one monolithic prompt?** One agent identity (the DLT engineer) that knows the full dlt API reasons best about strategy selection; the per-strategy *detail* lives in skill packs loaded on description-match (progressive disclosure, spec 16), so the agent's context stays lean and only pulls deep guidance for the strategy actually in play. The hierarchy is explicit in the body; the LLM justifies its choice in the summary trace.
 - **Why the REST API config strategy specifically?** dlt's `rest_api_source` is a real production feature designed exactly for the LLM-scaffolding use case — many SaaS APIs fit a TOML config and need zero custom Python. Preferring it over native dlt minimizes the code Carve generates and reduces the surface area for the agent to make mistakes. The agent only falls back to native dlt when REST API config genuinely can't express the API's quirks.
@@ -360,3 +359,9 @@ Every Carve-generated dlt file carries the header from [layout](./layout.md). Th
 - **How to handle credential discovery for new sources.** *Implementation default.* Agent emits `.dlt/secrets.toml.template` with placeholder env-var references (e.g., `STRIPE_API_KEY = "${STRIPE_API_KEY}"`). The build flow surfaces these as "you need to set these env vars before running" in the plan summary; a missing credential makes the verification loop return `status = "needs_user_input"` rather than fail silently. Agent never invents real credentials; the dlt-security reviewer asserts no literal secret leaked into a template.
 - **Built-in declarative-agent path → RESOLVED.** Built-in agents live at `src/carve/core/agents/builtin/*.md` (spec 16's discovery root + file-list); user agents at `carve/agents/*.md`. Consistent across specs 15/16/17/18.
 - **Review fan-out scope.** *Strategy-required (shared).* This spec wires **qa-on-build + security-on-build**; the strategy's open question on full fan-out vs a staged start (and deploy-time security gating via spec 14) is owned at the strategy/harness level. Confirm the initial cut for the dlt reviewers specifically.
+
+- **Deferred orchestrator-wiring (the live-routing seam).** *Implementation default — non-blocking, owned by the later orchestrator-wiring unit, gated on the plan-build classifier producing a goal classification.* The agent definition, the four strategy packs, the callable skills, and the verification runner bridge all ship and pass their gates; what remains is the live wiring that constructs the runner and routes a real goal to this agent:
+  - **(a) Register the strategy-pack root.** Add `src/carve/core/skills/builtin/dlt_strategies/` as a skill-pack discovery root so the four authoring-strategy packs (`curated_library` / `rest_api_config` / `native_dlt` / `singer_wrapper`) are findable by `lookup_skill_pack` at runtime.
+  - **(b) Inject the agent's non-base grants + append `lookup_skill_pack`.** Supply the `sql` / `dlt_library` / `rest_api_explore` / `dbt_source_lookup` / `existing_dlt_inspect` grants via the binder's `extra_tools` seam (spec 16's grant→executor binder — the harness holds no dependency for these names), and **append `lookup_skill_pack`** to the delegated agent's tool set (it's referenced in the body but intentionally absent from the frontmatter grant).
+  - **(c) Make `allowed_paths` load-bearing.** Thread `allowed_paths` through `delegation.py`'s `AgentPolicy` and add a **glob-aware write-path matcher** so `el/**` / `.dlt/*.template` is enforced by the gate, not just advisory. (Today `allowed_paths` is advisory — a pre-existing harness gap flagged by the security reviewer; tracked at the harness level.)
+  - **(d) Wire the live venv-runner→agent execution path.** The runner *bridge* (`integrations/dlt/runner.py`: `make_dlt_parse_fn` / `run_dlt_check` / `make_dlt_verification_loop`) exists and is tested; wiring the live `LocalVenvRunner` execution into the agent's verification loop is deferred to this same unit.
