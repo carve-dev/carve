@@ -29,7 +29,7 @@ cannot itself spawn another engineer ad infinitum.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +40,7 @@ from carve.core.agents.permissions.gate import Approver, PermissionGate
 from carve.core.agents.permissions.modes import PermissionMode, min_mode
 from carve.core.agents.permissions.policy import AgentPolicy, build_policy
 from carve.core.agents.subagent_registry import AgentSpec, SubagentRegistry
+from carve.core.agents.tool_binding import BindingContext, bind_grant_tools
 from carve.core.agents.tools import Tool
 from carve.core.agents.tools.submit_result import (
     SubmitResultCapture,
@@ -113,9 +114,15 @@ class SubagentRunner:
         max_turns: int = 30,
         max_tokens: int = 4096,
         hook_factory: HookFactory | None = None,
+        extra_tools: Mapping[str, Tool] | None = None,
     ) -> None:
         self._registry = registry
         self._paths = paths
+        # Tools whose dependency the harness doesn't hold (e.g. `sql` built with
+        # a live warehouse connection, or `delegate`). Injected by the caller
+        # that owns those deps; the binder supplies them when a declarative
+        # agent grants the name. Empty means base-tools-only.
+        self._extra_tools = dict(extra_tools or {})
         self._client = client
         self._model = model
         # Per-agent `model:` may name a tier label from models.toml; resolved
@@ -159,16 +166,30 @@ class SubagentRunner:
         # 1. Clamp the mode — never wider than the parent.
         child_mode = min_mode(parent_mode, spec.capability)
 
-        # 2. Build the agent's tools, then attenuate to the clamped mode.
-        factory_tools: list[Tool] = spec.tool_factory(self._paths)
-        capture = SubmitResultCapture()
-        submit_tool = make_submit_result_tool(capture)
-        tool_names = frozenset(t.name for t in factory_tools)
+        # 2. The grant is a list of NAMES (the registry yields name-only stubs).
+        #    Build the gate from the grant + clamped mode, then BIND each name
+        #    to its real executor — the harness base tools (edit/grep/bash/…),
+        #    plus any caller-injected tools (e.g. `sql`). An unbound name keeps
+        #    its raising stub. This is what lets a declarative agent actually
+        #    run its tools rather than raise on first call.
+        declared_tools = spec.tool_factory(self._paths)
+        tool_names = frozenset(t.name for t in declared_tools)
         policy = build_policy(
             child_mode,
             agent=AgentPolicy(tools=tool_names, capability=spec.capability),
         )
         gate = PermissionGate(policy)
+        factory_tools: list[Tool] = bind_grant_tools(
+            declared_tools,
+            BindingContext(
+                project_dir=self._paths.root,
+                gate=gate,
+                approver=self._approver,
+                extra_tools=self._extra_tools,
+            ),
+        )
+        capture = SubmitResultCapture()
+        submit_tool = make_submit_result_tool(capture)
         # The terminator is always available (it only captures a payload).
         tools = [*factory_tools, submit_tool]
 
