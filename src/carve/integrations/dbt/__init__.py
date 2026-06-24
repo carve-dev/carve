@@ -28,9 +28,15 @@ from carve.integrations.dbt.runner import (
     run_dbt_check,
 )
 from carve.integrations.dbt.sources import make_dbt_source_lookup_tool
-from carve.integrations.dbt.verify import DbtRunReport, parse_dbt_run, read_run_results
+from carve.integrations.dbt.verify import (
+    DbtNodeResult,
+    DbtRunReport,
+    parse_dbt_run,
+    read_run_results,
+)
 
 __all__ = [
+    "DbtNodeResult",
     "DbtRunReport",
     "make_dbt_manifest_tool",
     "make_dbt_parse_fn",
