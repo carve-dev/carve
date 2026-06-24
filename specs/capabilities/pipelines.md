@@ -94,8 +94,13 @@ file = "sql/notify_loaded_count.sql"
 connection = "prod"
 depends_on = ["ingest_stripe"]
 [steps.jinja_vars]
-loaded_rows = "{{ steps.ingest_stripe.outputs.rows_loaded }}"
+# A dlt step's outputs are {tables, schema_changes, failed_jobs} — the on-disk load
+# package's keys. (Per-resource `rows_loaded` is NOT among them: it lives only in the
+# in-process dlt trace, not the persisted package — see "Step executor: dlt".)
+loaded_tables = "{{ steps.ingest_stripe.outputs.tables | join(', ') }}"
 ```
+
+> **Updated during implementation (2026-06-24):** this example originally referenced `{{ steps.ingest_stripe.outputs.rows_loaded }}`, but a `dlt` step's shipped `outputs` are `{tables, schema_changes, failed_jobs}` (the on-disk load-package keys) — `rows_loaded` is not among them (it lives only in the in-process dlt trace). Under `StrictUndefined` the old example would be a render error, so it now references a real output key (`tables`).
 
 **This TOML is identical across simple and multi mode.** In simple mode, `carve.toml` has no `[components.*]` blocks: `component = "stripe_charges"` resolves by convention to `./el/stripe_charges/`, and the dbt step's `component` may be **omitted** (it resolves to the single detected dbt project). In multi mode, `[components.stripe_charges]` and `[components.analytics]` (defined in `carve.toml` per spec 03) point those names at separate-remote repos pinned to a `ref` — but the pipeline file above does not change. Graduation backfills the omitted dbt-step `component` name (see *Component resolution & graduation* below).
 
@@ -305,6 +310,8 @@ Templating happens at step launch time (after deps complete, before executor run
 
 ### Step executor: `dlt`
 
+> **Updated during implementation (2026-06-24):** the original sketch ran `dlt pipeline run --pipeline <name>` and parsed `state.json` for `rows_loaded per resource`. **Neither is real.** dlt has **no** `dlt pipeline run` CLI (the same defect class corrected in the dlt-engineer), so the executor runs the component's **Python entrypoint** via the shipped `Subprocess` primitive; and the persisted **load package** (`read_latest_load_package`) structurally cannot produce per-resource row counts (those live only in the in-process dlt trace, never the on-disk package). The shipped verdict + outputs come from the load package. Prose + pseudocode below reflect the real mechanism.
+
 `src/carve/runtime/step_types/dlt.py`:
 
 ```python
@@ -314,28 +321,27 @@ class DltStepExecutor:
     async def execute(self, *, step, run, paths) -> StepResult:
         # Name-based indirection: resolve the component name to a concrete dir.
         # Simple mode → el/<name>/; multi mode → the workspace clone @ pinned ref (spec 03 resolver).
-        component_dir = resolve_dlt_component(step.config.component, paths)
-        if component_dir is None or not component_dir.exists():
-            return StepResult(status="failed", error_message=f"dlt component not found: {step.config.component}", ...)
+        resolved = resolve_dlt_component(step.component, paths, components=self._components)
+        code_dir = resolved.code_path
+        if not code_dir.exists():
+            return StepResult(status="failed", error_message=f"dlt component dir not found: {code_dir}")
 
-        env = self._build_env(run.target, step.config)
-        cmd = self._build_command(component_dir, step.config)
-        result = await self._run_subprocess(cmd, env, cwd=paths.root, timeout_s=14400)  # 4hr default
-
-        outputs = self._extract_outputs(component_dir, result)
-        return StepResult(
-            status="succeeded" if result.returncode == 0 else "failed",
-            outputs=outputs,
-            log_lines=result.log_lines,
-            error_message=result.stderr_tail if result.returncode != 0 else None,
-            duration_ms=result.duration_ms,
+        entrypoint = _find_entrypoint(code_dir)   # scripts/__init__.py → pipeline.py → __init__.py → main.py
+        env = _build_dlt_env(paths)               # pins DLT_DATA_DIR so the load package is readable
+        outcome = await asyncio.to_thread(        # run <python> <entrypoint> via the Subprocess primitive
+            self._run_fn, entrypoint=entrypoint, code_dir=code_dir,
+            cwd=paths.root, env=env, timeout_seconds=14400,   # 4hr default
         )
+        # Verdict + outputs come from the on-disk LOAD PACKAGE, not the exit code alone,
+        # and only from a package THIS run wrote (load_id >= run.started_at) — never a stale one.
+        return _outcome_to_step_result(outcome, pipelines_dir=paths.dlt_config_dir / "pipelines",
+                                       fallback_name=resolved.name, min_load_id=run.started_at.timestamp())
 ```
 
-- `resolve_dlt_component(name, paths)` delegates to spec 03's dlt locator: in simple mode it returns `paths.el_dir / name`; in multi mode (`[components.<name>]` present) it returns the workspace clone at the pinned `ref`. The executor does no path math itself.
-- `_build_env` injects `DESTINATION__SNOWFLAKE__CREDENTIALS__*` and similar dlt-convention env vars from the resolved target config (per ARCHITECTURE §10.2)
-- `_build_command` is `dlt pipeline run --pipeline <name>` plus optional `--resources` for `resource_select`
-- `_extract_outputs` parses `.dlt/pipelines/<name>/state.json` for rows_loaded per resource, schema changes, errors; returns a structured dict
+- `resolve_dlt_component(name, paths, components=…)` delegates to spec 03's dlt locator: in simple mode it returns `paths.el_dir / name`; in multi mode (`[components.<name>]` present) it returns the workspace clone at the pinned `ref`. The executor does no path math itself.
+- The component is **its Python module**, run as `<python> <entrypoint>` via the shipped `Subprocess` primitive (own process group, Carve secrets stripped, wall-clock watchdog) — there is no `dlt pipeline run` CLI. The run mechanism is **injected** (`DltRunFn`) so the offline test layer never spawns a real venv. Destination-cred injection (`DESTINATION__SNOWFLAKE__CREDENTIALS__*` per ARCHITECTURE §10.2) and venv materialization from `requirements.txt` are **deferred to live wiring** — the default run uses `Subprocess` directly (not `LocalVenvRunner`), so only `DLT_DATA_DIR` reaches the child (fine for the creds-free DuckDB substrate). Per-step `write_disposition`/`resource_select` overrides **fail loud** today (the keys Carve invented were never read by dlt); honoring them is deferred to live wiring.
+- The verdict comes from the on-disk **load package** (`read_latest_load_package`): a clean exit **plus** a `loaded` package with no `failed_jobs`. A clean exit that wrote no new package — or only a **stale** package from a prior run (`DLT_DATA_DIR` is persistent) — is `failed`, never false-green.
+- `_outcome_to_step_result` returns the load-package fields as `outputs`: **`{tables, schema_changes, failed_jobs}`**. Per-resource `rows_loaded` is **not** available — it lives only in the in-process dlt trace, not the persisted package, so it is omitted here and is a live-wiring follow-up if needed.
 
 ### Step executor: `dbt`
 
@@ -350,11 +356,11 @@ class DltStepExecutor:
 
 `src/carve/runtime/step_types/sql.py`:
 
-- Opens a connection to the configured target via `carve/connections.toml`
-- Reads the SQL file (path relative to project root), renders through Jinja (with the cross-step namespace)
-- Executes the SQL as a single transaction (one connection, one execute call; for multi-statement files, the user can use the destination's batch mechanism — Snowflake's `EXECUTE IMMEDIATE`, Postgres's `\;` separator, etc.)
-- Captures returned rows as outputs (first 100 rows, with truncation flag if more)
-- Default timeout: 300s (5 min); configurable per step
+- Opens a connection **by name** via the `resolve_connection` factory (`src/carve/runtime/step_types/connections.py`, a new seam) — it looks the `connection` name up across `[connections.duckdb.*]`/`[connections.snowflake.*]` and returns a `ResolvedConnection` (the live connector + its dialect). The factory is **injectable** (DuckDB-default) so the sql path runs creds-free in tests.
+- Reads the SQL file (path relative to project root, **path-confined** under the root — an escaping/symlinked path is a clean `failed`, never a read outside the tree), then renders the **file body** through the sandboxed Jinja environment against the full `{steps, run, env}` namespace (the same one launch-time `jinja_vars` use) **plus** a `vars` key carrying the step's already-resolved `jinja_vars` (cross-step outputs threaded upstream at launch). So a body may reference `{{ steps.<id>.outputs.X }}` / `{{ env.X }}` directly as well as `{{ vars.<name> }}`; `StrictUndefined` makes a missing reference a render error.
+- Executes the SQL as a single transaction (one connection, one execute call; for multi-statement files, the user can use the destination's batch mechanism — Snowflake's `EXECUTE IMMEDIATE`, Postgres's `\;` separator, etc.). A multi-statement file is classified by its *most-privileged* statement (the shipped `classify` takes the `max`), so a file mixing a write with a trailing `SELECT` runs down the write path and does not capture the trailing rows.
+- Captures returned rows as outputs (`{rows, row_count, truncated}` — first 100 rows, with a truncation flag if more; every value coerced to a JSON primitive for JSONB persistence)
+- Default timeout: 300s (5 min); configurable per step. Enforced via `asyncio.wait_for` → `failed`; a `to_thread` worker can't be force-cancelled, so a runaway query keeps running until it finishes (the worker closes the connection in its own `finally` — leak-free), and a driver-side query timeout is the deeper Increment-4 fix.
 
 The `sql` step type is deliberately limited to single-file, single-target execution — no multi-file SQL "pipelines" within a step. That's what step composition is for.
 

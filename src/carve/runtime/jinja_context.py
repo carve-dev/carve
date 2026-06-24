@@ -49,13 +49,17 @@ class JinjaRenderError(Exception):
 _EXPOSED_ENV_KEYS: tuple[str, ...] = ()
 
 
-def _build_sandbox() -> SandboxedEnvironment:
+def build_sandbox() -> SandboxedEnvironment:
     """Construct the sandboxed environment used for every render.
 
     ``StrictUndefined`` makes a reference to a missing key (a Jinja var
     pointing at an output the upstream step never emitted) a render error
     rather than silently producing an empty string — surfacing the
     composition bug the spec calls out.
+
+    Shared so every Jinja render in the runtime (the launch-time
+    ``jinja_vars`` here, the ``sql`` step's file body) uses the identical
+    sandbox configuration.
     """
     return SandboxedEnvironment(
         undefined=StrictUndefined,
@@ -118,7 +122,7 @@ def render_step_vars(
     if not jinja_vars:
         return {}
 
-    sandbox = _build_sandbox()
+    sandbox = build_sandbox()
     rendered: dict[str, str] = {}
     for name, template_str in jinja_vars.items():
         try:
@@ -133,6 +137,7 @@ def render_step_vars(
 
 __all__ = [
     "JinjaRenderError",
+    "build_sandbox",
     "make_jinja_context",
     "render_step_vars",
 ]
