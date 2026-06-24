@@ -34,6 +34,8 @@ dependencies = [
     "cryptography>=42",
     "tomlkit>=0.13",
     "watchdog>=4.0",
+    "croniter>=2.0",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +93,12 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 [tool.mypy]
 strict = true
 python_version = "3.11"
+
+# `croniter` ships no type stubs and no `py.typed` marker. Scope the
+# missing-stub allowance to that one module rather than blanket-disabling.
+[[tool.mypy.overrides]]
+module = ["croniter", "croniter.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

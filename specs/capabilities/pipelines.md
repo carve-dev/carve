@@ -158,7 +158,9 @@ class Pipeline(BaseModel):
 
 The `component` field on `dlt`/`dbt` steps **replaces the old `artifact` field** (which lived only on dlt steps), unifying dlt + dbt step references under one name-based key — per the control-plane reference model. A `dlt` step's `component` is required; a `dbt` step's `component` is optional (omitting it means "the single detected dbt project" in simple mode). `sql` steps are unchanged: they reference a file + connection inline.
 
-Loading validates: unique step ids, valid `depends_on` refs (all referenced ids exist), no cycles, valid cron (if `[seed_schedule]` present), valid type-specific configs, and — for `dlt`/`dbt` steps — that the referenced `component` name **resolves** (via the spec-03 resolver: an `el/<name>/` directory or a `[components.<name>]` block; the omitted dbt name resolves to the single detected dbt project). An unresolvable component name is a validation error surfaced by `carve pipelines validate`.
+> **Updated during implementation (2026-06-24):** the loader also enforces **step-type / component-type agreement** — a `dbt` step may not reference a `dlt` component (and vice versa), since the executor would otherwise dispatch the wrong engine at run time. An adversarial review surfaced this gap; it is now a `load_pipeline` validation error alongside the resolvability check.
+
+Loading validates: unique step ids, valid `depends_on` refs (all referenced ids exist), no cycles, valid cron (if `[seed_schedule]` present), valid type-specific configs, and — for `dlt`/`dbt` steps — that the referenced `component` name **resolves** (via the spec-03 resolver: an `el/<name>/` directory or a `[components.<name>]` block; the omitted dbt name resolves to the single detected dbt project) **and that the resolved component's type matches the step's type** (a `dlt` step resolves to a `dlt` component, a `dbt` step to a `dbt` component). An unresolvable component name — or a step-type/component-type mismatch — is a validation error surfaced by `carve pipelines validate`.
 
 ### Component resolution (name-based indirection)
 
@@ -289,13 +291,15 @@ The pipeline-level run status is:
     "started_at": "2026-...",
   },
   "env": {
-    # selected env vars; never secrets (per spec 12.4-style scoping)
-    "DATABASE_URL": "...",
+    # An allow-list of selected NON-secret env vars; never secrets
+    # (per spec 12.4-style scoping). EMPTY in the composition core — see callout.
   },
 }
 ```
 
-Jinja is sandboxed via the `SandboxedEnvironment` from `jinja2.sandbox` — no filesystem access, no arbitrary code execution. Only the namespace above is reachable.
+> **Updated during implementation (2026-06-24):** the `env` example originally showed `"DATABASE_URL": "..."`, which contradicts "never secrets" — `DATABASE_URL` is the password-bearing Postgres state-store DSN. An adversarial review flagged that a sandboxed template could read the DB password out of `env`, so the shipped allow-list (`jinja_context._EXPOSED_ENV_KEYS`) is **empty by design**: nothing in the composition core needs an env var in a template, and the obvious candidate is a secret. The allow-list *mechanism* is retained so a genuinely non-secret runtime var can be added later; secrets never belong here.
+
+Jinja is sandboxed via the `SandboxedEnvironment` from `jinja2.sandbox` — no filesystem access, no arbitrary code execution. Only the namespace above is reachable. Rendering uses `StrictUndefined`, so a Jinja var pointing at an output the upstream step never emitted is a render error (surfacing the composition bug) rather than a silent empty string.
 
 Templating happens at step launch time (after deps complete, before executor runs); the rendered values are passed to the executor as part of the step config.
 

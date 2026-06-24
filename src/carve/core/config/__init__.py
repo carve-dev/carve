@@ -13,6 +13,18 @@ Everything downstream (CLI commands, agent runtime, server) accepts a
 from carve.core.config.exceptions import ConfigError
 from carve.core.config.loader import load_config
 from carve.core.config.paths import ProjectPaths
+from carve.core.config.pipeline_schema import (
+    DbtStepConfig,
+    DltStepConfig,
+    FailureMode,
+    Pipeline,
+    PipelineError,
+    PipelineMeta,
+    PipelineStep,
+    SeedSchedule,
+    SqlStepConfig,
+    load_pipeline,
+)
 from carve.core.config.schema import (
     ComponentConfig,
     ComponentMode,
@@ -36,13 +48,23 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConnectionsConfig",
+    "DbtStepConfig",
+    "DltStepConfig",
+    "FailureMode",
     "ModelsConfig",
     "PathsConfig",
+    "Pipeline",
+    "PipelineError",
+    "PipelineMeta",
+    "PipelineStep",
     "ProjectConfig",
     "ProjectPaths",
     "RunnerConfig",
+    "SeedSchedule",
     "ServerConfig",
     "SnowflakeConnection",
+    "SqlStepConfig",
     "StateStoreConfig",
     "load_config",
+    "load_pipeline",
 ]
