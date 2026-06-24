@@ -19,6 +19,8 @@ from pydantic import ValidationError
 from carve.core.agents.delegation import DelegationResult
 from carve.core.agents.loop import TokenUsage
 from carve.core.agents.review_fan_out import (
+    DBT_QA_REVIEWER,
+    DBT_REVIEWER_SEQUENCE,
     QA_REVIEWER,
     SECURITY_REVIEWER,
     Finding,
@@ -280,3 +282,90 @@ def test_finding_model_is_frozen() -> None:
     f = Finding(reviewer=QA_REVIEWER, severity=Severity.MINOR, file="x.py", message="m")
     with pytest.raises(ValidationError):
         f.severity = Severity.BLOCKER
+
+
+# ---------------------------------------------------------------------------
+# dbt-qa single-reviewer fan-out (the `reviewers=` generalization).
+# ---------------------------------------------------------------------------
+
+
+def test_default_sequence_is_unchanged_dlt_pair() -> None:
+    # Regression guard on the default parameter: with no `reviewers=` the driver
+    # runs exactly the dlt pair, in order.
+    stub = _RecordingStub({QA_REVIEWER: _result(), SECURITY_REVIEWER: _result()})
+
+    review_fan_out(diff="d", goal="g", delegate_fn=stub)
+
+    assert [agent for agent, _task, _ctx in stub.calls] == [QA_REVIEWER, SECURITY_REVIEWER]
+
+
+def test_dbt_reviewer_sequence_runs_only_dbt_qa() -> None:
+    stub = _RecordingStub({DBT_QA_REVIEWER: _result()})
+
+    review_fan_out(diff="d", goal="g", delegate_fn=stub, reviewers=DBT_REVIEWER_SEQUENCE)
+
+    assert [agent for agent, _task, _ctx in stub.calls] == [DBT_QA_REVIEWER]
+
+
+def test_dbt_qa_coverage_finding_aggregates_and_stamps_reviewer() -> None:
+    """An authored model with no tests -> dbt-qa flags a coverage gap; the driver
+    aggregates it, stamps reviewer='dbt-qa', and sets passed per severity."""
+    diff = (
+        "--- /dev/null\n"
+        "+++ b/models/marts/daily_revenue.sql\n"
+        "+select order_date, sum(amount) as revenue from {{ ref('stg_orders') }} group by 1\n"
+    )
+    stub = _RecordingStub(
+        {
+            DBT_QA_REVIEWER: _result(
+                outputs={
+                    "findings": [
+                        {
+                            "severity": "major",
+                            "file": "models/marts/daily_revenue.sql",
+                            "line": 1,
+                            "message": "new mart has no tests; add not_null/unique on grain key",
+                            "suggested_change": None,
+                        }
+                    ]
+                }
+            )
+        },
+    )
+
+    result = review_fan_out(
+        diff=diff, goal="add a daily revenue mart", delegate_fn=stub, reviewers=("dbt-qa",)
+    )
+
+    assert isinstance(result, ReviewResult)
+    assert set(result.by_reviewer) == {DBT_QA_REVIEWER}
+    finding = result.by_reviewer[DBT_QA_REVIEWER][0]
+    assert finding.reviewer == DBT_QA_REVIEWER
+    assert finding.severity is Severity.MAJOR
+    # A major finding fails the review.
+    assert result.passed is False
+    assert set(result.raw) == {DBT_QA_REVIEWER}
+
+
+def test_dbt_qa_convention_finding_below_threshold_passes() -> None:
+    # A naming-convention nit at `minor` severity does not fail the review.
+    stub = _RecordingStub(
+        {
+            DBT_QA_REVIEWER: _result(
+                outputs={
+                    "findings": [
+                        {
+                            "severity": "minor",
+                            "file": "models/orders.sql",
+                            "message": "model 'orders' should be prefixed 'stg_' per convention",
+                        }
+                    ]
+                }
+            )
+        },
+    )
+
+    result = review_fan_out(diff="d", goal="g", delegate_fn=stub, reviewers=DBT_REVIEWER_SEQUENCE)
+
+    assert result.passed is True
+    assert result.by_reviewer[DBT_QA_REVIEWER][0].reviewer == DBT_QA_REVIEWER
