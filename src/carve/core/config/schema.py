@@ -288,6 +288,29 @@ class ComponentConfig(BaseModel):
     ``separate-remote``; ``path`` only for ``separate-local``. They are
     left optional rather than split into per-mode models so the TOML
     shape stays a single flat block.
+
+    The ``dbt_*`` fields (and ``worker_label``) are dbt-execution's
+    backend-selecting additions — only meaningful when ``type == "dbt"``.
+    They are all optional so a dlt component (or a convention-mode dbt
+    component that auto-resolves) round-trips with none of them set:
+
+    * ``dbt_backend`` — which execution backend runs this component
+      (``local`` | ``snowflake-native`` | ``dbt-cloud`` | ``remote``).
+      Only ``local`` is implemented in this slice; a non-``local`` value
+      *loads* (so a forward-looking config round-trips) but raises a clear
+      "backend not yet implemented" at **backend construction** time.
+    * ``dbt_engine`` / ``dbt_version`` — the resolved engine pin
+      (``fusion`` | ``dbt-core``). Omit to auto-resolve from the target's
+      warehouse dialect; once resolved they are written back here and
+      reused, not re-resolved.
+    * ``dbt_env`` — ``bundled`` (Carve-managed engine, the default) or
+      ``external`` (a user-installed dbt at ``dbt_path``).
+    * ``dbt_path`` / ``profiles_dir`` — only meaningful when
+      ``dbt_env == "external"``: the external dbt executable and the dbt
+      profiles dir to pass through.
+    * ``worker_label`` — **accept + store only** in this slice; the
+      runtime routing that honors it is deferred. Stored now so configs
+      that set it stay forward-compatible.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -305,12 +328,77 @@ class ComponentConfig(BaseModel):
     # workspace cache + runtime can read them off the resolved config.
     sync_mode: str = "hard"
     sync_before_run: bool = True
+    # dbt-execution backend-selecting fields (dbt components only). See the
+    # class docstring for the per-field contract.
+    dbt_backend: str | None = None
+    dbt_engine: str | None = None
+    dbt_version: str | None = None
+    dbt_env: str | None = None
+    dbt_path: str | None = None
+    profiles_dir: str | None = None
+    worker_label: str | None = None
 
     @field_validator("sync_mode")
     @classmethod
     def _known_sync_mode(cls, value: str) -> str:
         if value not in ("hard", "soft"):
             raise ValueError(f"sync_mode must be 'hard' or 'soft'; got {value!r}")
+        return value
+
+    @field_validator("dbt_backend")
+    @classmethod
+    def _known_dbt_backend(cls, value: str | None) -> str | None:
+        # Accept every named backend so a config pointing at a deferred
+        # backend round-trips and loads; only `local` is *implemented* this
+        # slice (the "not yet implemented" error is raised at backend
+        # construction, not here).
+        if value is not None and value not in (
+            "local",
+            "snowflake-native",
+            "dbt-cloud",
+            "remote",
+        ):
+            raise ValueError(
+                "dbt_backend must be 'local', 'snowflake-native', 'dbt-cloud', or "
+                f"'remote'; got {value!r}"
+            )
+        return value
+
+    @field_validator("dbt_engine")
+    @classmethod
+    def _known_dbt_engine(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("fusion", "dbt-core"):
+            raise ValueError(f"dbt_engine must be 'fusion' or 'dbt-core'; got {value!r}")
+        return value
+
+    @field_validator("dbt_env")
+    @classmethod
+    def _known_dbt_env(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("bundled", "external"):
+            raise ValueError(f"dbt_env must be 'bundled' or 'external'; got {value!r}")
+        return value
+
+    @field_validator("dbt_path", "profiles_dir")
+    @classmethod
+    def _safe_dbt_path(cls, value: str | None) -> str | None:
+        # `dbt_path` becomes the executable argv[0] and `profiles_dir` flows
+        # into `--profiles-dir <value>` as a positional. Reject option-shaped
+        # values (a leading `-` would be parsed as a dbt/exec flag) and `..`
+        # traversal segments, mirroring the `_safe_url`/`_safe_ref_branch`
+        # discipline already in this module.
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("dbt_path/profiles_dir must not be empty")
+        if stripped.startswith("-"):
+            raise ValueError(
+                f"dbt_path/profiles_dir must not start with '-' (option-shaped); got {value!r}"
+            )
+        if "\x00" in value:
+            raise ValueError("dbt_path/profiles_dir must not contain NUL bytes")
+        if ".." in PurePosixPath(value).parts:
+            raise ValueError(f"dbt_path/profiles_dir must not contain '..'; got {value!r}")
         return value
 
     @field_validator("url")
@@ -384,6 +472,12 @@ class ComponentConfig(BaseModel):
             raise ValueError("`path` is only valid when mode == 'separate-local'")
         if self.mode is not ComponentMode.SEPARATE_REMOTE and (self.url or self.branch or self.ref):
             raise ValueError("`url`/`branch`/`ref` are only valid when mode == 'separate-remote'")
+        # `dbt_path`/`profiles_dir` describe an *external* dbt install; they are
+        # meaningless (and likely a config mistake) when `dbt_env` is bundled or
+        # unset. Mirror the per-mode cross-field rule above: reject the
+        # contradiction at load time rather than silently ignoring it.
+        if self.dbt_env != "external" and (self.dbt_path or self.profiles_dir):
+            raise ValueError("`dbt_path`/`profiles_dir` are only valid when dbt_env == 'external'")
         return self
 
 

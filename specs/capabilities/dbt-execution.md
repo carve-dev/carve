@@ -25,9 +25,12 @@ Run a dbt component's `build`/`run`/`test`/`snapshot`/`seed` **as a step in a co
 
 Every backend implements one interface; the `dbt` step type calls it and never branches on backend:
 
+> **Updated during implementation (2026-06-23):** the first (`local`) slice folds the invocation args into one typed `DbtCommand` value object (so arg-flattening to dbt argv lives in exactly one tested place) and names the duration field `duration_ms`. The shape below is otherwise as built.
+
 ```
-DbtBackend.run(command, select, exclude, vars, target, full_refresh) -> DbtRunResult
-  DbtRunResult: { status, per_model[], manifest_ref, run_results_ref, logs, duration, cost? }
+DbtBackend.run(command: DbtCommand) -> DbtRunResult
+  DbtCommand:    { command, select[], exclude[], vars, target, full_refresh }
+  DbtRunResult:  { status, per_model[], manifest_ref, run_results_ref, logs, duration_ms, cost? }
 ```
 
 `runtime` dispatches to the component's configured backend; results are normalized so `step_runs`, logs, events, and `lineage` are backend-uniform.

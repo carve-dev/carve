@@ -50,12 +50,36 @@ _ERROR_MARKERS = ("Error", "Exception", "Failed", "Failure", "Compilation Error"
 
 
 @dataclass(frozen=True)
+class DbtNodeResult:
+    """One node's persisted result from ``run_results.json``.
+
+    The structured per-node record the dbt-execution backend normalizes into a
+    ``PerModelResult``: dbt's raw per-node ``status`` (``success``/``error``/
+    ``skipped`` for build nodes, ``pass``/``fail`` for tests), the ``message``,
+    and the ``failures`` count tests report. Carries the readable ``name``
+    (manifest-resolved when a manifest is supplied, else the ``unique_id``).
+    """
+
+    unique_id: str
+    name: str
+    status: str
+    message: str | None
+    failures: int | None
+
+
+@dataclass(frozen=True)
 class DbtRunReport:
     """What dbt's persisted ``run_results.json`` says about the last run."""
 
     completed: bool  # the artifact was present and parseable
     passed_nodes: tuple[str, ...]  # node ids that succeeded/passed/were skipped
     failed_nodes: tuple[tuple[str, str], ...]  # (unique_id, message) for fail/error nodes
+    # Every node's structured result, in file order — the backend-uniform
+    # normalization layer (carve.core.dbt_execution) reads this to build its
+    # per-model result list with raw status + failures count. The pass/fail
+    # *verdict* still rides `passed_nodes`/`failed_nodes`; this is the detail
+    # those buckets discard. Defaulted so existing constructors stay valid.
+    nodes: tuple[DbtNodeResult, ...] = ()
 
 
 def _read_json(path: Path) -> object | None:
@@ -99,6 +123,7 @@ def read_run_results(
 
     passed: list[str] = []
     failed: list[tuple[str, str]] = []
+    nodes: list[DbtNodeResult] = []
     for result in results:
         if not isinstance(result, dict):
             continue
@@ -107,21 +132,30 @@ def read_run_results(
             continue
         status = str(result.get("status", "")).lower()
         name = _node_name(manifest_dict, unique_id)
+        raw_failures = result.get("failures")
+        failures = raw_failures if isinstance(raw_failures, int) else None
+        raw_message = result.get("message")
+        node_message = raw_message if isinstance(raw_message, str) and raw_message else None
+        nodes.append(
+            DbtNodeResult(
+                unique_id=unique_id,
+                name=name,
+                status=status or "unknown",
+                message=node_message,
+                failures=failures,
+            )
+        )
         if status in _OK_STATUSES:
             passed.append(name)
         else:
-            raw_message = result.get("message")
-            message = (
-                raw_message
-                if isinstance(raw_message, str) and raw_message
-                else f"status={status or 'unknown'}"
-            )
+            message = node_message or f"status={status or 'unknown'}"
             failed.append((name, message))
 
     return DbtRunReport(
         completed=True,
         passed_nodes=tuple(passed),
         failed_nodes=tuple(failed),
+        nodes=tuple(nodes),
     )
 
 
@@ -213,4 +247,4 @@ def _tail(text: str | None, *, limit: int = 1500) -> str:
     return (text or "")[-limit:]
 
 
-__all__ = ["DbtRunReport", "parse_dbt_run", "read_run_results"]
+__all__ = ["DbtNodeResult", "DbtRunReport", "parse_dbt_run", "read_run_results"]
