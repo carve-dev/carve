@@ -186,7 +186,7 @@ def parse_dbt_run(
             return _failure_result(report, returncode=proc.returncode)
         return CheckResult(
             passed=False,
-            summary=_error_summary(output) or f"dbt run exited {proc.returncode}.",
+            summary=error_summary(output) or f"dbt run exited {proc.returncode}.",
             details={"returncode": proc.returncode, "output_tail": _tail(output)},
         )
 
@@ -234,8 +234,15 @@ def _failure_result(report: DbtRunReport, *, returncode: int) -> CheckResult:
     )
 
 
-def _error_summary(output: str) -> str:
-    """The most informative error line — the last marker line, else the last line."""
+def error_summary(output: str) -> str:
+    """The most informative error line — the last marker line, else the last line.
+
+    Public so the structured backend bridge
+    (:func:`carve.core.dbt_execution.verify_bridge.dbt_run_result_to_check_result`)
+    derives the same log-tail summary from a ``DbtRunResult.logs`` it does here
+    from a finished process's output — one shared error-extraction rule across
+    both verify paths.
+    """
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     for line in reversed(lines):
         if any(marker in line for marker in _ERROR_MARKERS):
@@ -247,4 +254,10 @@ def _tail(text: str | None, *, limit: int = 1500) -> str:
     return (text or "")[-limit:]
 
 
-__all__ = ["DbtNodeResult", "DbtRunReport", "parse_dbt_run", "read_run_results"]
+__all__ = [
+    "DbtNodeResult",
+    "DbtRunReport",
+    "error_summary",
+    "parse_dbt_run",
+    "read_run_results",
+]

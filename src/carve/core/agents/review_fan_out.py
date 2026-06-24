@@ -26,7 +26,7 @@ driver raises — a malformed verdict is never silently dropped.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -40,6 +40,13 @@ from carve.core.agents.delegation import DelegationResult
 QA_REVIEWER = "dlt-qa"
 SECURITY_REVIEWER = "dlt-security"
 _REVIEWER_SEQUENCE: tuple[str, ...] = (QA_REVIEWER, SECURITY_REVIEWER)
+
+# The dbt review fan-out is a single-reviewer sequence — dbt-qa only (there is no
+# separate dbt-security reviewer; SQL/credential concerns are dbt-qa's remit).
+# The driver already stamps `reviewer` from the trusted call site, so a
+# one-element sequence works once the sequence is a parameter.
+DBT_QA_REVIEWER = "dbt-qa"
+DBT_REVIEWER_SEQUENCE: tuple[str, ...] = (DBT_QA_REVIEWER,)
 
 
 class ReviewFanOutError(Exception):
@@ -152,15 +159,28 @@ def _parse_findings(reviewer: str, result: DelegationResult) -> list[Finding]:
     return findings
 
 
-def review_fan_out(diff: str, goal: str, delegate_fn: DelegateFn) -> ReviewResult:
-    """Route ``diff`` through dlt-qa then dlt-security and aggregate findings.
+def review_fan_out(
+    diff: str,
+    goal: str,
+    delegate_fn: DelegateFn,
+    *,
+    reviewers: Sequence[str] = _REVIEWER_SEQUENCE,
+) -> ReviewResult:
+    """Route ``diff`` through a reviewer sequence and aggregate findings.
 
-    The orchestrator-owned driver. Runs the two reviewers **sequentially**
-    (dlt-qa first), each on a fresh adversarial context built from
-    ``{diff, goal}`` **only** — never the engineer's transcript. Parses
-    each reviewer's structured findings (fail-loud on a malformed payload),
-    then aggregates into a :class:`ReviewResult` whose ``passed`` is
-    ``True`` iff no reviewer raised a ``blocker`` or ``major`` finding.
+    The orchestrator-owned driver. Runs ``reviewers`` **sequentially**, each on
+    a fresh adversarial context built from ``{diff, goal}`` **only** — never the
+    engineer's transcript. Parses each reviewer's structured findings (fail-loud
+    on a malformed payload), then aggregates into a :class:`ReviewResult` whose
+    ``passed`` is ``True`` iff no reviewer raised a ``blocker`` or ``major``
+    finding.
+
+    ``reviewers`` defaults to the dlt pair (:data:`QA_REVIEWER` then
+    :data:`SECURITY_REVIEWER`), so every existing dlt call site is unchanged. A
+    different set runs a different review — the dbt path passes
+    :data:`DBT_REVIEWER_SEQUENCE` (``("dbt-qa",)``); the driver stamps each
+    finding's ``reviewer`` from the trusted call site, so a single-element
+    sequence aggregates correctly.
 
     ``delegate_fn`` is the injection seam: in production the orchestrator
     binds a partial over the real ``SubagentRunner.run``; tests pass a
@@ -173,7 +193,7 @@ def review_fan_out(diff: str, goal: str, delegate_fn: DelegateFn) -> ReviewResul
     by_reviewer: dict[str, list[Finding]] = {}
     raw: dict[str, DelegationResult] = {}
 
-    for reviewer in _REVIEWER_SEQUENCE:
+    for reviewer in reviewers:
         task = (
             f"Adversarially review the engineer's diff for the goal below. "
             f"Report findings as structured outputs; do not edit. Reviewer: {reviewer}."
@@ -196,6 +216,8 @@ def review_fan_out(diff: str, goal: str, delegate_fn: DelegateFn) -> ReviewResul
 
 
 __all__ = [
+    "DBT_QA_REVIEWER",
+    "DBT_REVIEWER_SEQUENCE",
     "QA_REVIEWER",
     "SECURITY_REVIEWER",
     "DelegateFn",
