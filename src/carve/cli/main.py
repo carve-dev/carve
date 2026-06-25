@@ -21,8 +21,11 @@ from carve.cli.commands import (
 )
 from carve.cli.commands.agents import app as agents_app
 from carve.cli.commands.auth import app as auth_app
+from carve.cli.commands.component import component as component_cmd
+from carve.cli.commands.component import components_app
 from carve.cli.commands.el import app as el_app
 from carve.cli.commands.memory import app as memory_app
+from carve.cli.commands.schedule import app as schedule_app
 from carve.cli.commands.skills import app as skills_app
 from carve.cli.commands.target import app as target_app
 from carve.cli.dotenv import load_dotenv
@@ -87,12 +90,15 @@ app.command(name="build")(build.command)
 app.command(name="deploy")(deploy.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)
-app.command(name="pipelines")(pipelines.command)
 app.command(name="serve")(serve.command)
 app.command(name="version")(version.command)
 app.add_typer(auth_app, name="auth")
 app.add_typer(target_app, name="target")
 app.add_typer(el_app, name="el")
+app.add_typer(pipelines.app, name="pipelines")
+app.command(name="component")(component_cmd)
+app.add_typer(components_app, name="components")
+app.add_typer(schedule_app, name="schedule")
 app.add_typer(memory_app, name="memory")
 app.add_typer(agents_app, name="agents")
 app.add_typer(skills_app, name="skills")

@@ -379,18 +379,21 @@ The pipeline-composition specialist is a **declarative subagent** on the harness
 
 `src/carve/core/agents/builtin/pipeline-engineer.md`:
 
+> **Updated during implementation (2026-06-24):** the frontmatter example now tracks the shipped file — three editorial corrections (the same reconciliation the dlt/dbt-engineer agents took): `model:` is **omitted** (so the agent falls back to `default_model`, matching every other shipped builtin) rather than a `claude-{LATEST_SONNET}` placeholder; `max_mode: build` is shown explicitly (it was prose-only before — the prompt's body §"Permission mode" already required `build`); and `"mcp:*"` is present in the `tools:` list (the prose at "MCP-imported skills … are available per spec 16" already granted it). Design intent — the tool set, the `pipelines/**` write scope, the four classifications — is unchanged.
+
 ```markdown
 ---
 name: pipeline-engineer
 description: Composes existing dlt/dbt/sql components into a pipelines/<name>.toml — by referencing components by name. Use for pipeline composition, step-DAG edits, and seeding a new pipeline's schedule. Does NOT author dlt code or dbt models.
-model: claude-{LATEST_SONNET}        # per-agent model tier; falls back to the install default
-tools: [edit, grep, pipeline_inspect, list_components, list_dbt_models, sql, web_fetch]
+tools: [edit, grep, pipeline_inspect, list_components, list_dbt_models, sql, web_fetch, "mcp:*"]
 allowed_paths: ["pipelines/**"]      # write scope enforced by the permission gate (spec 15)
+max_mode: build                      # the engineer's ceiling — `edit` allowed within allowed_paths, write outside prompts/denies
 classifications:
   - compose_pipeline                 # new pipelines/<name>.toml
   - modify_pipeline_steps            # change step order, add/remove steps, update failure modes
   - seed_schedule                    # set the [seed_schedule] block on a NEW pipeline (a seed, not a live edit)
   - schedule_existing_component      # orchestration-only mode (PRD §6.2 mode 2): compose a TOML against an existing user-authored dlt/dbt component
+# model: omitted → falls back to the install default_model (per spec 16), as the dlt/dbt-engineer builtins do
 ---
 <system prompt body — see "System prompt" below>
 ```
@@ -481,7 +484,7 @@ REST/MCP coverage of these surfaces lands in spec 09; this spec ships only the C
 - **Unit (DAG):** topological order is correct for representative DAGs (linear, fan-out, fan-in, diamond); ready_steps correctly accounts for completed/failed/skipped sets
 - **Unit (failure modes each):** one test per mode, exercising the transition rules from the table above
 - **Unit (Jinja sandbox):** template renders against the standard namespace; attempts to access filesystem or import os raise sandbox errors
-- **Unit (dlt executor):** mock subprocess; verifies command construction, env-var injection, state.json output parsing
+- **Unit (dlt executor):** mock the injected run-fn (`DltRunFn`); verifies the resolved entrypoint + env (`DLT_DATA_DIR`) and that the verdict + `{tables, schema_changes, failed_jobs}` outputs come from the on-disk **load package** (a clean exit that wrote no new package — or only a **stale** one — is `failed`). *(Reconciled 2026-06-24: the executor runs the component's Python entrypoint via the `Subprocess` primitive and parses the load package — there is no `dlt pipeline run` CLI and no `state.json` `rows_loaded` parsing, per the §"Step executor: dlt" callout.)*
 - **Unit (dbt executor):** the executor calls `DbtBackend.run` and normalizes `DbtRunResult` identically across a stubbed `local` (subprocess) and a stubbed `managed` (snowflake-native / dbt-cloud) backend — it never assumes dbt-core/subprocess ([dbt-execution](./dbt-execution.md))
 - **Unit (sql executor):** real connection to a fixture Postgres; verifies single-transaction semantics + output capture
 - **Integration (3-step pipeline):** a synthetic `pipelines/stripe.toml` with dlt → dbt → sql; fixture Stripe-like mock API; runs end-to-end; rows land in fixture warehouse; step_runs table has the right shape

@@ -296,6 +296,10 @@ _READ_BASH_ALLOW: frozenset[str] = frozenset(
         "dbt compile",
         "dbt debug",
         "dlt --version",
+        # Carve's own read-only schema+DAG validation — the pipeline engineer's
+        # verify loop runs `carve pipelines validate [<name>]` (no writes, no
+        # network, project-scoped), so it sits on the read floor in every mode.
+        "carve pipelines validate",
     }
 )
 
@@ -500,6 +504,14 @@ DANGEROUS_BASH_FLAGS: dict[str, frozenset[str]] = {
             "--target-path",
         }
     ),
+    # `carve` is allow-listed only for the read-only `pipelines validate`
+    # subcommand, which operates on the project at the pinned `cwd`. Its
+    # `--project-dir` flag would repoint it at an attacker-authored project
+    # (whose pipelines/components are then loaded + validated, executing
+    # arbitrary Jinja/Python on parse), so it gets the same repoint denial as
+    # `dbt`/`dlt`. The verify loop runs the flagless `carve pipelines validate`
+    # (defaulting to cwd), so this guard never bites legitimate use.
+    "carve": frozenset({"--project-dir"}),
 }
 
 
