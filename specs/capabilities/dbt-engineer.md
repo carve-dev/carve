@@ -25,6 +25,8 @@ Let the AI **author and modify** a dbt component the way the DLT engineer author
 
 A built-in agent (`src/carve/core/agents/builtin/dbt-engineer.md`, the [extensibility](./extensibility.md) markdown+frontmatter format) the orchestrator `delegate`s dbt-authoring tasks to, under the `build` permission mode:
 
+> **Updated during implementation (2026-06-25):** authoring + verify is a **build-time** behavior. When delegated **for a `carve plan`** (the `capacity == "design"` context flag, [plan-build](./plan-build.md) §"Plan synthesis"), the engineer runs at **plan/read authority** — it uses its read tools (`dbt_manifest` + `sql` introspect) + domain expertise to *propose* the models/tests/sources it would author and a cost/runtime estimate, authoring and verifying **nothing** until the human accepts the plan and runs `carve build`. The Tools/Verify bullets below describe its **build** capacity.
+
 - **Tools:** `edit`/`create_file` scoped (`allowed_paths`) to the dbt project's `models/**`, `tests/**`, `snapshots/**`, `*_schema.yml`, `sources.yml`; `grep`/`glob`; the **dbt skills** (`list_models`, `model_columns`, `model_dependencies`, `tests_on_model` — the `dbt_manifest` family) + the dialect-aware [`sql`](./sql.md) tool on the read role.
 - **Classifications:** `new_model`, `modify_model`, `add_tests`, `declare_source`, `refactor_models`.
 - **Verify by execution:** authors → runs `dbt build`/`dbt test --select <models>` **through [`dbt-execution`](./dbt-execution.md)** against a dev target (whatever backend the component uses — a bundled-engine dev run, or a dbt Cloud / snowflake-native dev job) → reads the per-model result → fixes within bounded iterations + a cost ceiling, before returning a Plan.

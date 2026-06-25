@@ -51,6 +51,36 @@ WRITE_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# The engineer skill tools bound via `extra_tools` (the dlt/dbt/pipeline
+# engineers' domain skills). They are NOT base harness tools, so they live in
+# neither the base `_ALL_TOOLS` nor the base `_READ_TOOLS` literal — yet they are
+# read-floored exactly like `sql`/`lookup_skill_pack`: admitted by NAME at every
+# mode (`permitted ∩ grant` must retain them so a gated child can call them),
+# with any write enforced INSIDE the tool. Without this floor `build_policy`
+# would intersect them away and the gate would deny them in every mode, so a
+# delegated engineer could never run its own granted skills. Unioned into both
+# `_ALL_TOOLS` (the canonical taxonomy / deploy floor) and `_READ_TOOLS` (every
+# mode's floor) below.
+_SKILL_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        # Pure-read inspectors of the project / corpus / manifest / components.
+        # `rest_api_explore` is a bounded GET probe — read-only, no state change.
+        "existing_dlt_inspect",
+        "rest_api_explore",
+        "dbt_manifest",
+        "dbt_source_lookup",
+        "pipeline_inspect",
+        "list_components",
+        "list_dbt_models",
+        # `dlt_library` is multi-op like `sql`: list/lookup READ the curated
+        # corpus, but `copy` WRITES a source pack into `el/**`. Admit it by name
+        # at the read floor so list/lookup are reachable in every mode; its
+        # `copy` op is fail-closed below BUILD INSIDE the tool (mirrors how the
+        # `sql` tool fail-closes warehouse writes below deploy via `role_for`).
+        "dlt_library",
+    }
+)
+
 # The full set of terminal-grade + harness tool names the harness knows.
 # A mode's permitted set is a subset of this. `submit_result` and other
 # terminator tools are always permitted (they only capture a payload);
@@ -72,6 +102,9 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "write_file",
         "run_snowflake_ddl",
         "delegate",
+        # The engineer skill tools — part of the harness taxonomy so the deploy
+        # floor (`_permitted_tools_for_mode` returns `_ALL_TOOLS`) admits them.
+        *_SKILL_READ_TOOLS,
     }
 )
 
@@ -103,6 +136,10 @@ _READ_TOOLS: frozenset[str] = frozenset(
         "lookup_skill_pack",
         "bash",  # gated per-command; read-only bash is allowed in read_only
         "delegate",
+        # The engineer skill tools (read-floored above): admitted by name at
+        # every mode with write enforced inside the tool (`dlt_library.copy`
+        # fail-closes below build, exactly like `sql`).
+        *_SKILL_READ_TOOLS,
     }
 )
 
@@ -763,3 +800,7 @@ __all__ = [
     "PermissionsConfig",
     "build_policy",
 ]
+
+# Exposed (single-underscore) for the floor-contract test that pins every
+# engineer skill tool as permitted at every mode. Not re-exported in `__all__`
+# (it's an internal taxonomy constant), but importable by name.
