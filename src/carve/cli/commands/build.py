@@ -9,7 +9,11 @@ from rich.console import Console
 from rich.markup import escape as _escape
 
 from carve.cli.orchestrator import build_plan
-from carve.cli.orchestrator.builder import BuildError
+from carve.cli.orchestrator.builder import (
+    BuildError,
+    ConfigDriftError,
+    PlanExpiredError,
+)
 from carve.cli.orchestrator.observers import RichConsoleObserver
 from carve.core.agents.exceptions import AgentError
 from carve.core.config import ConfigError, load_config
@@ -120,6 +124,21 @@ def command(
             )
         finally:
             observer.close()
+    except ConfigDriftError as exc:
+        # Drift is its own exit code (3) and its own remediation: re-plan
+        # against current config. Caught before the generic BuildError
+        # since it subclasses it.
+        console.print(f"[red]✗ Config drift:[/red] {exc}")
+        console.print(
+            "[yellow]Re-plan against current config:[/yellow] "
+            f'carve plan --refine {_escape(plan_id)} "<same goal>"  '
+            "(or `carve plan` afresh), then build the new plan."
+        )
+        raise typer.Exit(code=3) from exc
+    except PlanExpiredError as exc:
+        # Expiry is a plan-state error → the generic exit code 2.
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(code=2) from exc
     except BuildError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=2) from exc
@@ -138,13 +157,24 @@ def command(
             console.print(artifact.summary.strip())
         raise typer.Exit(code=1)
 
-    console.print(f"[green]✓[/green] Built pipeline [bold]{_escape(artifact.pipeline_name)}[/bold]")
+    # An idempotent no-op carries an empty run id (no build agent ran).
+    is_noop = not artifact.run_id
+    if is_noop:
+        console.print(
+            "[green]✓[/green] Plan already built against unchanged config — "
+            f"nothing to do (reused build [bold]"
+            f"{_escape(artifact.build_id) if artifact.build_id else '(none)'}[/bold])."
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] Built pipeline [bold]{_escape(artifact.pipeline_name)}[/bold]"
+        )
     console.print(f"  Plan:           {_escape(artifact.plan_id)}")
     console.print(f"  Target:         {_escape(artifact.target)}")
     console.print(
         f"  Build id:       {_escape(artifact.build_id) if artifact.build_id else '(none)'}"
     )
-    console.print(f"  Build run id:   {_escape(artifact.run_id)}")
+    console.print(f"  Build run id:   {_escape(artifact.run_id) if artifact.run_id else '(no-op)'}")
     console.print("  Files written:")
     for path in artifact.files_written:
         console.print(f"    - {path}")

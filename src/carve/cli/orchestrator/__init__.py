@@ -12,6 +12,8 @@ the typer harness.
 from carve.cli.orchestrator.builder import (
     BuildArtifact,
     BuildError,
+    ConfigDriftError,
+    PlanExpiredError,
     build_plan,
 )
 from carve.cli.orchestrator.listing import (
@@ -34,7 +36,9 @@ from carve.cli.orchestrator.runner import (
 __all__ = [
     "BuildArtifact",
     "BuildError",
+    "ConfigDriftError",
     "PlanArtifact",
+    "PlanExpiredError",
     "PlanGenerationError",
     "build_plan",
     "generate_plan",

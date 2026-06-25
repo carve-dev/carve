@@ -39,6 +39,8 @@ A Plan is a durable artifact persisted to `.carve/plans/<plan_id>.json` **and** 
 
 `carve build <plan_id>` materializes an approved Plan's task graph into files (dlt code, `pipelines/<name>.toml`, dbt models when the [dbt-engineer](./dbt-engineer.md) is in play), emits the `post_build` hook ([extensibility](./extensibility.md)), and records a **`Build`** row with a **`manifest_json`** listing every file written. A pipeline's **`current_build_id`** points at its most recent successful Build (what [deploy](./deploy.md) promotes, what [runtime](./runtime.md) runs). Build is **idempotent** (re-building the same Plan against unchanged config is a no-op). `carve plan-and-build "<goal>"` is the one-shot convenience (plan, then immediately build — for trusted/CI flows).
 
+> **Updated during implementation (2026-06-25):** the `post_build` **emitter is owned by this capability's builder** and is **wired in plan-build Unit 2** (the live orchestrator/synthesis unit). [Extensibility](./extensibility.md) shipped the *subscription* seam (`HookRegistry`/`events.py`); `POST_BUILD` is in `DEFERRED_EMITTER_EVENTS` so `HookRegistry.emit` deliberately *raises* until an owner fires it (the extensibility delivery spec assigned the emitter to "build/pipelines = Incr 3"). Unit 1's builder records the `Build`/`current_build_id`/idempotency but does **not** yet emit `post_build`; Unit 2 lifts `POST_BUILD` out of the deferred set and fires it here. See [DELIVERY.md](../DELIVERY.md) → *Current state* for the recorded ownership decision.
+
 ### Config-hash drift check (the safety net)
 
 Every Plan carries the `config_hash` it was generated against. **Build refuses to run a Plan whose `config_hash` no longer matches current config** (`carve.toml`/component refs moved since plan time) — exit `3`, with a clear "re-plan against current config" message. Deploy ([deploy](./deploy.md)) does the analogous pre-flight (exit `4` on target drift). This is the per-verb hash gate (ARCHITECTURE §7.6) that keeps "plan now, build later" safe.
@@ -48,13 +50,13 @@ Every Plan carries the `config_hash` it was generated against. **Build refuses t
 - **Unit (Plan entity):** a plan persists to `.carve/plans/<id>.json` + a `plans` row with task graph, file diffs, exact LLM cost, runtime estimate, `config_hash`, `expires_at`; an expired plan is rejected by build.
 - **Unit (synthesis/cost):** the Plan's cost equals the sum of the subagents' `DelegationResult` usage; the runtime estimate composes from `expected_outputs`; **no warehouse-dollar figure** is emitted.
 - **Unit (refine chain):** `plan --refine` sets `parent_plan_id`; the chain is walkable.
-- **Integration (build materializes):** `carve build <plan_id>` writes exactly the Plan's file set, records a `Build` with `manifest_json`, updates `current_build_id`, emits `post_build`; re-building unchanged config is a no-op.
+- **Integration (build materializes):** `carve build <plan_id>` writes exactly the Plan's file set, records a `Build` with `manifest_json`, updates `current_build_id`, emits `post_build`; re-building unchanged config is a no-op. *(The `post_build` emit lands in Unit 2 — see the §"The Build entity" callout; Unit 1's idempotency/manifest/`current_build_id` bullets are covered today.)*
 - **Integration (drift):** mutating `carve.toml` after plan then `carve build <plan_id>` fails with exit 3 (`config_hash` mismatch) and a re-plan message.
 
 ## Acceptance
 
 - A Plan is a **durable, reviewable artifact** (task graph + file diffs + exact LLM cost + runtime estimate + impact analysis + `config_hash`), persisted to disk + the `plans` table, refinable via `--refine`, expiring by default.
-- **`build` materializes a Plan into files** (recording a `Build` manifest + `current_build_id`), emits `post_build`, and is idempotent.
+- **`build` materializes a Plan into files** (recording a `Build` manifest + `current_build_id`), emits `post_build`, and is idempotent. *(The `post_build` emit is this capability's responsibility against extensibility's shipped subscription seam, wired in Unit 2 — see the §"The Build entity" callout.)*
 - **The config-hash drift check** refuses to build a Plan against drifted config (exit 3).
 - The `plan` / `build` / `plan-and-build` verbs + `/plans` + `/builds` services are owned here (the [rest-api](./rest-api.md) routers wire onto them).
 

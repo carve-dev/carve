@@ -15,6 +15,7 @@ from carve.cli.commands import (
     mcp_servers,
     pipelines,
     plan,
+    plan_and_build,
     runs,
     serve,
     version,
@@ -87,6 +88,7 @@ def _main_callback(
 app.command(name="init")(init.command)
 app.command(name="plan")(plan.command)
 app.command(name="build")(build.command)
+app.command(name="plan-and-build")(plan_and_build.command)
 app.command(name="deploy")(deploy.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)
