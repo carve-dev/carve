@@ -655,6 +655,8 @@ Plan / ask / build / run / deploy as code-level workflows. Complements PRD §6.3
 
 ### 7.6 Drift detection (the config hash)
 
+> **Lean plan/build (2026-06-25):** the per-verb hash gate below is one of the three things the Plan entity is reserved for (alongside the up-front cost/impact estimate and the non-conversational plan-now-build-later surface) — the *interactive* review gate is the harness's `plan` mode and the *durable diff/PR* is git/deploy's. See the [lean plan/build ADR](_strategy/2026-06-lean-plan-build.md) and the [plan-build capability](capabilities/plan-build.md).
+
 Plans, Builds, and Deploys carry a `config_hash` computed at creation time, over: `carve.toml`, `carve/connections.toml`, `carve/runtime.toml`, `carve/agents/*.md`, `carve/hooks.toml`, `carve/conventions.md`, and the agent + skill source files in `src/carve/` (plans know which agent version generated them).
 
 | Action                | Hash check vs       | On drift           |

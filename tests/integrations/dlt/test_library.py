@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.agents.tools import ToolExecutionError
 from carve.core.skills.packs import load_skill_pack
 from carve.integrations.dlt.library import make_dlt_library_tool
@@ -194,6 +195,65 @@ def test_copy_requires_name_and_dest(tmp_path: Path) -> None:
         tool.executor({"op": "copy", "dest_path": "el/hn"})
     with pytest.raises(ToolExecutionError):
         tool.executor({"op": "copy", "name": "_reference_hackernews"})
+
+
+# --- copy is mode-gated (fail-closed below build) --------------------------
+
+
+def test_copy_denied_below_build(tmp_path: Path) -> None:
+    """`copy` writes into el/ and is fail-closed below build (like sql writes).
+
+    The harness gate admits `dlt_library` by name in every mode; the copy
+    authority lives in the tool, so a PLAN/READ_ONLY child gets a clear
+    ToolExecutionError instead of a write.
+    """
+    sources = _make_corpus(tmp_path)
+    proj = _project(tmp_path / "proj")
+    for mode in (PermissionMode.READ_ONLY, PermissionMode.PLAN):
+        tool = make_dlt_library_tool(sources, project_dir=proj, library_commit="abc1234", mode=mode)
+        with pytest.raises(ToolExecutionError, match="build mode"):
+            tool.executor({"op": "copy", "name": "_reference_hackernews", "dest_path": "el/hn"})
+        # The write never happened.
+        assert not (proj / "el" / "hn").exists()
+
+
+def test_copy_allowed_at_build(tmp_path: Path) -> None:
+    """At build the copy runs and lays the source into el/."""
+    sources = _make_corpus(tmp_path)
+    proj = _project(tmp_path / "proj")
+    tool = make_dlt_library_tool(
+        sources, project_dir=proj, library_commit="abc1234", mode=PermissionMode.BUILD
+    )
+    out = tool.executor({"op": "copy", "name": "_reference_hackernews", "dest_path": "el/hn"})
+    assert out["library_name"] == "_reference_hackernews"
+    assert (proj / "el" / "hn" / "__init__.py").is_file()
+
+
+def test_list_and_lookup_run_at_plan(tmp_path: Path) -> None:
+    """list/lookup are pure reads — available even at PLAN (read floor)."""
+    sources = _make_corpus(tmp_path)
+    proj = _project(tmp_path / "proj")
+    tool = make_dlt_library_tool(
+        sources, project_dir=proj, library_commit="abc1234", mode=PermissionMode.PLAN
+    )
+    listed = tool.executor({"op": "list"})
+    assert {p["name"] for p in listed["packs"]} == {"_reference_hackernews", "widgets"}
+    looked = tool.executor({"op": "lookup", "query": "hacker news"})
+    assert any(m["name"] == "_reference_hackernews" for m in looked["matches"])
+
+
+def test_copy_default_mode_is_permissive(tmp_path: Path) -> None:
+    """The default mode (no `mode=`) is the most permissive — copy runs.
+
+    Back-compat for the many direct-construction call sites that exercise copy
+    without threading a mode; the orchestrator threads the clamped child mode.
+    """
+    sources = _make_corpus(tmp_path)
+    proj = _project(tmp_path / "proj")
+    tool = make_dlt_library_tool(sources, project_dir=proj, library_commit="abc1234")
+    out = tool.executor({"op": "copy", "name": "_reference_hackernews", "dest_path": "el/hn"})
+    assert (proj / "el" / "hn" / "__init__.py").is_file()
+    assert out["library_commit"] == "abc1234"
 
 
 # --- binder precondition + skill-pack validity -----------------------------

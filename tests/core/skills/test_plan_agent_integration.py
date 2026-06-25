@@ -55,11 +55,21 @@ def _response(*, content: list[Any], stop_reason: str) -> SimpleNamespace:
 
 
 def _client_returning(*responses: Any) -> MagicMock:
+    """Mock client recording only the plan-agent calls.
+
+    Unit 2 sub-slice A made `generate_plan` classify a fresh goal first. These
+    integration fixtures assert the M1 plan flow, so the classifier's
+    constrained call (pinned `tool_choice`) is answered with a no-classification
+    response — forcing the unchanged M1 fallback — and is not recorded in
+    `client.calls`, so `calls[0]` stays the plan agent's first call.
+    """
     client = MagicMock()
     snapshots: list[dict[str, Any]] = []
     response_iter = iter(responses)
 
     def _create(**kwargs: Any) -> Any:
+        if "tool_choice" in kwargs:
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="unrouted")])
         snapshots.append(copy.deepcopy(kwargs))
         return next(response_iter)
 

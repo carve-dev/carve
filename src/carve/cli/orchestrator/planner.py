@@ -38,12 +38,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from carve.cli.orchestrator.cost_rollup import roll_up_cost
+from carve.cli.orchestrator.cost_rollup import compose_runtime_estimate, roll_up_cost
+from carve.cli.orchestrator.delegation_run import run_single_engine
 from carve.cli.orchestrator.extensibility_wiring import (
     build_extensibility_hooks,
     build_skill_pack_tool,
-    resolve_agent_or_fallback,
 )
+from carve.cli.orchestrator.goal_classifier import GoalClassificationError
 from carve.core.agents import (
     AgentLoop,
     AgentObserver,
@@ -59,6 +60,7 @@ from carve.core.agents import (
 from carve.core.agents.delegation import DelegationResult
 from carve.core.agents.loop import TokenUsage
 from carve.core.agents.permissions.modes import PermissionMode
+from carve.core.agents.routing import NoAgentMatch
 from carve.core.config import Config
 from carve.core.connectors.exceptions import SnowflakeError
 from carve.core.connectors.snowflake import SnowflakePool
@@ -219,6 +221,30 @@ def generate_plan(
                 '`carve plan "<goal>"` to design a new pipeline.'
             )
 
+    # Unit-2 sub-slice A: live single-engine routing. For a fresh goal (no
+    # refinement / pipeline-modify context the engineers don't yet consume),
+    # classify the goal and — when a declarative engine matches — run it live,
+    # building the Plan from its real `DelegationResult`. An unclassifiable goal
+    # (or one matching no engine) falls through to the unchanged monolithic M1
+    # plan flow below, preserving the M1 extract-load behavior + every Unit-1
+    # test. Single engine only — no decomposition, no fan-out.
+    if parent_plan_row is None and pipeline_name is None:
+        routed = _try_routed_plan(
+            goal=goal,
+            config=config,
+            project_dir=project_dir,
+            client=anthropic_client,
+            model=model,
+            plan_id=plan_id,
+            max_turns=max_turns,
+            user_destination=_resolve_user_destination(
+                goal=goal, destination_hint=destination_hint
+            ),
+        )
+        if routed is not None:
+            routed.file_path = _persist_artifact(routed, project_dir, repository)
+            return routed
+
     capture = SubmitPlanCapture()
     # Build one SnowflakePool per invocation; share it with both the
     # run_snowflake_query tool and the SkillContext so they hit the same
@@ -235,18 +261,6 @@ def generate_plan(
     # runtime by adding the content-injection lookup tool to the agent's
     # tool list. Discovery is inert (no bundled script runs at load).
     tools.append(build_skill_pack_tool(project_dir=project_dir, paths=config.paths))
-
-    # Extensibility (spec 16): route through the classification router. With
-    # no classification the router falls back to None — the M1 plan flow is
-    # preserved unchanged — but the seam is live, so a declarative agent
-    # that matches would be selected here before delegating.
-    _routed_agent = resolve_agent_or_fallback(
-        project_dir=project_dir,
-        paths=config.paths,
-        classification=None,
-    )
-    if _routed_agent is not None:
-        logger.debug("Router selected agent %r for plan flow.", _routed_agent)
 
     # Extensibility (spec 16): load carve/hooks.toml and clamp the hook
     # runner to the plan flow's mode. A missing file yields no hooks. Hooks
@@ -718,6 +732,16 @@ def _coerce_str_list(value: Any, *, fallback: list[str]) -> list[str]:
     return list(fallback)
 
 
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    """Return ``value`` as a dict, or an empty dict when it isn't one.
+
+    Used for the design's ``dependencies`` / ``expected_outputs`` sub-objects:
+    a non-dict (or absent) value degrades to ``{}`` so the impact analysis +
+    runtime estimate stay well-formed rather than carrying junk.
+    """
+    return dict(value) if isinstance(value, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Plan-id generation
 # ---------------------------------------------------------------------------
@@ -774,6 +798,231 @@ def _persist_artifact(
     )
     repository.save_plan(plan_row)
     return file_path
+
+
+# ---------------------------------------------------------------------------
+# Live single-engine routing (Unit 2 sub-slice A)
+# ---------------------------------------------------------------------------
+
+
+def _try_routed_plan(
+    *,
+    goal: str,
+    config: Config,
+    project_dir: Path,
+    client: Any,
+    model: str,
+    plan_id: str,
+    max_turns: int,
+    user_destination: dict[str, str],
+) -> PlanArtifact | None:
+    """Run the goal through a live single engine, or ``None`` to fall back.
+
+    Classifies + routes via :func:`run_single_engine`, which delegates at
+    ``parent_mode=PLAN`` so the engineer runs in **design capacity** (no code
+    authored). On a *successful* design the engine's real
+    :class:`DelegationResult` is rolled up through the Unit-1 ``roll_up_cost``
+    seam and its ``outputs`` are captured into a reviewable :class:`PlanArtifact`.
+
+    Falls back to the unchanged monolithic M1 plan flow (returns ``None``) in
+    two cases, on one consistent contract:
+
+    * a :class:`GoalClassificationError` / :class:`NoAgentMatch` — a clean
+      no-route (an unclassifiable goal still works); or
+    * a non-``"succeeded"`` :class:`DelegationResult` — the engineer ran out of
+      turns, returned prose without ``submit_result``, or self-reported
+      ``failed``/``needs_user_input``. We do NOT persist that as a ``drafted``
+      Plan with a fabricated name; the M1 path can still synthesize a real,
+      reviewable design for the goal. (Falling back is cleaner than raising:
+      it mirrors the no-route branch and keeps the verb working.)
+
+    Single engine only: exactly one ``DelegationResult`` fed as a single-element
+    rollup. No decomposition, no fan-out (sub-slice B).
+    """
+    try:
+        result = run_single_engine(
+            goal,
+            config=config,
+            project_dir=project_dir,
+            client=client,
+            model=model,
+            parent_mode=PermissionMode.PLAN,
+            max_turns=max_turns,
+        )
+    except (GoalClassificationError, NoAgentMatch) as exc:
+        # A clean no-route: fall back to the M1 path (preserves the M1
+        # extract-load flow while the engines mature; keeps Unit-1 tests green).
+        logger.debug("Goal not routed to a declarative engine (%s); using M1 path.", exc)
+        return None
+
+    # A routed engine that did not *succeed* in design capacity (it ran out of
+    # turns, returned prose without `submit_result`, or self-reported
+    # `failed`/`needs_user_input`) must NOT be persisted as a `drafted` Plan with
+    # a fabricated name — that was the masking bug. Fall back to the M1 path, the
+    # same contract as the no-route branch above (cleaner than raising: the M1
+    # flow can still produce a real, reviewable design for this goal).
+    if result.status != "succeeded":
+        logger.debug(
+            "Routed engine returned status=%r (not a usable design): %s; using M1 path.",
+            result.status,
+            result.result_summary,
+        )
+        return None
+
+    return _artifact_from_delegation(
+        result,
+        goal=goal,
+        plan_id=plan_id,
+        model=model,
+        config=config,
+        user_destination=user_destination,
+    )
+
+
+def _artifact_from_delegation(
+    result: DelegationResult,
+    *,
+    goal: str,
+    plan_id: str,
+    model: str,
+    config: Config,
+    user_destination: dict[str, str],
+) -> PlanArtifact:
+    """Build a reviewable :class:`PlanArtifact` from the engineer's DESIGN.
+
+    The routed engineer ran in **design capacity** (``parent_mode=PLAN`` —
+    read/design authority, no code authored), so it returns a DESIGN via
+    ``submit_result.outputs`` rather than authored files. The contract::
+
+        { "mode": "design", "strategy": str, "planned_files": [str],
+          "design_summary": str, "dependencies": {...},
+          "expected_outputs": {...} }
+
+    is captured into the Plan: ``planned_files`` becomes the Plan's **proposed
+    file manifest** (the "file diffs (what each subagent would write)") — an
+    EMPTY ``files_changed`` at plan is *correct*, so we never rely on it for the
+    manifest; ``strategy`` + ``design_summary`` become the reviewable design
+    summary; ``dependencies`` becomes the impact analysis; ``expected_outputs``
+    feeds the runtime estimate (via the shipped ``compose_runtime_estimate``,
+    routed through ``roll_up_cost``) and the impact's ``tables_created``. The
+    exact LLM cost + token totals roll up from the **single** live
+    ``DelegationResult``. A user-fixed destination is honored verbatim.
+    """
+    rollup = roll_up_cost([result])
+
+    outputs = result.outputs
+    expected_outputs = _coerce_dict(outputs.get("expected_outputs"))
+
+    submitted_name = _coerce_str(outputs.get("pipeline_name"), default="")
+    pipeline_name = _routed_pipeline_name(submitted_name, goal)
+
+    # The proposed file manifest — the heart of a reviewable plan. NEVER from
+    # `files_changed` (correctly empty at plan): from the design's planned_files.
+    planned_files = _coerce_str_list(outputs.get("planned_files"), fallback=[])
+
+    # The reviewable design summary: strategy + design_summary the engineer
+    # proposed, falling back to the result summary so the Plan is never hollow.
+    strategy = _coerce_str(outputs.get("strategy"), default="")
+    design_summary = _coerce_str(
+        outputs.get("design_summary"),
+        default=result.result_summary or "",
+    )
+    description = design_summary or strategy or result.result_summary or ""
+
+    requirements = _coerce_str_list(outputs.get("requirements"), fallback=[])
+
+    # Impact analysis: the engineer's dependency hints + which tables the build
+    # would create (from expected_outputs, when the engineer surfaced them).
+    impact: dict[str, Any] = {"dependencies": _coerce_dict(outputs.get("dependencies"))}
+    tables_created = _coerce_str_list(expected_outputs.get("tables_created"), fallback=[])
+    if tables_created:
+        impact["tables_created"] = tables_created
+
+    # Runtime estimate from the design's `expected_outputs` duration hints
+    # (the contract nests them there). `compose_runtime_estimate` reads hints
+    # off a result's `outputs`, so compose over a hint-bearing synthetic result
+    # whose `outputs` is `expected_outputs`; cost stays from the real rollup.
+    runtime = compose_runtime_estimate(
+        [
+            _delegation_result_from_loop(
+                result.usage,
+                model=model,
+                outputs=expected_outputs,
+            )
+        ]
+    )
+    runtime_estimate: dict[str, Any] = {
+        "first_run_seconds": runtime.first_run_seconds,
+        "subsequent_run_seconds": runtime.subsequent_run_seconds,
+        "summary": runtime.render(),
+    }
+
+    design: dict[str, Any] = {
+        "mode": "design",
+        "pipeline_name": pipeline_name,
+        "description": description,
+        "strategy": strategy,
+        "design_summary": design_summary,
+        "requirements": requirements,
+        # The proposed file manifest — what each subagent would write at build.
+        "planned_files": planned_files,
+        "impact": impact,
+        "runtime_estimate": runtime_estimate,
+        "engine_outputs": dict(outputs),
+        "result_summary": result.result_summary,
+        "status": result.status,
+    }
+    if user_destination:
+        design["destination"] = dict(user_destination)
+
+    now = _utcnow()
+    return PlanArtifact(
+        id=plan_id,
+        goal=goal,
+        design=design,
+        pipeline_name=pipeline_name,
+        description=description,
+        requirements=requirements,
+        parent_plan_id=None,
+        target_pipeline=None,
+        config_hash=config.config_hash,
+        carve_version=CARVE_VERSION,
+        tokens_input=rollup.usage.input_tokens,
+        tokens_output=rollup.usage.output_tokens,
+        cost_usd=rollup.cost_usd,
+        model=model,
+        created_at=now,
+        expires_at=now + timedelta(hours=24),
+    )
+
+
+def _routed_pipeline_name(submitted: str, goal: str) -> str:
+    """A valid pipeline name for a routed plan: the engine's, else derived.
+
+    The engineer's ``outputs.pipeline_name`` is preferred when it validates;
+    otherwise a name is derived from the goal so the Plan row + on-disk JSON
+    still carry a well-formed identifier (the routed engine's job is the diff,
+    not naming the artifact — naming firms up in a later increment).
+    """
+    if submitted:
+        try:
+            validate_artifact_name(submitted)
+            return submitted
+        except InvalidArtifactNameError:
+            logger.debug("Routed engine pipeline_name %r is invalid; deriving one.", submitted)
+    return _derive_pipeline_name(goal)
+
+
+def _derive_pipeline_name(goal: str) -> str:
+    """Derive a valid artifact name from free-text goal words (fallback)."""
+    words = re.findall(r"[a-z0-9]+", goal.lower())
+    candidate = "_".join(words[:4]) if words else "routed_plan"
+    candidate = candidate.strip("_") or "routed_plan"
+    try:
+        validate_artifact_name(candidate)
+    except InvalidArtifactNameError:
+        return "routed_plan"
+    return candidate
 
 
 # ---------------------------------------------------------------------------

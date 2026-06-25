@@ -70,18 +70,45 @@ def _response(
     )
 
 
+def _no_classification_response() -> SimpleNamespace:
+    """A model answer with no `classify_goal` tool call → forces the M1 fallback.
+
+    Unit 2 sub-slice A made `generate_plan` classify a fresh goal before the M1
+    plan loop. These M1 fixtures assert the *fallback* path (the engines don't
+    yet author the M1 design shape), so the helper feeds the classifier a
+    no-tool-call answer — `classify_goal` then raises `GoalClassificationError`
+    and `generate_plan` runs the unchanged monolithic M1 plan loop. The
+    classify call is served + recorded separately from the plan-agent calls, so
+    `client.calls[0]` remains the plan agent's first call for every fixture.
+    """
+    return SimpleNamespace(content=[_text_block("unrouted")])
+
+
 def _client_returning(*responses: Any) -> MagicMock:
-    """Mock Anthropic client that records `messages.create` snapshots."""
+    """Mock Anthropic client that records the plan-agent `messages.create` calls.
+
+    The classifier's one-shot call (identified by its pinned ``tool_choice``) is
+    answered with a no-classification response and is NOT recorded in
+    ``client.calls`` — so the M1 fallback numbers + ``calls[0]`` introspection
+    stay exactly as they were before live routing. ``responses`` feeds the M1
+    plan-agent loop, exactly as before.
+    """
     client = MagicMock()
     snapshots: list[dict[str, Any]] = []
+    classify_calls: list[dict[str, Any]] = []
     response_iter = iter(responses)
 
     def _create(**kwargs: Any) -> Any:
+        if "tool_choice" in kwargs:
+            # The goal classifier's constrained call — force the fallback.
+            classify_calls.append(copy.deepcopy(kwargs))
+            return _no_classification_response()
         snapshots.append(copy.deepcopy(kwargs))
         return next(response_iter)
 
     client.messages.create.side_effect = _create
     client.calls = snapshots
+    client.classify_calls = classify_calls
     return client
 
 
@@ -615,9 +642,12 @@ def test_submit_plan_called_twice_rejects_second_call(
     assert artifact.description == "first design"
     assert artifact.design["description"] == "first design"
 
-    # Only one messages.create was made — the terminator fired after
-    # the first turn, so the second mock response was never consumed.
-    assert client.messages.create.call_count == 1
+    # Only one plan-agent messages.create was made — the terminator fired after
+    # the first turn, so the second mock response was never consumed. (The
+    # classifier's separate one-shot call is recorded in `classify_calls`, not
+    # `calls`, so the M1 plan-loop count is unchanged at one.)
+    assert len(client.calls) == 1
+    assert len(client.classify_calls) == 1
 
 
 # ---------------------------------------------------------- observer threading

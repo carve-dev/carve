@@ -35,6 +35,7 @@ from typing import Any
 
 import yaml
 
+from carve.core.agents.permissions.modes import PermissionMode, mode_permits
 from carve.core.agents.tools import Tool, ToolExecutionError, ToolInput, ToolResult
 from carve.core.skills.pack_discovery import SkillPackLibrary
 from carve.core.skills.packs import SKILL_FILENAME, SkillPack
@@ -80,6 +81,7 @@ def make_dlt_library_tool(
     *,
     project_dir: Path,
     library_commit: str | None = None,
+    mode: PermissionMode = PermissionMode.DEPLOY,
     name: str = "dlt_library",
 ) -> Tool:
     """Build the ``dlt_library`` tool over the curated ``sources_dir`` corpus.
@@ -90,6 +92,16 @@ def make_dlt_library_tool(
     * ``library_commit`` — the corpus commit recorded in provenance; defaults to
       the repo HEAD SHA of ``sources_dir`` (``"unknown"`` if git is unavailable).
       Injectable so tests are deterministic and offline.
+    * ``mode`` — the active :class:`PermissionMode` the tool is built at. Like the
+      ``sql`` tool, the harness gate admits ``dlt_library`` by *name* in every
+      mode and never passes the mode to the executor, so the ``copy`` op's write
+      authority is enforced HERE: ``copy`` (which lays a source pack into
+      ``el/**``) is **fail-closed below build** — a ``ToolExecutionError`` below
+      ``build``, exactly how the ``sql`` tool fail-closes warehouse writes below
+      ``deploy``. ``list``/``lookup`` are pure reads and run in every mode.
+      Defaults to the most permissive (``deploy``) for back-compat; the
+      orchestrator threads the clamped ``child_mode`` so a PLAN child's ``copy``
+      is denied while ``list``/``lookup`` stay available.
 
     The produced ``Tool.name`` equals ``name`` (the grant name), satisfying the
     binder's ``injected.name == grant_name`` precondition.
@@ -113,6 +125,13 @@ def make_dlt_library_tool(
                 raise ToolExecutionError("op=lookup requires a non-empty 'query'.")
             return _lookup(_library(), query.strip())
         if op == "copy":
+            # Write op: fail-closed below build (the tool is admitted by name in
+            # every mode; the copy authority lives here, mirroring `sql`).
+            if not mode_permits(mode, PermissionMode.BUILD):
+                raise ToolExecutionError(
+                    f"dlt_library op=copy writes into el/ and requires build mode; "
+                    f"got {mode}. Use op=list / op=lookup to browse the library."
+                )
             return _copy(
                 _library(),
                 input_.get("name"),
