@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,46 @@ class BuildError(Exception):
     """Raised when a build can't proceed (bad plan state, etc.)."""
 
 
+class ConfigDriftError(BuildError):
+    """Raised when a Plan's ``config_hash`` no longer matches current config.
+
+    The Plan was generated against a ``carve.toml``/component-ref snapshot
+    that has since moved (the per-verb hash gate, ARCHITECTURE §7.6). The
+    build is refused regardless of ``--force`` — ``--force`` overrides
+    "already built", never "config moved underneath the plan". The CLI
+    maps this to exit code ``3`` and tells the user to re-plan.
+    """
+
+    def __init__(self, plan_id: str, *, plan_hash: str, current_hash: str) -> None:
+        self.plan_id = plan_id
+        self.plan_hash = plan_hash
+        self.current_hash = current_hash
+        super().__init__(
+            f"Plan {plan_id!r} was generated against config_hash "
+            f"{plan_hash!r}, but current config hashes to {current_hash!r}. "
+            "The config (carve.toml / component refs) drifted since plan "
+            "time. Re-plan against current config and rebuild."
+        )
+
+
+class PlanExpiredError(BuildError):
+    """Raised when a Plan's ``expires_at`` is in the past.
+
+    Plans expire (default 24h) so a stale "plan now, build much later"
+    can't silently materialise an out-of-date design. A plain plan-state
+    error — the CLI maps it to the generic exit code ``2`` (not the
+    drift-specific ``3``).
+    """
+
+    def __init__(self, plan_id: str, *, expires_at: datetime) -> None:
+        self.plan_id = plan_id
+        self.expires_at = expires_at
+        super().__init__(
+            f"Plan {plan_id!r} expired at {expires_at.isoformat()}. "
+            "Re-plan to build a fresh design."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -94,6 +135,7 @@ def build_plan(
     observer: AgentObserver | None = None,
     force: bool = False,
     destination_override: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> BuildArtifact:
     """Build the pipeline files described by ``plan_id``.
 
@@ -111,14 +153,28 @@ def build_plan(
         client: Optional pre-built Anthropic client (used in tests).
         max_turns: Cap on agent turns.
         observer: Optional progress observer.
-        force: When True, allow rebuilding a plan that's already in
-            ``phase='built'``. Default False refuses the rebuild and
-            tells the user to refine and re-build instead.
+        force: When True, allow re-running the build agent against a plan
+            that's already in ``phase='built'`` (a true rebuild). Default
+            False makes an unchanged-config rebuild a no-op (see below)
+            and otherwise refuses. ``--force`` never bypasses the drift
+            gate — it overrides "already built", not "config moved".
+        now: Injectable current time for the expiry check. Production
+            callers pass ``None`` (current UTC); tests force a time to
+            make an expired plan deterministic. Mirrors
+            ``repository.list_expired_plans(now=...)``.
 
     Raises:
+        ConfigDriftError: The plan's ``config_hash`` no longer matches
+            current config — refused regardless of ``--force`` (exit 3).
+        PlanExpiredError: The plan's ``expires_at`` is in the past.
         BuildError: Plan doesn't exist or is in the wrong phase without
             ``--force``.
         ConfigError: Anthropic API key missing.
+
+    The gate order is deliberate: **drift is checked before the
+    force/phase gate** so ``--force`` cannot smuggle a build past a moved
+    config. Idempotency short-circuits a no-op rebuild before the agent
+    ever runs.
     """
     # Local import to avoid a circular dependency: `carve.cli.main`
     # imports the command modules, which import this module.
@@ -131,6 +187,44 @@ def build_plan(
     if plan_row is None:
         raise BuildError(f"Plan {plan_id!r} not found.")
 
+    # 1. Config-hash drift gate — BEFORE the force/phase gate. The plan
+    #    carries the config_hash it was generated against; if current
+    #    config has moved, the design may reference connections/components
+    #    that no longer exist. `--force` does NOT bypass this — it
+    #    overrides "already built", never "config drifted".
+    if plan_row.config_hash != config.config_hash:
+        raise ConfigDriftError(
+            plan_id,
+            plan_hash=plan_row.config_hash,
+            current_hash=config.config_hash,
+        )
+
+    # 2. Expiry gate — a plan past its `expires_at` is refused so a stale
+    #    "plan now, build much later" can't materialise an out-of-date
+    #    design. `now` is injectable for deterministic tests.
+    current_time = now if now is not None else datetime.now(UTC)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=UTC)
+    plan_expires_at = _aware_utc(plan_row.expires_at)
+    if plan_expires_at < current_time:
+        raise PlanExpiredError(plan_id, expires_at=plan_expires_at)
+
+    # 3. Idempotent rebuild — re-building an already-built plan against
+    #    UNCHANGED config (drift already cleared above) with its recorded
+    #    file set still present on disk is a no-op: return the existing
+    #    build without re-running the agent or creating a duplicate Build
+    #    row. `--force` opts out and forces a true rebuild.
+    if plan_row.phase == "built" and not force:
+        existing = _idempotent_noop_artifact(plan_row, repository, project_dir)
+        if existing is not None:
+            logger.info(
+                "Plan %r already built against unchanged config; build is a no-op.",
+                plan_id,
+            )
+            return existing
+
+    # 4. Phase gate — a built plan with no reusable build (files missing,
+    #    no current build) still needs `--force` to re-run the agent.
     if plan_row.phase != "drafted" and not force:
         raise BuildError(
             f"Plan {plan_id!r} is already in phase {plan_row.phase!r}. "
@@ -331,6 +425,83 @@ def build_plan(
         tokens_input=agent_result.token_usage.input_tokens,
         tokens_output=agent_result.token_usage.output_tokens,
         cost_usd=agent_result.token_usage.cost_usd(config.models.default_model),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Drift / expiry / idempotency helpers
+# ---------------------------------------------------------------------------
+
+
+def _aware_utc(dt: datetime) -> datetime:
+    """Coerce a possibly-naive datetime to aware UTC for comparison.
+
+    Postgres ``TIMESTAMPTZ`` round-trips aware datetimes, but a row built
+    in a test with a naive ``expires_at`` would otherwise raise on the
+    ``<`` comparison. Treat naive as UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _idempotent_noop_artifact(
+    plan_row: Plan,
+    repository: Repository,
+    project_dir: Path,
+) -> BuildArtifact | None:
+    """Return the existing build as a no-op artifact, or ``None`` to rebuild.
+
+    The rebuild is a no-op only when the plan already settled on a
+    pipeline whose ``current_build_id`` Build manifest lists files that
+    all still exist on disk. Any gap (no pipeline, no current build, a
+    missing manifest file) returns ``None`` so the caller falls through
+    to a real rebuild. Drift was already cleared by the caller, so an
+    unchanged-config rebuild that reaches here is genuinely redundant.
+    """
+    pipeline_name = plan_row.pipeline_name
+    if pipeline_name is None:
+        return None
+    pipeline = repository.get_pipeline(pipeline_name)
+    if pipeline is None or pipeline.current_build_id is None:
+        return None
+    build = repository.get_build(pipeline.current_build_id)
+    if build is None or build.plan_id != plan_row.id:
+        # The current build belongs to a different plan (e.g. another plan
+        # rebuilt this pipeline). Re-running keeps this plan authoritative.
+        return None
+
+    manifest = build.manifest_json if isinstance(build.manifest_json, dict) else {}
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        return None
+    rel_files: list[str] = []
+    for entry in files:
+        if not isinstance(entry, str):
+            return None
+        if not (project_dir / entry).is_file():
+            # A manifest file is gone — the build is not reproducible as a
+            # no-op; fall through to a real rebuild.
+            return None
+        rel_files.append(entry)
+
+    pipeline_dir_rel = pipeline.pipeline_dir or f"el/{pipeline_name}"
+    return BuildArtifact(
+        plan_id=plan_row.id,
+        pipeline_name=pipeline_name,
+        pipeline_dir=pipeline_dir_rel,
+        target=build.target,
+        files_written=sorted(rel_files),
+        summary=(
+            f"Plan {plan_row.id} already built against unchanged config; "
+            f"reused build {build.id} (no-op)."
+        ),
+        run_id="",
+        success=True,
+        build_id=build.id,
+        tokens_input=0,
+        tokens_output=0,
+        cost_usd=0.0,
     )
 
 
@@ -750,4 +921,10 @@ def _changed_files(
     return changed
 
 
-__all__ = ["BuildArtifact", "BuildError", "build_plan"]
+__all__ = [
+    "BuildArtifact",
+    "BuildError",
+    "ConfigDriftError",
+    "PlanExpiredError",
+    "build_plan",
+]

@@ -336,13 +336,20 @@ def test_build_marks_failed_when_main_py_not_written(
     assert run.status == "failed"
 
 
-def test_build_refuses_built_plan_without_force(
+def test_rebuild_unchanged_config_is_noop_without_force(
     project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:
+    """Increment-3 Unit-1 change: re-building the same plan against
+    unchanged config (files present) is a NO-OP, not a ``--force``-gated
+    error. The prior M1.1 contract refused without ``--force``; this slice
+    narrows the phase gate so a clean re-run is idempotent (CI/`plan-and-
+    build` re-runs are safe). The dedicated idempotency suite lives in
+    ``test_build_idempotent.py``; this asserts the delta against the old
+    refuse-without-force behaviour."""
     config = _config(state_db=postgres_state_store_url)
     plan = _plant_drafted_plan(repository, plan_id="plan_20260101_000003_aaaaaa")
     # Build it once.
-    build_plan(
+    first = build_plan(
         plan_id=plan.id,
         config=config,
         project_dir=project_dir,
@@ -350,14 +357,18 @@ def test_build_refuses_built_plan_without_force(
         client=_client_returning(*_success_responses()),
     )
 
-    with pytest.raises(BuildError, match=r"already in phase"):
-        build_plan(
-            plan_id=plan.id,
-            config=config,
-            project_dir=project_dir,
-            repository=repository,
-            client=_client_returning(),
-        )
+    # A second build without --force is a no-op — it must NOT call the
+    # agent (the empty client would raise StopIteration if it did).
+    second = build_plan(
+        plan_id=plan.id,
+        config=config,
+        project_dir=project_dir,
+        repository=repository,
+        client=_client_returning(),
+    )
+    assert second.success is True
+    assert second.build_id == first.build_id
+    assert second.run_id == ""  # no build run for a no-op
 
 
 def test_build_force_rebuilds_a_built_plan(

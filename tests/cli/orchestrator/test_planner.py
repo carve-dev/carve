@@ -375,6 +375,50 @@ def test_refine_links_parent_and_threads_design_into_context(
     assert "Prior design" in system_prompt
 
 
+def test_refine_chain_is_walkable_across_two_hops(
+    project_dir: Path, repository: Repository, postgres_state_store_url: str
+) -> None:
+    """A grandchild -> child -> root chain is walkable via `parent_plan_id`.
+
+    Spec Tests §"refine chain": `plan --refine` sets `parent_plan_id`; the
+    chain is walkable. Two hops proves the walk follows the FK, not just a
+    single link.
+    """
+    config = _config(postgres_state_store_url)
+
+    def _plan(goal: str, parent_id: str | None) -> PlanArtifact:
+        client = _client_returning(
+            _response(
+                content=[_tool_use_block("submit_plan", _design(), tool_id="tu")],
+                stop_reason="tool_use",
+            ),
+            _response(content=[_text_block("ok")], stop_reason="end_turn"),
+        )
+        return generate_plan(
+            goal=goal,
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=client,
+            parent_plan_id=parent_id,
+        )
+
+    root = _plan("ingest the csv", None)
+    child = _plan("make it hourly", root.id)
+    grandchild = _plan("add a column", child.id)
+
+    # Walk the chain from the leaf back to the root via parent_plan_id.
+    chain: list[str] = []
+    cursor: str | None = grandchild.id
+    while cursor is not None:
+        chain.append(cursor)
+        row = repository.get_plan(cursor)
+        assert row is not None
+        cursor = row.parent_plan_id
+
+    assert chain == [grandchild.id, child.id, root.id]
+
+
 def test_refine_refuses_built_plan(
     project_dir: Path, repository: Repository, postgres_state_store_url: str
 ) -> None:

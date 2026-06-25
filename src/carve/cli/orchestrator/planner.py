@@ -38,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from carve.cli.orchestrator.cost_rollup import roll_up_cost
 from carve.cli.orchestrator.extensibility_wiring import (
     build_extensibility_hooks,
     build_skill_pack_tool,
@@ -55,6 +56,7 @@ from carve.core.agents import (
     make_run_snowflake_query_tool,
     make_submit_plan_tool,
 )
+from carve.core.agents.delegation import DelegationResult
 from carve.core.agents.loop import TokenUsage
 from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.config import Config
@@ -329,7 +331,23 @@ def generate_plan(
 
     now = _utcnow()
     expires = now + timedelta(hours=24)
-    cost = agent_result.token_usage.cost_usd(model)
+
+    # Route the cost/runtime synthesis through the cost_rollup seam. Today
+    # the plan flow runs ONE monolithic AgentLoop, so this is a single-
+    # element rollup over that loop's usage — the numbers are identical to
+    # `agent_result.token_usage.cost_usd(model)`. The seam exists so Unit
+    # 2's live per-subagent delegation can feed real `DelegationResult`s
+    # here and the rollup sums them with no change to this call site.
+    rollup = roll_up_cost(
+        [
+            _delegation_result_from_loop(
+                agent_result.token_usage,
+                model=model,
+                outputs=_runtime_hints_from_design(design),
+            )
+        ]
+    )
+    cost = rollup.cost_usd
     artifact = PlanArtifact(
         id=plan_id,
         goal=goal,
@@ -341,8 +359,8 @@ def generate_plan(
         target_pipeline=target_pipeline,
         config_hash=config.config_hash,
         carve_version=CARVE_VERSION,
-        tokens_input=agent_result.token_usage.input_tokens,
-        tokens_output=agent_result.token_usage.output_tokens,
+        tokens_input=rollup.usage.input_tokens,
+        tokens_output=rollup.usage.output_tokens,
         cost_usd=cost,
         model=model,
         created_at=now,
@@ -756,6 +774,56 @@ def _persist_artifact(
     )
     repository.save_plan(plan_row)
     return file_path
+
+
+# ---------------------------------------------------------------------------
+# Cost-rollup seam
+# ---------------------------------------------------------------------------
+
+
+def _delegation_result_from_loop(
+    usage: TokenUsage,
+    *,
+    model: str,
+    outputs: dict[str, Any],
+) -> DelegationResult:
+    """Wrap the monolithic loop's usage as a single ``DelegationResult``.
+
+    Lets the one-loop plan flow feed the same ``roll_up_cost`` seam that
+    Unit 2's live per-subagent delegation will. ``outputs`` carries any
+    runtime-duration hints parsed off the design so the runtime estimate
+    composes even before live engineers return ``expected_outputs``.
+    """
+    return DelegationResult(
+        status="succeeded",
+        result_summary="",
+        files_changed=[],
+        outputs=outputs,
+        usage=usage,
+        cost_usd=usage.cost_usd(model),
+    )
+
+
+def _runtime_hints_from_design(design: dict[str, Any]) -> dict[str, Any]:
+    """Lift any runtime-duration hints the plan agent placed in ``estimates``.
+
+    The plan agent may surface duration estimates under ``design.estimates``
+    (e.g. ``{"first_run_seconds": 1500}``). We pass through only numeric
+    values keyed by the names ``compose_runtime_estimate`` understands;
+    everything else is ignored so a free-form estimates block can't inject
+    junk into the rollup. Absent → empty dict → the estimate degrades to
+    "unknown" and the surface omits the line.
+    """
+    estimates = design.get("estimates")
+    if not isinstance(estimates, dict):
+        return {}
+    hints: dict[str, Any] = {}
+    for key, value in estimates.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            hints[key] = value
+    return hints
 
 
 # ---------------------------------------------------------------------------

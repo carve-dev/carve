@@ -34,10 +34,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from carve.core.config.schema import ComponentType
-from carve.integrations.component_locator import (
-    ComponentResolutionError,
-    resolve_component,
-)
 
 if TYPE_CHECKING:
     from carve.core.config.paths import ProjectPaths
@@ -426,8 +422,19 @@ def _validate_components_resolve(
     resolves to the single detected dbt project. Resolution delegates to
     the shipped locator — an unresolvable name is a validation error here
     (the logic the future ``carve pipelines validate`` calls).
+
+    The locator imports are deferred to this function body: importing them
+    at module top creates a ``core.config <-> integrations.component_locator``
+    import cycle (the locator imports ``core.config.schema``, whose package
+    ``__init__`` re-exports this module), which broke a bare
+    ``import carve.integrations.component_locator`` in a fresh interpreter.
+    Deferring the import here keeps the cycle from forming at import time.
     """
-    from carve.integrations.component_locator import _detect_dbt_project
+    from carve.integrations.component_locator import (
+        ComponentResolutionError,
+        _detect_dbt_project,
+        resolve_component,
+    )
 
     for step in pipeline.steps:
         if isinstance(step, SqlStepConfig):
