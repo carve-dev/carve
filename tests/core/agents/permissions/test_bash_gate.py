@@ -168,6 +168,59 @@ class TestDangerousFlagDeny:
         assert tier_bash_command("dbt compile", rules).tier == "allow"
 
 
+class TestCarveValidateAllowlisted:
+    """``carve pipelines validate`` is the pipeline engineer's verify command.
+
+    It is read-only schema+DAG validation (no writes / network), so it must
+    tier ``allow`` in every mode (the verify loop runs in ``read_only`` up
+    through ``build``). Other ``carve`` subcommands (``serve``, ``build``,
+    ``deploy``) are NOT allowlisted — they fall through to the table default
+    (deny on the floor / prompt-or-deny). Regression for the dead verify loop:
+    before ``carve`` was added to the subcommand-key set + the read allow tier,
+    the gate denied the validate command and the loop could never run.
+    """
+
+    @pytest.mark.parametrize(
+        "mode",
+        [PermissionMode.READ_ONLY, PermissionMode.PLAN, PermissionMode.BUILD],
+    )
+    def test_validate_allows_in_read_and_build(self, mode: PermissionMode) -> None:
+        rules = _build_rules(mode)
+        assert tier_bash_command("carve pipelines validate", rules).tier == "allow"
+        assert tier_bash_command("carve pipelines validate stripe", rules).tier == "allow"
+
+    def test_validate_allows_in_deploy(self) -> None:
+        rules = _build_rules(PermissionMode.DEPLOY)
+        assert tier_bash_command("carve pipelines validate", rules).tier == "allow"
+        assert tier_bash_command("carve pipelines validate stripe", rules).tier == "allow"
+
+    @pytest.mark.parametrize(
+        "command",
+        ["carve serve", "carve build", "carve deploy", "carve pipelines list"],
+    )
+    @pytest.mark.parametrize(
+        "mode",
+        [PermissionMode.READ_ONLY, PermissionMode.BUILD],
+    )
+    def test_other_carve_subcommands_not_allowed(self, command: str, mode: PermissionMode) -> None:
+        # Only `carve pipelines validate` is allowlisted; everything else `carve`
+        # falls through to the table default (deny on the read/build floor).
+        rules = _build_rules(mode)
+        assert tier_bash_command(command, rules).tier != "allow"
+
+    def test_carve_validate_through_gate_in_read_only_allows(self) -> None:
+        # End-to-end through the gate (read_only): the verify command the
+        # pipeline-engineer loop runs is admitted, no approver required.
+        gate = PermissionGate(build_policy(PermissionMode.READ_ONLY))
+        decision = gate.check("bash", {"command": "carve pipelines validate stripe"})
+        assert decision.outcome is Outcome.ALLOW
+
+    def test_carve_serve_through_gate_denied(self) -> None:
+        gate = PermissionGate(build_policy(PermissionMode.BUILD))
+        decision = gate.check("bash", {"command": "carve serve"})
+        assert decision.outcome is Outcome.DENY
+
+
 class TestScrubbedEnv:
     def test_printenv_anthropic_key_is_empty(self, tmp_path: Path) -> None:
         # Even with the key set in the parent process, the subprocess env

@@ -238,7 +238,7 @@ class TestAllowListInvariant:
         # Each entry must be either a known path-less builtin or a
         # subcommand of a flag-guarded multi-purpose tool.
         pathless = {"pwd", "echo", "which", "true", "false", "date", "printenv"}
-        guarded = set(DANGEROUS_BASH_FLAGS)  # {"git", "dbt", "dlt"}
+        guarded = set(DANGEROUS_BASH_FLAGS)  # {"git", "dbt", "dlt", "carve"}
         for entry in _READ_BASH_ALLOW:
             prog = entry.split(" ", 1)[0]
             assert entry in pathless or prog in guarded, (

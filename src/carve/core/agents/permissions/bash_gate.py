@@ -52,7 +52,7 @@ _METACHARACTERS: tuple[str, ...] = (
 # two-token ``"<prog> <subcommand>"`` key first, then fall back to the
 # bare program (so an unknown subcommand of an otherwise-known tool still
 # resolves via the program-level default rather than silently allowing).
-_SUBCOMMAND_PROGRAMS: frozenset[str] = frozenset({"git", "dbt", "dlt", "gh"})
+_SUBCOMMAND_PROGRAMS: frozenset[str] = frozenset({"git", "dbt", "dlt", "gh", "carve"})
 
 
 def _dangerous_flag(prog_base: str, argv: list[str]) -> str | None:
