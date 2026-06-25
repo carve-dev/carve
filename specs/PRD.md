@@ -144,6 +144,8 @@ This is a stronger position than "AI-assisted." It means the CLI's headline comm
 
 ### 5.4 Plan/build/run/deploy lifecycle
 
+> **Lean plan/build (2026-06-25):** the `terraform plan`/`apply` framing here is the heavyweight reading. Per the [lean plan/build ADR](_strategy/2026-06-lean-plan-build.md), the *interactive "review before code" gate* is the AI harness's `plan` permission mode, and the *durable, reviewable record of an authored change* is the git diff + PR (deploy). The **Plan entity is reserved for** the up-front cost/runtime/impact estimate, the config-hash drift gate, and the non-conversational (REST/MCP/CI/schedule) plan-now-build-later surface — see the [plan-build capability](capabilities/plan-build.md). Heavyweight pieces (refine chains, plan expiry, `plan-and-build`) are kept only where a use-case demands.
+
 Every change goes through a lifecycle modeled on `terraform plan`/`apply` but with more granularity. The **plan** is a serializable artifact with task graph, cost estimate, file diffs, and impact analysis. Plans can be saved, refined (`plan --refine`), diffed, and built later. **Build** writes code into the relevant component. **Run** executes against the dev target. **Deploy** promotes the component(s) plus the control-plane composition from dev to prod via a **configurable handoff** (files → commit → push → PR; default PR, push-button in hosted), with cross-repo **linked PRs** when a change spans a separate-repo component and the control plane (§6.8).
 
 The underlying primitive is always the four-stage lifecycle. Every stage is independently invocable via CLI, REST, or MCP — external agents can plan one day, refine the next, build a week later, and deploy after human review.
