@@ -15,6 +15,8 @@ Public surface:
 - :class:`HookRunner` — the gated/clamped/fail-closed executor.
 - :func:`build_tool_hooks` — the ``pre_tool``/``post_tool`` callables the
   ``AgentLoop`` accepts.
+- :func:`build_post_build_hook` — the ``post_build`` lifecycle callable the
+  build flow fires after a ``Build`` is recorded (plan-build Unit 2).
 """
 
 from carve.core.hooks.config import (
@@ -30,7 +32,11 @@ from carve.core.hooks.events import (
     HookRegistry,
 )
 from carve.core.hooks.runner import HookExecutionError, HookRunner
-from carve.core.hooks.wiring import build_tool_hooks
+from carve.core.hooks.wiring import (
+    LifecycleHook,
+    build_post_build_hook,
+    build_tool_hooks,
+)
 
 __all__ = [
     "EMITTED_EVENTS",
@@ -41,6 +47,8 @@ __all__ = [
     "HookRegistry",
     "HookRunner",
     "HookSpec",
+    "LifecycleHook",
+    "build_post_build_hook",
     "build_tool_hooks",
     "load_hooks_config",
     "parse_hooks_config",

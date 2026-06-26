@@ -29,6 +29,7 @@ from carve.cli.orchestrator.delegation_run import build_registry, run_engines
 from carve.cli.orchestrator.extensibility_wiring import (
     build_extensibility_hook_factory,
     build_extensibility_hooks,
+    build_extensibility_post_build_hook,
     build_skill_pack_tool,
     resolve_agent_or_fallback,
 )
@@ -52,6 +53,8 @@ from carve.core.agents.review_fan_out import (
     ReviewResult,
 )
 from carve.core.config import Config
+from carve.core.hooks.runner import HookExecutionError
+from carve.core.hooks.wiring import LifecycleHook
 from carve.core.state import Plan, Repository
 from carve.core.targets.names import (
     InvalidArtifactNameError,
@@ -141,6 +144,52 @@ class PlanExpiredError(BuildError):
         super().__init__(
             f"Plan {plan_id!r} expired at {expires_at.isoformat()}. "
             "Re-plan to build a fresh design."
+        )
+
+
+# ---------------------------------------------------------------------------
+# post_build emit (plan-build owns this emitter against extensibility's seam)
+# ---------------------------------------------------------------------------
+
+
+def _fire_post_build(
+    hook: LifecycleHook | None,
+    payload: dict[str, Any],
+    *,
+    plan_id: str,
+) -> None:
+    """Fire the ``post_build`` lifecycle hook AFTER the Build is recorded.
+
+    Plan-build owns the ``post_build`` emitter (extensibility ships only the
+    subscription seam). This fires the gated hook with ``payload``.
+
+    **Post-commit fail-closed contract** (the decision the slice pins, and
+    the one place it differs from a pre-action tool hook): ``post_build``
+    fires *after* the ``Build`` row + ``current_build_id`` are durably
+    committed, so a hook that raises CANNOT un-record the Build. The gate
+    still clamps/denies the command exactly as for a tool hook (a ``$()`` /
+    ``;`` command is denied at BUILD), but a hook that *raises at fire time*
+    — after passing the gate — is **surfaced (logged at error), not rolled
+    back**: the run stays ``success`` and the Build stands, because the
+    materialization genuinely happened. (A pre-action tool hook, by
+    contrast, aborts the action — there is nothing committed yet to keep.)
+    """
+    if hook is None:
+        return
+    try:
+        hook(payload)
+    except HookExecutionError as exc:
+        # Post-commit: the Build is already recorded and the run is already
+        # success. Surface the failing post_build hook loudly, but do NOT
+        # flip the run to failed or delete the Build — the materialization
+        # stands. This is the deliberate divergence from the pre-action
+        # tool-hook abort.
+        logger.error(
+            "post_build hook for plan %r failed after the Build was recorded "
+            "(build_id=%s); the Build stands. Hook error: %s",
+            plan_id,
+            payload.get("build_id"),
+            exc,
         )
 
 
@@ -463,6 +512,30 @@ def build_plan(
     )
     repository.update_run_status(run_id, "success")
 
+    # post_build emit (plan-build Unit 2): the Build is now durably recorded
+    # (Build row + current_build_id + plan built + run success), so fire the
+    # `post_build` hook — gated at BUILD, post-commit fail-closed (a raising
+    # hook is logged but the Build stands). A missing hooks.toml → None → no
+    # hook; a malformed one already aborted fail-closed at the tool-hook
+    # build above (build_extensibility_hooks), so we never reach here on a
+    # bad config.
+    post_build_hook = build_extensibility_post_build_hook(
+        project_dir=project_dir,
+        paths=config.paths,
+        mode=PermissionMode.BUILD,
+    )
+    _fire_post_build(
+        post_build_hook,
+        {
+            "pipeline_name": pipeline_name,
+            "build_id": build.id,
+            "target": active_target,
+            "plan_id": plan_id,
+            "files": files_written_rel,
+        },
+        plan_id=plan_id,
+    )
+
     return BuildArtifact(
         plan_id=plan_id,
         pipeline_name=pipeline_name,
@@ -581,6 +654,15 @@ def _build_multi_engine(
         project_dir=project_dir,
         paths=config.paths,
         approver=None,
+    )
+    # post_build emit (plan-build Unit 2): build the lifecycle hook at this same
+    # fail-closed boundary (before any delegation) so a malformed hooks.toml
+    # still aborts here — it is NOT re-read mid-success-branch. A missing file →
+    # None → no hook. Fired only after the Build is recorded, below.
+    post_build_hook = build_extensibility_post_build_hook(
+        project_dir=project_dir,
+        paths=config.paths,
+        mode=PermissionMode.BUILD,
     )
 
     try:
@@ -713,6 +795,24 @@ def _build_multi_engine(
         raise BuildError(
             f"Build of plan {plan_id!r} failed during review/persistence: {exc}"
         ) from exc
+
+    # post_build emit (plan-build Unit 2): fired OUTSIDE the persistence `try`
+    # — the Build is durably recorded and the run is already `success`. A
+    # raising hook is post-commit (logged in `_fire_post_build`, the Build
+    # stands); firing it here keeps that raise from ever reaching the `except`
+    # above that would otherwise flip the run to `failed`. The gate clamp/deny
+    # is still enforced (the hook runs at BUILD).
+    _fire_post_build(
+        post_build_hook,
+        {
+            "pipeline_name": pipeline_name,
+            "build_id": build.id,
+            "target": active_target,
+            "plan_id": plan_id,
+            "files": authored,
+        },
+        plan_id=plan_id,
+    )
 
     return _multi_engine_artifact(
         plan_id=plan_id,

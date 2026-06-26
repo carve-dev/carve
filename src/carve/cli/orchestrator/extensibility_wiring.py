@@ -16,6 +16,11 @@ flow, the build flow, and delegated subagents all wire identically:
   factory: build the ``(pre, post)`` for a single, fixed mode. The plan
   flow (``plan``) and the build flow (``build``) call this directly because
   their loop runs at exactly one mode and never re-clamps.
+* :func:`build_extensibility_post_build_hook` — the **lifecycle** sibling:
+  load the same ``hooks.toml`` (same fail-closed boundary) and return the
+  single ``post_build`` callable the build flow fires after a ``Build`` is
+  recorded, gated at ``BUILD``. This is plan-build's emitter for
+  extensibility's ``post_build`` subscription seam.
 * :func:`build_skill_pack_tool` — the ``lookup_skill_pack`` content
   -injection tool, so description-matched packs are discoverable at
   runtime.
@@ -52,7 +57,12 @@ from carve.core.agents.tools import Tool
 from carve.core.config.schema import PathsConfig
 from carve.core.hooks.config import HookConfigError, HookSpec, load_hooks_config
 from carve.core.hooks.runner import HookRunner
-from carve.core.hooks.wiring import ToolHook, build_tool_hooks
+from carve.core.hooks.wiring import (
+    LifecycleHook,
+    ToolHook,
+    build_post_build_hook,
+    build_tool_hooks,
+)
 from carve.core.skills.pack_discovery import discover_pack_roots
 
 logger = logging.getLogger(__name__)
@@ -66,6 +76,27 @@ logger = logging.getLogger(__name__)
 HookFactory = Callable[[PermissionMode], tuple[ToolHook | None, ToolHook | None]]
 
 
+def _load_hook_specs_fail_closed(project_dir: Path, paths: PathsConfig) -> list[HookSpec]:
+    """Parse ``carve/hooks.toml`` once, fail-closed — the shared loader boundary.
+
+    Resolves ``hooks.toml`` at ``project_dir / paths.hooks_file`` and parses
+    it eagerly with :func:`load_hooks_config`. A **missing file yields no
+    hooks** (``[]``, never raises); a **present-but-malformed file is
+    fail-closed** (:class:`HookConfigError` propagates). Both the tool-hook
+    factory and the ``post_build`` lifecycle builder go through this one
+    boundary so the malformed-config abort is identical across them.
+    """
+    hooks_path = (project_dir / paths.hooks_file).resolve()
+    try:
+        return load_hooks_config(hooks_path)
+    except HookConfigError:
+        # Fail-closed: a present-but-malformed hooks.toml is a configuration
+        # error the run must surface, not swallow. (A *missing* file already
+        # returns [] inside load_hooks_config — that path never raises.)
+        logger.error("Malformed hooks config at %s; aborting run.", hooks_path)
+        raise
+
+
 def build_extensibility_hook_factory(
     *,
     project_dir: Path,
@@ -75,10 +106,9 @@ def build_extensibility_hook_factory(
     """Load ``carve/hooks.toml`` once and return a mode-clamping hook factory.
 
     Resolves ``hooks.toml`` at ``project_dir / paths.hooks_file`` and parses
-    it **eagerly** with :func:`load_hooks_config` (so a malformed file is
-    surfaced *here*, fail-closed, before any loop runs). A **missing file
-    yields no hooks**: the returned factory then produces ``(None, None)``
-    at every mode.
+    it **eagerly** (so a malformed file is surfaced *here*, fail-closed,
+    before any loop runs). A **missing file yields no hooks**: the returned
+    factory then produces ``(None, None)`` at every mode.
 
     The returned factory builds, per call, a :class:`HookRunner` over a
     :class:`PermissionGate` for ``build_policy(mode)`` — so every hook
@@ -92,15 +122,7 @@ def build_extensibility_hook_factory(
     :class:`HookConfigError` propagates so the run surfaces the bad config
     rather than silently dropping the hook set.
     """
-    hooks_path = (project_dir / paths.hooks_file).resolve()
-    try:
-        specs: list[HookSpec] = load_hooks_config(hooks_path)
-    except HookConfigError:
-        # Fail-closed: a present-but-malformed hooks.toml is a configuration
-        # error the run must surface, not swallow. (A *missing* file already
-        # returns [] inside load_hooks_config — that path never raises.)
-        logger.error("Malformed hooks config at %s; aborting run.", hooks_path)
-        raise
+    specs = _load_hook_specs_fail_closed(project_dir, paths)
 
     def _factory(
         mode: PermissionMode,
@@ -140,6 +162,37 @@ def build_extensibility_hooks(
         project_dir=project_dir, paths=paths, approver=approver
     )
     return factory(mode)
+
+
+def build_extensibility_post_build_hook(
+    *,
+    project_dir: Path,
+    paths: PathsConfig,
+    mode: PermissionMode = PermissionMode.BUILD,
+    approver: Approver | None = None,
+) -> LifecycleHook | None:
+    """Build the ``post_build`` lifecycle hook from ``carve/hooks.toml``.
+
+    The lifecycle analogue of :func:`build_extensibility_hooks`: load the
+    hooks config once (through the same fail-closed boundary the tool-hook
+    factory uses), build a :class:`HookRunner` over a
+    :class:`PermissionGate` for ``build_policy(mode)`` (``BUILD`` by
+    default — the build flow's mode), and return
+    :func:`~carve.core.hooks.wiring.build_post_build_hook` over the parsed
+    specs. A ``post_build`` hook command therefore runs through the **same
+    bash gate** at BUILD a build-flow tool call would.
+
+    A **missing file yields no hook** (``None`` — the build flow skips the
+    call); a **malformed file is fail-closed** (the :class:`HookConfigError`
+    propagates so the bad config aborts the run rather than silently
+    dropping the hook).
+    """
+    specs = _load_hook_specs_fail_closed(project_dir, paths)
+    if not specs:
+        return None
+    gate = PermissionGate(build_policy(mode))
+    runner = HookRunner(gate=gate, project_dir=project_dir, approver=approver)
+    return build_post_build_hook(specs, runner)
 
 
 def build_skill_pack_tool(
@@ -224,6 +277,7 @@ __all__ = [
     "HookFactory",
     "build_extensibility_hook_factory",
     "build_extensibility_hooks",
+    "build_extensibility_post_build_hook",
     "build_skill_pack_tool",
     "resolve_agent_or_fallback",
 ]
