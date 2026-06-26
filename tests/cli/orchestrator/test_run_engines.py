@@ -147,6 +147,42 @@ def test_run_engines_routes_each_sub_goal_in_order(tmp_path: Path) -> None:
         assert call["task"] == sub_goal.sub_goal
 
 
+def test_run_engines_at_build_delegates_in_build_capacity(tmp_path: Path) -> None:
+    """At `parent_mode=BUILD`, each engineer runs in BUILD capacity (it authors).
+
+    The B2 wiring: `_capacity_for(BUILD) == "build"`, so the engineers' "Plan vs
+    Build capacity" sections take the *author real files* branch. This is the
+    complement of the PLAN→"design" case above — the only behavioral change B2
+    makes to the B1 delegation path.
+    """
+    config = _config()
+    runner = _RecordingRunner(
+        {
+            "dlt-engineer": _result("authored stripe", cost=0.05),
+            "dbt-engineer": _result("authored staging", cost=0.03),
+        }
+    )
+    sub_goals = [
+        SubGoal(sub_goal="ingest the Stripe API", classification="new_pipeline"),
+        SubGoal(sub_goal="stage it with dbt", classification="new_model"),
+    ]
+
+    run_engines(
+        sub_goals,
+        config=config,
+        project_dir=tmp_path,
+        client=_SequencedClient([]),
+        model="claude-opus-4-8",
+        runner=runner,  # type: ignore[arg-type]
+        parent_mode=PermissionMode.BUILD,
+    )
+
+    # Each child ran at BUILD in BUILD capacity — the authoring signal.
+    for call in runner.calls:
+        assert call["parent_mode"] == PermissionMode.BUILD
+        assert call["context"]["capacity"] == "build"
+
+
 def test_run_engines_empty_list_returns_empty(tmp_path: Path) -> None:
     """An empty decomposition yields no results (nothing routed)."""
     config = _config()

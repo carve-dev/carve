@@ -267,6 +267,28 @@ def run_engines(
     return results
 
 
+def _capacity_for(parent_mode: PermissionMode) -> str:
+    """Map the delegation ``parent_mode`` to the engineer's *capacity* signal.
+
+    The engineers' "Plan vs Build capacity" sections key off the ``capacity``
+    context key: ``"design"`` ⇒ read/design only (return a DESIGN via
+    ``submit_result.outputs``, author nothing); ``"build"`` (or the key absent)
+    ⇒ author and verify real files. The orchestrator derives that signal from
+    the mode it is delegating at:
+
+    * ``PLAN`` ⇒ ``"design"`` — the plan-side B1 contract, unchanged: a plan is
+      design-only, no code authored, so ``files_changed`` stays EMPTY.
+    * ``BUILD`` ⇒ ``"build"`` — the build-side B2 contract: the engineer authors
+      its real slice, and ``files_changed`` is the harness-tracked authored set.
+
+    Any other parent_mode falls back to ``"design"`` (the conservative read-only
+    signal): a narrower-than-PLAN delegation never grants authoring, so signalling
+    DESIGN matches the actual clamp. This is the single place the B1 design-capacity
+    wiring generalizes for build — PLAN callers are byte-identical to before.
+    """
+    return "build" if parent_mode == PermissionMode.BUILD else "design"
+
+
 def _delegate_engine(
     sub_goal: SubGoal,
     *,
@@ -274,14 +296,13 @@ def _delegate_engine(
     runner: SubagentRunner,
     parent_mode: PermissionMode,
 ) -> DelegationResult:
-    """Route one ``SubGoal`` to its engineer and delegate (sync, design capacity).
+    """Route one ``SubGoal`` to its engineer and delegate (sync, mode-derived capacity).
 
     The shared per-engine leg both :func:`run_single_engine` and
     :func:`run_engines` call: :func:`select_agent` resolves the classification
-    to an agent name, the typed design context is assembled, and the goal slice
-    is delegated SYNC at ``parent_mode``. Extracting it keeps the single-engine
-    and multi-engine paths one implementation — ``run_single_engine`` is the
-    N=1 case.
+    to an agent name, the typed context is assembled, and the goal slice is
+    delegated SYNC at ``parent_mode``. Extracting it keeps the single-engine and
+    multi-engine paths one implementation — ``run_single_engine`` is the N=1 case.
     """
     agent_name = select_agent(registry, classification=sub_goal.classification)
     logger.debug(
@@ -293,15 +314,17 @@ def _delegate_engine(
 
     # Typed context bundle — named keys only, never a transcript (the runner
     # enforces context isolation; this is the orchestrator's deliberate share).
-    # `capacity="design"` signals the engineer it runs in DESIGN capacity (this
-    # delegation always runs at parent_mode=PLAN — read/design authority, no code
-    # authored). The engineer prompts read this key to return a DESIGN via
-    # `submit_result.outputs` instead of authoring + verifying files (that is a
-    # build-time behavior). `files_changed` is therefore correctly EMPTY at plan.
+    # `capacity` is derived from `parent_mode` (PLAN ⇒ "design", BUILD ⇒ "build")
+    # so the SAME helper serves both halves of plan/build: at PLAN the engineer
+    # returns a DESIGN via `submit_result.outputs` and authors nothing
+    # (`files_changed` is correctly EMPTY); at BUILD it authors + verifies its
+    # real slice and `files_changed` is the harness-tracked authored set. The
+    # mode clamp inside `SubagentRunner.run` remains the authoritative boundary;
+    # `capacity` only tells the engineer which job it is doing.
     context = {
         "goal_slice": sub_goal.sub_goal,
         "classification": sub_goal.classification,
-        "capacity": "design",
+        "capacity": _capacity_for(parent_mode),
     }
     return delegate(
         agent_name,
