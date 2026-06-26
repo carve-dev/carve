@@ -163,6 +163,102 @@ def make_write_file_tool(project_dir: Path) -> Tool:
 
 
 # ---------------------------------------------------------------------------
+# write_file (path-allow-listed variant)
+# ---------------------------------------------------------------------------
+#
+# A second, distinct `write_file` factory that layers a per-call resolved-path
+# ALLOW-LIST on top of the project-root containment guard above. The recovery
+# agent (`recovery/agent.py`) is the live consumer: it binds the resolved
+# `el/<name>/{main.py,requirements.txt,snowflake.sql}` set so the agent can
+# only patch the failing pipeline's own files. Defense-in-depth — the plain
+# one-arg `make_write_file_tool` above does NOT take an allow-list; do not
+# collapse the two.
+#
+# (Rehomed verbatim from the retired `tools/extract_load_tools.py` when the M1
+# extract-load agent was deleted; behavior — resolved-path containment +
+# allow-list membership check before any disk I/O, same error messages — is
+# preserved byte-for-byte.)
+
+
+ALLOWLISTED_WRITE_FILE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {
+            "type": "string",
+            "description": (
+                "Path relative to the project root. Must be one of the "
+                "three allowed sub-paths under el/<artifact>/."
+            ),
+        },
+        "content": {
+            "type": "string",
+            "description": "Full file contents to write (UTF-8).",
+        },
+    },
+    "required": ["path", "content"],
+}
+
+
+def make_allowlisted_write_file_tool(
+    project_dir: Path,
+    allowed_paths: set[Path],
+) -> Tool:
+    """Build a path-allow-listed `write_file` tool.
+
+    ``allowed_paths`` is the set of resolved absolute paths the tool
+    will accept. Every resolved candidate is checked against this set
+    *before* any disk I/O. A request whose resolved path is not in the
+    set raises `ToolExecutionError` with a message naming the
+    permitted sub-paths so the agent can recover.
+
+    Defense-in-depth: requests are also resolved relative to
+    ``project_dir`` so absolute paths and ``..`` traversal both fail
+    the containment check before they reach the allow-list comparison.
+    """
+    project_root = project_dir.resolve()
+    allowed_resolved = {p.resolve() for p in allowed_paths}
+
+    def _execute(input_: ToolInput) -> ToolResult:
+        path = input_.get("path")
+        content = input_.get("content")
+        if not isinstance(path, str) or not path:
+            raise ToolExecutionError("`path` must be a non-empty string.")
+        if not isinstance(content, str):
+            raise ToolExecutionError("`content` must be a string.")
+
+        candidate = (project_root / path).resolve()
+        try:
+            candidate.relative_to(project_root)
+        except ValueError as exc:
+            raise ToolExecutionError(f"Path {path!r} is outside the project directory.") from exc
+
+        if candidate not in allowed_resolved:
+            permitted = sorted(str(p.relative_to(project_root)) for p in allowed_resolved)
+            raise ToolExecutionError(
+                f"Path {path!r} is not on the write allow-list. Allowed: {permitted}"
+            )
+
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            raise ToolExecutionError(f"Failed to write {path}: {exc}") from exc
+        return {"path": path, "bytes_written": len(content.encode("utf-8"))}
+
+    return Tool(
+        name="write_file",
+        description=(
+            "Write contents to one of the three allowed paths under "
+            "el/<artifact>/: main.py, requirements.txt, snowflake.sql. "
+            "Any other path is rejected. Creates parent directories as "
+            "needed; overwrites if the file exists."
+        ),
+        input_schema=ALLOWLISTED_WRITE_FILE_SCHEMA,
+        executor=_execute,
+    )
+
+
+# ---------------------------------------------------------------------------
 # run_snowflake_query
 # ---------------------------------------------------------------------------
 

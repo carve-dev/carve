@@ -14,6 +14,7 @@ import pytest
 from carve.core.agents.m1_tools import (
     _is_safe_select,
     build_m1_tools,
+    make_allowlisted_write_file_tool,
     make_read_file_tool,
     make_run_snowflake_query_tool,
     make_write_file_tool,
@@ -112,6 +113,89 @@ class TestWriteFile:
         tool = make_write_file_tool(tmp_path)
         with pytest.raises(ToolExecutionError, match="content"):
             tool.executor({"path": "x.txt", "content": 5})
+
+
+# ------------------------------------------------- write_file (allow-listed)
+#
+# The allow-listed factory was rehomed here from the retired
+# `extract_load_tools.py`; the recovery agent (`recovery/agent.py:444`) is
+# the live consumer that binds the `el/<name>/{main.py,requirements.txt}`
+# allow-list. These tests prove the defense-in-depth — resolved-path
+# containment + allow-list membership — survived the move.
+
+
+class TestAllowlistedWriteFile:
+    def test_accepts_on_list_path(self, tmp_path: Path) -> None:
+        allowed = (tmp_path / "el" / "iowa" / "main.py").resolve()
+        tool = make_allowlisted_write_file_tool(tmp_path, {allowed})
+        result = tool.executor({"path": "el/iowa/main.py", "content": "x = 1\n"})
+        assert allowed.read_text(encoding="utf-8") == "x = 1\n"
+        assert isinstance(result, dict)
+        assert result["path"] == "el/iowa/main.py"
+
+    def test_creates_parent_directories(self, tmp_path: Path) -> None:
+        allowed = (tmp_path / "el" / "iowa" / "requirements.txt").resolve()
+        tool = make_allowlisted_write_file_tool(tmp_path, {allowed})
+        tool.executor({"path": "el/iowa/requirements.txt", "content": "dlt\n"})
+        assert allowed.exists()
+
+    def test_rejects_off_list_path(self, tmp_path: Path) -> None:
+        allowed = (tmp_path / "el" / "iowa" / "main.py").resolve()
+        tool = make_allowlisted_write_file_tool(tmp_path, {allowed})
+        with pytest.raises(ToolExecutionError, match="not on the write allow-list"):
+            tool.executor({"path": "el/iowa/secret.py", "content": "x"})
+        assert not (tmp_path / "el" / "iowa" / "secret.py").exists()
+
+    def test_blocks_path_traversal(self, tmp_path: Path) -> None:
+        allowed = (tmp_path / "el" / "iowa" / "main.py").resolve()
+        tool = make_allowlisted_write_file_tool(tmp_path, {allowed})
+        with pytest.raises(ToolExecutionError, match="outside the project"):
+            tool.executor({"path": "../escape.txt", "content": "x"})
+
+    def test_empty_path_rejected(self, tmp_path: Path) -> None:
+        tool = make_allowlisted_write_file_tool(tmp_path, set())
+        with pytest.raises(ToolExecutionError, match="non-empty"):
+            tool.executor({"path": "", "content": "x"})
+
+    def test_non_string_content_rejected(self, tmp_path: Path) -> None:
+        allowed = (tmp_path / "el" / "iowa" / "main.py").resolve()
+        tool = make_allowlisted_write_file_tool(tmp_path, {allowed})
+        with pytest.raises(ToolExecutionError, match="content"):
+            tool.executor({"path": "el/iowa/main.py", "content": 5})
+
+
+# ------------------------------------------------- extract_load retirement
+#
+# The M1 hardcoded `extract_load` agent was retired in favor of the
+# declarative dlt-engineer on the harness. Its public symbols must no
+# longer resolve — this is the "the class disappears" guarantee.
+
+
+class TestExtractLoadRetirement:
+    def test_run_extract_load_agent_import_raises(self) -> None:
+        with pytest.raises(ImportError):
+            from carve.core.agents import (  # noqa: F401
+                run_extract_load_agent,
+            )
+
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "run_extract_load_agent",
+            "ExtractLoadResult",
+            "ExtractLoadAgentError",
+            "load_extract_load_agent_prompt",
+        ],
+    )
+    def test_el_symbol_gone_from_public_surface(self, symbol: str) -> None:
+        import carve.core.agents as agents_pkg
+
+        assert symbol not in agents_pkg.__all__
+        assert not hasattr(agents_pkg, symbol)
+
+    def test_extract_load_tools_module_gone(self) -> None:
+        with pytest.raises(ImportError):
+            import carve.core.agents.tools.extract_load_tools  # noqa: F401
 
 
 # --------------------------------------------------------- run_snowflake_query

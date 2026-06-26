@@ -1,7 +1,6 @@
 """Skill-pack discovery + description-match content injection.
 
-Mirrors the **shipped** progressive-disclosure pattern of
-``make_lookup_skill_tool`` (``agents/tools/extract_load_tools.py``):
+Follows a progressive-disclosure pattern:
 
 * packs are discovered up front (name + description only),
 * their instructions are **read from disk on demand** and stay **inert**

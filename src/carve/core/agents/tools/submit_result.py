@@ -4,9 +4,9 @@ A subagent ends its run by calling ``submit_result`` exactly once. The
 :class:`SubmitResultCapture` records the structured ``outputs`` payload;
 the :class:`SubagentRunner` reads it back into
 ``DelegationResult.outputs`` after the loop exits. This mirrors the
-shipped ``SubmitStepCapture`` / ``SubmitDiagnosisCapture`` pattern
-verbatim — a ``payload`` + a ``_called`` re-entrancy guard + a
-``make_*_tool`` factory wired via the loop's ``terminator_tool``.
+shipped ``SubmitDiagnosisCapture`` pattern verbatim — a ``payload`` + a
+``_called`` re-entrancy guard + a ``make_*_tool`` factory wired via the
+loop's ``terminator_tool``.
 
 Note the deliberate split of responsibilities: ``outputs`` is the
 agent's structured result (whatever its per-agent schema says), but the
@@ -57,7 +57,7 @@ SUBMIT_RESULT_SCHEMA: dict[str, Any] = {
 class SubmitResultCapture:
     """Captures the subagent's ``submit_result`` payload.
 
-    Same shape as ``SubmitStepCapture``: a stored ``payload`` and a
+    Same shape as ``SubmitDiagnosisCapture``: a stored ``payload`` and a
     ``_called`` guard so a second invocation in one turn is rejected.
     """
 
