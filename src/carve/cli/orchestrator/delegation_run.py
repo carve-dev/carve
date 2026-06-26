@@ -24,14 +24,19 @@ single-engine call:
    / ``usage`` / ``cost_usd`` flow into the Unit-1 ``roll_up_cost`` seam).
 
 Delegation stays **sync / sequential** (the harness invariant —
-``SubagentRunner.run`` blocks). Single engine only: exactly one classification
-→ one route → one ``DelegationResult``. Multi-goal decomposition + multi-engine
-synthesis is sub-slice B.
+``SubagentRunner.run`` blocks). :func:`run_single_engine` is the single-engine
+case: one classification → one route → one ``DelegationResult``. Sub-slice B
+adds :func:`run_engines`, which loops the *same* per-engine machinery over an
+already-decomposed ordered list of sub-goals (the runner is built once and
+threaded across all of them), yielding the N ``DelegationResult``s the planner
+merges into one Plan. Decomposition itself lives in the planner — this module
+runs an already-decomposed sequence, keeping "decide what" and "run it" apart.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +46,7 @@ from carve.cli.orchestrator.extensibility_wiring import (
 )
 from carve.cli.orchestrator.extra_tools import assemble_extra_tools
 from carve.cli.orchestrator.goal_classifier import classify_goal
+from carve.cli.orchestrator.goal_decomposer import SubGoal
 from carve.core.agents.delegation import DelegationResult, SubagentRunner, delegate
 from carve.core.agents.discovery import AgentDiscovery
 from carve.core.agents.permissions.gate import Approver
@@ -127,8 +133,6 @@ def run_single_engine(
         )
 
     classification = classify_goal(goal, client=client, model=model, registry=registry)
-    agent_name = select_agent(registry, classification=classification)
-    logger.debug("Routed goal to agent %r via classification %r.", agent_name, classification)
 
     if runner is None:
         runner = _build_runner(
@@ -143,6 +147,150 @@ def run_single_engine(
             hook_factory=hook_factory,
         )
 
+    # The single-engine route is the N=1 case: one classified slice run through
+    # the shared per-engine machinery (route + design-capacity delegate).
+    return _delegate_engine(
+        SubGoal(sub_goal=goal, classification=classification),
+        registry=registry,
+        runner=runner,
+        parent_mode=parent_mode,
+    )
+
+
+def run_engines(
+    sub_goals: Sequence[SubGoal],
+    *,
+    config: Config,
+    project_dir: Path,
+    client: Any,
+    model: str,
+    registry: SubagentRegistry | None = None,
+    runner: SubagentRunner | None = None,
+    hook_factory: HookFactory | None = None,
+    approver: Approver | None = None,
+    parent_mode: PermissionMode = PermissionMode.PLAN,
+    max_turns: int = 30,
+) -> list[DelegationResult]:
+    """Route + delegate each already-decomposed ``SubGoal`` in order (sync).
+
+    The multi-engine generalization of :func:`run_single_engine`: it takes an
+    **already-decomposed** ordered list of sub-goals (decomposition runs in the
+    planner — keeping "decide what" separate from "run it") and, for each,
+    :func:`select_agent` resolves the engineer and a SYNC :func:`delegate` at
+    ``parent_mode=PLAN`` (design capacity) returns one
+    :class:`DelegationResult`. The N results come back **in sub-goal order**.
+
+    Delegation stays **sync / sequential** — the harness invariant. The
+    :class:`SubagentRunner` is built **once** (one registry, one hook factory,
+    one runner) and threaded across all sub-goals; it is never rebuilt per
+    sub-goal. ``run_single_engine`` is exactly this over a 1-element list (it
+    classifies the single label first, then delegates through the same helper).
+
+    Args:
+        sub_goals: The ordered decomposition. An empty sequence yields ``[]``
+            (no engine ran) — the caller treats that as "nothing routed".
+        config: The fully-loaded :class:`Config`.
+        project_dir: The resolved project root.
+        client: A resolved Anthropic client; shared by every delegated child
+            loop. Injected for offline tests.
+        model: The default model id; the child's fallback when an agent pins no
+            ``model:`` tier.
+        registry: Optional pre-built registry; built via :func:`build_registry`
+            when omitted. The router resolves each sub-goal's classification
+            against it.
+        runner: Optional pre-built :class:`SubagentRunner` (a test seam). When
+            omitted, one is constructed once with the run's approver, the
+            extensibility hook factory, the model tiers, and the assembled
+            ``extra_tools`` — and reused for every sub-goal.
+        hook_factory: Optional pre-built extensibility hook factory. When the
+            planner already parsed ``carve/hooks.toml`` upstream (its fail-closed
+            boundary, established *before* the decompose LLM call), it threads the
+            factory in so the file is parsed exactly once; when omitted (and no
+            ``runner`` is injected) it is built here, preserving the same boundary
+            for direct callers.
+        approver: The run's interactive approver (``None`` headless).
+        parent_mode: The mode to delegate at; each child clamps to
+            ``min(parent_mode, capability)``. Defaults to ``PLAN`` (design-only).
+        max_turns: Cap on each child loop's turns.
+
+    Returns:
+        The N :class:`DelegationResult`s, in the sub-goals' order.
+
+    Raises:
+        NoAgentMatch: A sub-goal's classification matched no registered agent
+            (propagated; the planner falls back to the monolithic M1 path).
+    """
+    if not sub_goals:
+        return []
+
+    if registry is None:
+        registry = build_registry(project_dir, config)
+
+    # Build the extensibility hook factory FIRST (only when we'll construct the
+    # runner ourselves): it parses carve/hooks.toml eagerly, so a malformed file
+    # is fail-closed BEFORE any delegation — the same boundary the M1 plan flow
+    # promises. A missing file yields a no-op factory. (When a runner is
+    # injected — the test seam — we don't touch hooks here.) A caller that
+    # already parsed hooks upstream (the planner, before its decompose call)
+    # threads the factory in, so the file is parsed exactly once.
+    if runner is None:
+        if hook_factory is None:
+            hook_factory = build_extensibility_hook_factory(
+                project_dir=project_dir,
+                paths=config.paths,
+                approver=approver,
+            )
+        runner = _build_runner(
+            registry=registry,
+            config=config,
+            project_dir=project_dir,
+            client=client,
+            model=model,
+            approver=approver,
+            parent_mode=parent_mode,
+            max_turns=max_turns,
+            hook_factory=hook_factory,
+        )
+
+    # Sequential — the harness invariant (`SubagentRunner.run` blocks). One
+    # runner, one registry, threaded across every sub-goal; results in order.
+    results: list[DelegationResult] = []
+    for sub_goal in sub_goals:
+        results.append(
+            _delegate_engine(
+                sub_goal,
+                registry=registry,
+                runner=runner,
+                parent_mode=parent_mode,
+            )
+        )
+    return results
+
+
+def _delegate_engine(
+    sub_goal: SubGoal,
+    *,
+    registry: SubagentRegistry,
+    runner: SubagentRunner,
+    parent_mode: PermissionMode,
+) -> DelegationResult:
+    """Route one ``SubGoal`` to its engineer and delegate (sync, design capacity).
+
+    The shared per-engine leg both :func:`run_single_engine` and
+    :func:`run_engines` call: :func:`select_agent` resolves the classification
+    to an agent name, the typed design context is assembled, and the goal slice
+    is delegated SYNC at ``parent_mode``. Extracting it keeps the single-engine
+    and multi-engine paths one implementation — ``run_single_engine`` is the
+    N=1 case.
+    """
+    agent_name = select_agent(registry, classification=sub_goal.classification)
+    logger.debug(
+        "Routed sub-goal %r to agent %r via classification %r.",
+        _truncate(sub_goal.sub_goal),
+        agent_name,
+        sub_goal.classification,
+    )
+
     # Typed context bundle — named keys only, never a transcript (the runner
     # enforces context isolation; this is the orchestrator's deliberate share).
     # `capacity="design"` signals the engineer it runs in DESIGN capacity (this
@@ -151,17 +299,22 @@ def run_single_engine(
     # `submit_result.outputs` instead of authoring + verifying files (that is a
     # build-time behavior). `files_changed` is therefore correctly EMPTY at plan.
     context = {
-        "goal_slice": goal,
-        "classification": classification,
+        "goal_slice": sub_goal.sub_goal,
+        "classification": sub_goal.classification,
         "capacity": "design",
     }
     return delegate(
         agent_name,
-        goal,
+        sub_goal.sub_goal,
         context=context,
         parent_mode=parent_mode,
         runner=runner,
     )
+
+
+def _truncate(text: str, limit: int = 120) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _build_runner(
@@ -211,4 +364,4 @@ def _build_runner(
     )
 
 
-__all__ = ["build_registry", "run_single_engine"]
+__all__ = ["build_registry", "run_engines", "run_single_engine"]
