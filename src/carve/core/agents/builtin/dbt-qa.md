@@ -7,7 +7,7 @@ description: >
   relationships), convention adherence (naming, layout, tags, materializations
   vs the project's inferred conventions), and SQL quality. It REPORTS
   structured findings; it never edits.
-tools: [grep, glob, sql, read_file, dbt_manifest]
+tools: [grep, glob, sql, read_file, dbt_manifest, dbt_conventions]
 max_mode: read_only
 allowed_paths: []
 ---

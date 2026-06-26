@@ -1,4 +1,4 @@
-"""MemoryWriter.append_decision: format, dup guard, newest-first, invalidation."""
+"""MemoryWriter: append_decision + write_conventions (format, atomicity, cache)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from carve.core.config.paths import ProjectPaths
 from carve.core.memory.loader import MemoryLoader
 from carve.core.memory.writer import DecisionAlreadyExists, MemoryWriter
-from carve.init.templates import DECISIONS_MD_CONTENT
+from carve.init.templates import CONVENTIONS_MD_CONTENT, DECISIONS_MD_CONTENT
 
 
 def _scaffolded(root: Path) -> Path:
@@ -119,3 +119,89 @@ def test_format_example_in_template_is_not_treated_as_duplicate(tmp_path: Path) 
     writer.append_decision(
         date=date(2026, 7, 7), title="Short title", body="not the example", reviewers=[]
     )  # must not raise DecisionAlreadyExists
+
+
+# ---------------------------------------------------------------------------
+# write_conventions
+# ---------------------------------------------------------------------------
+
+
+def _scaffolded_conventions(root: Path) -> Path:
+    """A project with the comment-only conventions.md placeholder (as init writes)."""
+    (root / "carve").mkdir(parents=True, exist_ok=True)
+    conv = root / "carve" / "conventions.md"
+    conv.write_text(CONVENTIONS_MD_CONTENT, encoding="utf-8")
+    return conv
+
+
+def test_write_conventions_overwrites_placeholder(tmp_path: Path) -> None:
+    conv = _scaffolded_conventions(tmp_path)
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    path = writer.write_conventions("# Inferred project conventions\n\n- stg_ for staging\n")
+    assert path == conv
+    text = conv.read_text()
+    assert "Inferred project conventions" in text
+    # The comment-only placeholder is gone.
+    assert "Inferred project conventions land here" not in text
+
+
+def test_write_conventions_round_trips_through_loader(tmp_path: Path) -> None:
+    _scaffolded_conventions(tmp_path)
+    loader = MemoryLoader(ProjectPaths.from_root(tmp_path))
+    primed = loader.load_conventions()  # primes the cache (placeholder)
+    assert primed is not None
+    # The placeholder is comment-only (no real markdown heading yet).
+    assert "# Inferred project conventions" not in primed.contents
+
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path), loader)
+    body = "# Inferred project conventions\n\nstaging → view\n"
+    writer.write_conventions(body)
+    # Invalidation means the next read is fresh even within an mtime tick.
+    loaded = loader.load_conventions()
+    assert loaded is not None
+    assert loaded.contents == body
+
+
+def test_write_conventions_is_atomic_no_temp_left(tmp_path: Path) -> None:
+    _scaffolded_conventions(tmp_path)
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    writer.write_conventions("# C\n\nx\n")
+    # No stray .conventions-*.tmp sibling after a clean write.
+    leftovers = list((tmp_path / "carve").glob(".conventions-*.tmp"))
+    assert leftovers == [], leftovers
+
+
+def test_write_conventions_creates_carve_dir(tmp_path: Path) -> None:
+    """No pre-existing carve/ → the writer creates it (parents=True)."""
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    path = writer.write_conventions("# C\n\nx\n")
+    assert path.is_file()
+    assert path.parent.name == "carve"
+
+
+def test_write_conventions_rejects_empty(tmp_path: Path) -> None:
+    """An empty body would falsely signal 'no conventions inferred' — rejected."""
+    _scaffolded_conventions(tmp_path)
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    with pytest.raises(ValueError):
+        writer.write_conventions("   \n")
+
+
+def test_write_conventions_is_idempotent(tmp_path: Path) -> None:
+    _scaffolded_conventions(tmp_path)
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    body = "# Inferred project conventions\n\nstaging → view\n"
+    writer.write_conventions(body)
+    writer.write_conventions(body)  # second run is safe
+    assert (tmp_path / "carve" / "conventions.md").read_text() == body
+
+
+def test_write_conventions_does_not_touch_decisions(tmp_path: Path) -> None:
+    """The conventions write must not disturb append_decision's file."""
+    _scaffolded(tmp_path)
+    _scaffolded_conventions(tmp_path)
+    writer = MemoryWriter(ProjectPaths.from_root(tmp_path))
+    writer.append_decision(date=date(2026, 1, 1), title="D", body="x", reviewers=[])
+    writer.write_conventions("# C\n\nx\n")
+    decisions = (tmp_path / "carve" / "decisions.md").read_text()
+    assert "## 2026-01-01 — D" in decisions

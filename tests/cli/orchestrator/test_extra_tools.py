@@ -38,6 +38,7 @@ def test_expected_grant_names_present(tmp_path: Path) -> None:
         "rest_api_explore",
         "dbt_manifest",
         "dbt_source_lookup",
+        "dbt_conventions",
         "list_dbt_models",
         "list_components",
         "pipeline_inspect",

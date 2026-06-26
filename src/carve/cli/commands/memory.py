@@ -1,11 +1,11 @@
 """``carve memory`` — read and edit the project-memory files.
 
-Lean scope: ``show`` (list / print a file / print a pipeline's bundle), ``edit``
-(open a file in ``$EDITOR`` and write it directly), and ``append-decision``
-(append a dated entry to ``decisions.md`` — the one write that doesn't need the
-plan/build gate). Deferred (tracked): ``refresh`` (needs the convention-
-inference engine) and the reviewed plan/build promotion path for ``standards`` /
-sidecar edits.
+Scope: ``show`` (list / print a file / print a pipeline's bundle), ``edit``
+(open a file in ``$EDITOR`` and write it directly), ``append-decision`` (append a
+dated entry to ``decisions.md`` — a write that doesn't need the plan/build gate),
+and ``refresh`` (run the dbt convention-inference engine and write the inferred
+``conventions.md`` — the brownfield entry point). Deferred (tracked): the
+reviewed plan/build promotion path for ``standards`` / sidecar edits.
 """
 
 from __future__ import annotations
@@ -24,6 +24,14 @@ from carve.core.memory import (
     MemoryLoader,
     MemoryWriter,
     select_for_task,
+)
+from carve.integrations.component_locator import (
+    ComponentResolutionError,
+    _detect_dbt_project,
+)
+from carve.integrations.dbt.conventions import (
+    infer_conventions,
+    render_conventions_md,
 )
 
 console = Console()
@@ -236,4 +244,65 @@ def append_decision(
         raise typer.Exit(code=2) from exc
 
     console.print(f"[green]✓[/green] appended decision to {path}")
+    raise typer.Exit(code=0)
+
+
+@app.command(name="refresh")
+def refresh(
+    project_dir: Path = _PROJECT_DIR_OPTION,
+) -> None:
+    """Infer the dbt project's conventions and write ``conventions.md``.
+
+    The brownfield entry point: resolves the same-repo dbt project (root or one
+    level down), runs the convention-inference engine over its manifest + model
+    tree + ``dbt_project.yml``, and overwrites ``carve/conventions.md`` with the
+    inferred naming / layout / materialization / test conventions so the dbt
+    engineer authors in that style and dbt-qa flags departures from it.
+
+    No plan/build gate: conventions are Carve-derived facts about the project, and
+    re-running inference is always safe and idempotent.
+    """
+    resolved_dir = project_dir.resolve()
+    paths, loader = _loader(resolved_dir)
+
+    try:
+        dbt_root = _detect_dbt_project(paths, required=False)
+    except ComponentResolutionError as exc:
+        # Ambiguous (multiple projects) is the only raising case at required=False.
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if dbt_root is None:
+        console.print(
+            "[yellow]![/yellow] No dbt project found (looked at the root and one "
+            "level down). Nothing to infer.\n"
+            "  Run `carve init --with-dbt` to scaffold one, or add a dbt component."
+        )
+        raise typer.Exit(code=0)
+
+    conventions = infer_conventions(dbt_root)
+    markdown = render_conventions_md(conventions)
+
+    writer = MemoryWriter(paths, loader)
+    try:
+        path = writer.write_conventions(markdown)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if conventions.has_any:
+        layers = ", ".join(
+            layer
+            for layer in ("staging", "intermediate", "marts")
+            if conventions.layer(layer).present
+        )
+        console.print(
+            f"[green]✓[/green] inferred conventions from {dbt_root} "
+            f"({conventions.model_count} model(s); layers: {layers or 'none'}) → {path}"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] wrote {path} (no conventions detected yet — the dbt "
+            "project has no models)."
+        )
     raise typer.Exit(code=0)

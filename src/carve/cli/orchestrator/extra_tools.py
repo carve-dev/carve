@@ -41,6 +41,7 @@ from carve.core.config.schema import ComponentConfig
 from carve.core.connectors.duckdb import DIALECT as DUCKDB_DIALECT
 from carve.core.connectors.duckdb import DuckDBConnection
 from carve.core.sql.tool import ReadRunner, WriteRunner, make_sql_tool
+from carve.integrations.dbt.conventions import make_dbt_conventions_tool
 from carve.integrations.dbt.manifest import make_dbt_manifest_tool
 from carve.integrations.dbt.sources import make_dbt_source_lookup_tool
 from carve.integrations.dlt.library import make_dlt_library_tool
@@ -109,8 +110,9 @@ def assemble_extra_tools(
     Returns:
         A ``{grant_name: Tool}`` map covering ``sql``, ``dlt_library``,
         ``existing_dlt_inspect``, ``rest_api_explore``, ``dbt_manifest``,
-        ``dbt_source_lookup``, ``list_dbt_models``, ``list_components``,
-        ``pipeline_inspect`` — each ``Tool.name`` equal to its grant key.
+        ``dbt_source_lookup``, ``dbt_conventions``, ``list_dbt_models``,
+        ``list_components``, ``pipeline_inspect`` — each ``Tool.name`` equal to
+        its grant key.
     """
     resolved_paths = paths if paths is not None else ProjectPaths.from_root(project_dir)
     resolved_sources = sources_dir if sources_dir is not None else curated_sources_dir()
@@ -144,6 +146,7 @@ def assemble_extra_tools(
         "rest_api_explore": make_rest_api_explore_tool(),
         "dbt_manifest": make_dbt_manifest_tool(paths=resolved_paths),
         "dbt_source_lookup": make_dbt_source_lookup_tool(paths=resolved_paths),
+        "dbt_conventions": make_dbt_conventions_tool(paths=resolved_paths),
         "list_dbt_models": make_list_dbt_models_tool(paths=resolved_paths),
         "list_components": make_list_components_tool(
             paths=resolved_paths,

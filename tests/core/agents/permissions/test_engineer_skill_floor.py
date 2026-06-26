@@ -23,6 +23,7 @@ from carve.core.agents.loader import load_agent_file
 from carve.core.agents.permissions.gate import PermissionGate
 from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.agents.permissions.policy import (
+    _ALL_TOOLS,
     _SKILL_READ_TOOLS,
     AgentPolicy,
     build_policy,
@@ -96,19 +97,27 @@ def test_each_engineer_grants_at_least_one_read_skill() -> None:
         assert read_skills, f"{engineer} grants no floored read skill — floor untested"
 
 
-def test_skill_read_floor_covers_the_union_of_engineer_read_grants() -> None:
-    """Every engineer skill tool any built-in engineer grants is in the floor.
+def test_every_granted_tool_is_known_to_the_policy() -> None:
+    """Every tool a built-in engineer grants is a name the policy KNOWS.
 
-    The bug was a skill name granted but absent from the read floor. Assert the
-    floor is a superset of every skill-shaped grant across all engineers, so a
-    newly-granted skill that was forgotten in ``_SKILL_READ_TOOLS`` is caught
-    here even if no test enumerated it directly.
+    The bug class: a skill name granted in an engineer's ``tools:`` but absent
+    from ``_SKILL_READ_TOOLS`` — so it is in neither ``_READ_TOOLS`` nor
+    ``_ALL_TOOLS`` and the gate denies it in EVERY mode (``permitted ∩ grant``
+    drops it). The old version of this test computed "skill grants" as
+    ``grant & _SKILL_READ_TOOLS``, which pre-intersects the floor and so can
+    NEVER see the missing name — it was tautological and let ``dbt_conventions``
+    ship un-floored.
+
+    The robust contract: every granted name (minus the ``mcp:*`` wildcard, which
+    is resolved dynamically and is not a static policy tool) must be in
+    ``_ALL_TOOLS`` (the full known taxonomy = base tools plus ``_SKILL_READ_TOOLS``).
+    A granted skill forgotten in the floor is in neither and fails here.
     """
-    # Skill-shaped grant names = grant minus the base harness tools. We don't
-    # import the base sets (they're private); instead assert that every grant
-    # name we *believe* is an extra_tools skill is floored. The known extra_tools
-    # skill names are exactly _SKILL_READ_TOOLS, so a granted name that matches
-    # one of those must be floored — which holds by construction. The substantive
-    # check: each engineer's read skills ⊆ the floor.
     for engineer in _ENGINEERS:
-        assert _read_skills_in_grant(_grant(engineer)) <= _SKILL_READ_TOOLS
+        granted = {t for t in _grant(engineer) if not t.startswith("mcp:")}
+        unknown = granted - _ALL_TOOLS
+        assert not unknown, (
+            f"{engineer} grants tool(s) the policy doesn't know: {sorted(unknown)} "
+            f"— a skill granted but absent from _SKILL_READ_TOOLS is gate-denied "
+            f"at every mode (the #44 floor bug)."
+        )

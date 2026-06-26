@@ -1,0 +1,139 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "project_name": "shop"
+  },
+  "nodes": {
+    "model.shop.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "unique_id": "model.shop.stg_orders",
+      "package_name": "shop",
+      "path": "staging/stg_orders.sql",
+      "original_file_path": "models/staging/stg_orders.sql",
+      "schema": "shop_staging",
+      "database": "warehouse",
+      "tags": ["staging"],
+      "config": {"materialized": "view"},
+      "columns": {
+        "order_id": {"name": "order_id", "data_type": "integer"}
+      },
+      "depends_on": {"nodes": ["source.shop.shop.orders"]}
+    },
+    "model.shop.stg_customers": {
+      "resource_type": "model",
+      "name": "stg_customers",
+      "unique_id": "model.shop.stg_customers",
+      "package_name": "shop",
+      "path": "staging/stg_customers.sql",
+      "original_file_path": "models/staging/stg_customers.sql",
+      "schema": "shop_staging",
+      "database": "warehouse",
+      "tags": ["staging"],
+      "config": {"materialized": "view"},
+      "columns": {
+        "customer_id": {"name": "customer_id", "data_type": "integer"}
+      },
+      "depends_on": {"nodes": ["source.shop.shop.customers"]}
+    },
+    "model.shop.mart_revenue": {
+      "resource_type": "model",
+      "name": "mart_revenue",
+      "unique_id": "model.shop.mart_revenue",
+      "package_name": "shop",
+      "path": "marts/mart_revenue.sql",
+      "original_file_path": "models/marts/mart_revenue.sql",
+      "schema": "shop",
+      "database": "warehouse",
+      "tags": ["mart"],
+      "config": {"materialized": "table"},
+      "columns": {
+        "order_id": {"name": "order_id", "data_type": "integer"}
+      },
+      "depends_on": {"nodes": ["model.shop.stg_orders"]}
+    },
+    "model.shop.dim_customers": {
+      "resource_type": "model",
+      "name": "dim_customers",
+      "unique_id": "model.shop.dim_customers",
+      "package_name": "shop",
+      "path": "marts/dim_customers.sql",
+      "original_file_path": "models/marts/dim_customers.sql",
+      "schema": "shop",
+      "database": "warehouse",
+      "tags": ["mart"],
+      "config": {"materialized": "table"},
+      "columns": {
+        "customer_id": {"name": "customer_id", "data_type": "integer"}
+      },
+      "depends_on": {"nodes": ["model.shop.stg_customers"]}
+    },
+    "test.shop.not_null_stg_orders_order_id.a1": {
+      "resource_type": "test",
+      "name": "not_null_stg_orders_order_id",
+      "unique_id": "test.shop.not_null_stg_orders_order_id.a1",
+      "package_name": "shop",
+      "column_name": "order_id",
+      "test_metadata": {"name": "not_null"},
+      "depends_on": {"nodes": ["model.shop.stg_orders"]}
+    },
+    "test.shop.unique_stg_orders_order_id.a2": {
+      "resource_type": "test",
+      "name": "unique_stg_orders_order_id",
+      "unique_id": "test.shop.unique_stg_orders_order_id.a2",
+      "package_name": "shop",
+      "column_name": "order_id",
+      "test_metadata": {"name": "unique"},
+      "depends_on": {"nodes": ["model.shop.stg_orders"]}
+    },
+    "test.shop.not_null_stg_customers_customer_id.a3": {
+      "resource_type": "test",
+      "name": "not_null_stg_customers_customer_id",
+      "unique_id": "test.shop.not_null_stg_customers_customer_id.a3",
+      "package_name": "shop",
+      "column_name": "customer_id",
+      "test_metadata": {"name": "not_null"},
+      "depends_on": {"nodes": ["model.shop.stg_customers"]}
+    },
+    "test.shop.unique_stg_customers_customer_id.a4": {
+      "resource_type": "test",
+      "name": "unique_stg_customers_customer_id",
+      "unique_id": "test.shop.unique_stg_customers_customer_id.a4",
+      "package_name": "shop",
+      "column_name": "customer_id",
+      "test_metadata": {"name": "unique"},
+      "depends_on": {"nodes": ["model.shop.stg_customers"]}
+    },
+    "test.shop.relationships_dim_customers_customer_id.a5": {
+      "resource_type": "test",
+      "name": "relationships_dim_customers_customer_id",
+      "unique_id": "test.shop.relationships_dim_customers_customer_id.a5",
+      "package_name": "shop",
+      "column_name": "customer_id",
+      "test_metadata": {"name": "relationships"},
+      "depends_on": {"nodes": ["model.shop.dim_customers", "model.shop.stg_customers"]}
+    }
+  },
+  "sources": {
+    "source.shop.shop.orders": {
+      "resource_type": "source",
+      "name": "orders",
+      "unique_id": "source.shop.shop.orders",
+      "source_name": "shop",
+      "schema": "raw_shop",
+      "database": "warehouse",
+      "freshness": {"warn_after": {"count": 24, "period": "hour"}}
+    },
+    "source.shop.shop.customers": {
+      "resource_type": "source",
+      "name": "customers",
+      "unique_id": "source.shop.shop.customers",
+      "source_name": "shop",
+      "schema": "raw_shop",
+      "database": "warehouse",
+      "freshness": {"warn_after": {"count": 24, "period": "hour"}}
+    }
+  },
+  "parent_map": {},
+  "child_map": {}
+}

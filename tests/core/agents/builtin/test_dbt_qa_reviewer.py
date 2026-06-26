@@ -25,9 +25,10 @@ from carve.core.agents.permissions.modes import PermissionMode
 
 _QA_FILE = BUILTIN_AGENTS_DIR / "dbt-qa.md"
 
-# The dbt-qa reviewer reads the project graph (`dbt_manifest`) and the real
-# warehouse schema (`sql`), unlike dlt-qa — coverage checks need the manifest.
-_EXPECTED_TOOLS = ("grep", "glob", "sql", "read_file", "dbt_manifest")
+# The dbt-qa reviewer reads the project graph (`dbt_manifest`), the inferred
+# conventions (`dbt_conventions`), and the real warehouse schema (`sql`), unlike
+# dlt-qa — coverage + convention checks need the manifest + inferred record.
+_EXPECTED_TOOLS = ("grep", "glob", "sql", "read_file", "dbt_manifest", "dbt_conventions")
 
 
 def test_reviewer_file_exists_in_builtin_root() -> None:
@@ -62,6 +63,57 @@ def test_reviewer_has_sql_and_manifest_grants() -> None:
     agent = load_agent_file(_QA_FILE)
     assert "sql" in agent.tools
     assert "dbt_manifest" in agent.tools
+
+
+def test_reviewer_has_conventions_grant() -> None:
+    """dbt-qa reads the project's inferred conventions to flag departures."""
+    agent = load_agent_file(_QA_FILE)
+    assert "dbt_conventions" in agent.tools
+
+
+def test_dbt_qa_flags_model_violating_inferred_naming_convention() -> None:
+    """Integration (dbt-qa): a model violating the inferred naming convention is
+    flagged against the inferred record.
+
+    The reviewer's LLM renders the finding; this asserts the deterministic
+    substrate it relies on — the same ``dbt_conventions`` inference + the
+    ``check_naming_violation`` decision — flags a misnamed mart and passes a
+    conforming one, offline, against a fixture project's inferred conventions.
+    """
+    from pathlib import Path
+
+    from carve.integrations.dbt.conventions import (
+        check_naming_violation,
+        infer_conventions,
+        make_dbt_conventions_tool,
+    )
+
+    fixture = Path(__file__).parents[3] / "integrations" / "dbt" / "fixtures" / "brownfield_project"
+    # The reviewer would obtain this record via its `dbt_conventions` grant.
+    tool = make_dbt_conventions_tool(dbt_root=fixture)
+    assert tool.name == "dbt_conventions"
+    assert tool.executor({"op": "infer"})["present"] is True
+
+    conventions = infer_conventions(fixture)
+
+    # A mart not prefixed mart_/fct_/dim_ is flagged.
+    violation = check_naming_violation(
+        "revenue_rollup",
+        path="models/marts/revenue_rollup.sql",
+        conventions=conventions,
+    )
+    assert violation is not None
+    assert violation.layer == "marts"
+
+    # A conforming mart is NOT flagged (no false positive).
+    assert (
+        check_naming_violation(
+            "mart_revenue_v2",
+            path="models/marts/mart_revenue_v2.sql",
+            conventions=conventions,
+        )
+        is None
+    )
 
 
 def test_grant_lints_clean_at_read_only(caplog: pytest.LogCaptureFixture) -> None:

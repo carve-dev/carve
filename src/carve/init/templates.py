@@ -15,6 +15,7 @@ fresh project before `.env` exists. The state-store URL flows from the
 from __future__ import annotations
 
 import json
+import re
 
 from carve.init.plan import InitPlan
 
@@ -216,13 +217,121 @@ def render_connections_toml(default_target: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _dbt_project_slug(project_name: str) -> str:
+    """A dbt-project-name-safe slug (dbt names must be snake_case identifiers).
+
+    dbt rejects a project ``name`` with spaces/dashes (it must be a valid Python
+    identifier — letters, digits, underscores, not leading-digit). The display
+    project name is freeform, so derive a safe slug for ``dbt_project.yml`` and
+    the per-layer model-config key.
+    """
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", project_name.strip().lower()).strip("_")
+    if not slug or slug[0].isdigit():
+        slug = f"dbt_{slug}" if slug else "dbt_project"
+    return slug
+
+
 def render_dbt_project_yml(project_name: str) -> str:
-    """A minimal valid `dbt_project.yml` for `--with-dbt` greenfield scaffold."""
-    name = _toml_str(project_name)
+    """A `dbt_project.yml` with the staging/marts layout `--with-dbt` scaffolds.
+
+    Beyond name/version/profile, this declares the per-layer materialization
+    defaults the scaffolded layout uses (staging → view, marts → table) under the
+    project's model-config block, so the conventions Carve later *infers* from a
+    scaffolded project are real and consistent with the sample models.
+    """
+    slug = _dbt_project_slug(project_name)
+    name = _yaml_str(slug)
     return (
         f"name: {name}\n"
         "version: '1.0.0'\n"
         "config-version: 2\n"
         f"profile: {name}\n"
         'model-paths: ["models"]\n'
+        'seed-paths: ["seeds"]\n'
+        'test-paths: ["tests"]\n'
+        "\n"
+        "models:\n"
+        f"  {slug}:\n"
+        "    staging:\n"
+        "      +materialized: view\n"
+        "    marts:\n"
+        "      +materialized: table\n"
     )
+
+
+def _yaml_str(value: str) -> str:
+    """Quote ``value`` as a YAML double-quoted scalar (JSON is a YAML subset)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+# --- Greenfield dbt sample layout (staging + marts + tests) -----------------
+#
+# A self-contained, parse-valid starter: a staging model over a declared source,
+# a mart that `ref()`s it, and `_schema.yml` files carrying not_null/unique tests
+# on the grain. `ref()`/`source()` only (no hardcoded tables); no `select *` in
+# the mart. The user replaces these with real models, or runs `carve plan`.
+
+DBT_STG_SCHEMA_CONTENT = """\
+version: 2
+
+sources:
+  - name: raw
+    description: Replace with your real raw source (loaded by a dlt pipeline).
+    schema: raw
+    tables:
+      - name: orders
+
+models:
+  - name: stg_orders
+    description: Cleaned, typed orders staged from the raw source.
+    columns:
+      - name: order_id
+        description: Primary key for the order.
+        tests:
+          - not_null
+          - unique
+"""
+
+DBT_STG_MODEL_CONTENT = """\
+-- Staging model scaffolded by `carve init --with-dbt`.
+-- Stages the raw `orders` source: rename/type here, no business logic.
+-- Replace with your real staging logic, or run
+-- `carve plan "stage <your source>"` to have Carve author one.
+with source as (
+    select * from {{ source('raw', 'orders') }}
+)
+
+select
+    order_id,
+    customer_id,
+    order_total,
+    ordered_at
+from source
+"""
+
+DBT_MART_SCHEMA_CONTENT = """\
+version: 2
+
+models:
+  - name: mart_orders
+    description: One row per order for downstream analytics.
+    columns:
+      - name: order_id
+        description: Primary key for the order.
+        tests:
+          - not_null
+          - unique
+"""
+
+DBT_MART_MODEL_CONTENT = """\
+-- Mart model scaffolded by `carve init --with-dbt`.
+-- Builds on the staging layer via ref() — never a hardcoded table name.
+-- Replace with your real mart, or run
+-- `carve plan "add a <x> mart"` to have Carve author one.
+select
+    order_id,
+    customer_id,
+    order_total,
+    ordered_at
+from {{ ref('stg_orders') }}
+"""

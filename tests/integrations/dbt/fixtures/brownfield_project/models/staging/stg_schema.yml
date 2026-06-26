@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: shop
+    schema: raw_shop
+    freshness:
+      warn_after: {count: 24, period: hour}
+    loaded_at_field: _loaded_at
+    tables:
+      - name: orders
+      - name: customers
+
+models:
+  - name: stg_orders
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique

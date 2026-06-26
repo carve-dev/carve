@@ -1,12 +1,20 @@
 """Write project-memory files.
 
-Lean scope: only :meth:`MemoryWriter.append_decision`, which is the one write
-that is safe without the plan/build gate (it appends an immutable, dated record
-of a decision the team already made). The ``plan_id``-gated ``standards`` /
-sidecar writes are deferred — the Plan/Build state model can't yet express the
-spec's "plan exists and is built, not yet deployed" gate, and no plan/build
-flow produces a valid ``plan_id`` for a memory edit until that lands. Until
-then, `carve memory edit` writes the file directly.
+Two writes are safe without the plan/build gate:
+
+* :meth:`MemoryWriter.append_decision` — appends an immutable, dated record of a
+  decision the team already made.
+* :meth:`MemoryWriter.write_conventions` — overwrites the *inferred*
+  ``conventions.md`` with what `carve memory refresh` detected. Conventions are
+  Carve-derived facts about the existing project (not a reviewed team rule — that
+  is ``standards.md``), so refreshing them needs no plan/build gate; re-running
+  the inference is always safe and idempotent.
+
+The ``plan_id``-gated ``standards`` / sidecar writes remain deferred — the
+Plan/Build state model can't yet express the spec's "plan exists and is built,
+not yet deployed" gate, and no plan/build flow produces a valid ``plan_id`` for a
+memory edit until that lands. Until then, `carve memory edit` writes the file
+directly.
 """
 
 from __future__ import annotations
@@ -75,7 +83,41 @@ class MemoryWriter:
         entry = _format_entry(heading, body, reviewers)
         updated = _insert_newest_first(existing, entry)
 
-        _atomic_write(path, updated)
+        _atomic_write(path, updated, prefix=".decisions-")
+        if self._loader is not None:
+            self._loader.invalidate(path)
+        return path
+
+    def write_conventions(self, content: str, *, force: bool = False) -> Path:
+        """Overwrite ``carve/conventions.md`` with inferred ``content`` (atomic).
+
+        This is the **inferred-conventions** write: ``carve memory refresh`` runs
+        the dbt convention-inference engine and persists the rendered markdown
+        here, replacing the comment-only init placeholder. It is a full overwrite
+        (the file is regenerated, not appended) and idempotent — re-running
+        refresh is always safe.
+
+        ``force`` is unused today (refresh always overwrites); it is accepted to
+        mirror :meth:`append_decision`'s signature and reserve the flag for a
+        future "don't clobber a hand-edited conventions.md" guard. The
+        user-authored precedence layer lives in ``standards.md``, which this never
+        touches.
+
+        Raises :class:`ValueError` on empty ``content`` (an empty conventions file
+        would tell the agent "no conventions inferred" as fact — the same trap the
+        comment-only init placeholder avoids; the renderer always emits a
+        non-empty body, even for an empty project).
+        """
+        if not content.strip():
+            raise ValueError(
+                "Refusing to write an empty conventions.md (it would falsely "
+                "signal 'no conventions inferred'). The renderer always produces "
+                "a non-empty body."
+            )
+        _ = force  # reserved; refresh always overwrites
+        path = self._paths.carve_dir / "conventions.md"
+        body = content if content.endswith("\n") else content + "\n"
+        _atomic_write(path, body, prefix=".conventions-")
         if self._loader is not None:
             self._loader.invalidate(path)
         return path
@@ -128,14 +170,15 @@ def _insert_newest_first(existing: str, entry: str) -> str:
     return f"{head}{block}\n{tail}"
 
 
-def _atomic_write(path: Path, content: str) -> None:
+def _atomic_write(path: Path, content: str, *, prefix: str = ".memory-") -> None:
     """Write ``content`` to ``path`` atomically (temp file + ``os.replace``).
 
-    Prevents a crash/disk-full mid-write from truncating an existing
-    decisions.md: the swap is atomic within a filesystem.
+    Prevents a crash/disk-full mid-write from truncating an existing memory file:
+    the swap is atomic within a filesystem. ``prefix`` names the sibling temp
+    file so a stray temp is attributable to its writer.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".decisions-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=prefix, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
