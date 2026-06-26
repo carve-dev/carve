@@ -54,6 +54,7 @@ def test_agent_parses_frontmatter_and_body() -> None:
         "glob",
         "sql",
         "dbt_manifest",
+        "dbt_conventions",
     )
     assert "bash" not in agent.tools
     assert agent.allowed_paths == (

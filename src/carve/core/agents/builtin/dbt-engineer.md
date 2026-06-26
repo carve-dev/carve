@@ -7,7 +7,7 @@ description: >
   returns a reviewable Plan. It does NOT own dbt execution policy (that is
   dbt-execution's) and does NOT author dlt sources/pipelines (the dlt
   engineer's job); it emits dependency hints for those instead.
-tools: [edit, create_file, grep, glob, sql, dbt_manifest]
+tools: [edit, create_file, grep, glob, sql, dbt_manifest, dbt_conventions]
 allowed_paths: ["models/**", "tests/**", "snapshots/**", "**/*_schema.yml", "sources.yml", "dbt_project.yml"]
 max_mode: build
 classifications: [new_model, modify_model, add_tests, declare_source, refactor_models]
@@ -97,6 +97,11 @@ the parent's transcript). Use each field:
   exists, `model_columns` for a model's columns, `model_dependencies` for its
   `ref`/`source` edges, `tests_on_model` to see what is already tested. Read the
   real graph before you `ref` a model or assume a column.
+- **Read the project's inferred conventions with `dbt_conventions`** (`op=infer`
+  for the structured record, `op=summary` for the markdown) — the brownfield
+  naming prefixes, folder layout, per-layer materialization, and test patterns to
+  author *in that style*. This is the live read behind the `conventions.md` in
+  memory; consult it before you name a new model or pick a materialization.
 - **Confirm the real warehouse schema with the `sql` tool** (read role,
   `op=introspect`) — never guess column names, types, or table existence.
 - **Verify by execution** through dbt-execution's structured backend (the

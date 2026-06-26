@@ -131,3 +131,71 @@ def test_edit_requires_exactly_one_target(runner: CliRunner, project: Path) -> N
         ["memory", "edit", "standards", "--pipeline", "x", "--project-dir", str(project)],
     )
     assert both.exit_code == 2, both.output
+
+
+# ---------------------------------------------------------------------------
+# carve memory refresh — run inference + write conventions.md
+# ---------------------------------------------------------------------------
+
+
+def _add_dbt_project(root: Path) -> None:
+    """Scaffold a tiny brownfield dbt project at ``root`` for refresh to infer."""
+    (root / "dbt_project.yml").write_text(
+        "name: shop\n"
+        "models:\n"
+        "  shop:\n"
+        "    staging:\n"
+        "      +materialized: view\n"
+        "    marts:\n"
+        "      +materialized: table\n",
+        encoding="utf-8",
+    )
+    staging = root / "models" / "staging"
+    marts = root / "models" / "marts"
+    staging.mkdir(parents=True)
+    marts.mkdir(parents=True)
+    (staging / "stg_orders.sql").write_text("select 1 as order_id", encoding="utf-8")
+    (marts / "mart_orders.sql").write_text(
+        "select order_id from {{ ref('stg_orders') }}", encoding="utf-8"
+    )
+
+
+def test_refresh_writes_inferred_conventions(runner: CliRunner, project: Path) -> None:
+    _add_dbt_project(project)
+    res = runner.invoke(app, ["memory", "refresh", "--project-dir", str(project)])
+    assert res.exit_code == 0, res.output
+
+    conv = (project / "carve" / "conventions.md").read_text()
+    assert "Inferred project conventions" in conv
+    assert "stg_" in conv
+    assert "mart_" in conv
+    # The comment-only placeholder is replaced.
+    assert "Inferred project conventions land here" not in conv
+
+
+def test_refresh_no_dbt_project_is_noop(runner: CliRunner, project: Path) -> None:
+    res = runner.invoke(app, ["memory", "refresh", "--project-dir", str(project)])
+    assert res.exit_code == 0, res.output
+    assert "No dbt project found" in res.output
+    # conventions.md stays the comment-only placeholder (untouched).
+    conv = (project / "carve" / "conventions.md").read_text()
+    assert "Inferred project conventions land here" in conv
+
+
+def test_refresh_is_idempotent(runner: CliRunner, project: Path) -> None:
+    _add_dbt_project(project)
+    first = runner.invoke(app, ["memory", "refresh", "--project-dir", str(project)])
+    assert first.exit_code == 0, first.output
+    body = (project / "carve" / "conventions.md").read_text()
+    second = runner.invoke(app, ["memory", "refresh", "--project-dir", str(project)])
+    assert second.exit_code == 0, second.output
+    assert (project / "carve" / "conventions.md").read_text() == body
+
+
+def test_refreshed_conventions_show_via_show_command(runner: CliRunner, project: Path) -> None:
+    """End-to-end: refresh writes; `memory show conventions` reads it back."""
+    _add_dbt_project(project)
+    runner.invoke(app, ["memory", "refresh", "--project-dir", str(project)])
+    res = runner.invoke(app, ["memory", "show", "conventions", "--project-dir", str(project)])
+    assert res.exit_code == 0, res.output
+    assert "Inferred project conventions" in res.output

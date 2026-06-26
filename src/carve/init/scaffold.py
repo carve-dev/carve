@@ -78,7 +78,15 @@ def scaffold(root: Path, plan: InitPlan) -> ScaffoldResult:
     # Greenfield scaffolds (same-repo; convention-discovered, no carve.toml block).
     if plan.scaffold_dbt:
         r._write(root / "dbt_project.yml", templates.render_dbt_project_yml(plan.project_name))
-        r._ensure_dir(root / "models")
+        # The spec'd staging/marts layout: a staging model over a declared
+        # source, a mart that ref()s it, each with a _schema.yml carrying
+        # not_null/unique tests on the grain. Inference (`carve memory refresh`)
+        # later reads exactly this shape back as real conventions.
+        models = root / "models"
+        r._write(models / "staging" / "stg_orders.sql", templates.DBT_STG_MODEL_CONTENT)
+        r._write(models / "staging" / "stg_orders_schema.yml", templates.DBT_STG_SCHEMA_CONTENT)
+        r._write(models / "marts" / "mart_orders.sql", templates.DBT_MART_MODEL_CONTENT)
+        r._write(models / "marts" / "mart_orders_schema.yml", templates.DBT_MART_SCHEMA_CONTENT)
     if plan.scaffold_dlt:
         r._write(root / "el" / "sample" / "__init__.py", templates.DLT_SAMPLE_INIT_CONTENT)
 

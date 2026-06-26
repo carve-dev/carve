@@ -69,6 +69,12 @@ _SKILL_READ_TOOLS: frozenset[str] = frozenset(
         "rest_api_explore",
         "dbt_manifest",
         "dbt_source_lookup",
+        # `dbt_conventions` READS the dbt project (manifest + model tree) and
+        # infers naming/layout/materialization/test conventions — pure-read, no
+        # write. Persisting them is the separate, human-invoked `carve memory
+        # refresh` CLI, never this tool. Read-floored so the dbt-engineer
+        # (design + build) and the dbt-qa reviewer (read_only) can call it.
+        "dbt_conventions",
         "pipeline_inspect",
         "list_components",
         "list_dbt_models",
