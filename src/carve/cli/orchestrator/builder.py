@@ -19,16 +19,21 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from carve.cli.orchestrator.cost_rollup import CostRollup, roll_up_cost
+from carve.cli.orchestrator.delegation_run import build_registry, run_engines
 from carve.cli.orchestrator.extensibility_wiring import (
+    build_extensibility_hook_factory,
     build_extensibility_hooks,
     build_skill_pack_tool,
     resolve_agent_or_fallback,
 )
+from carve.cli.orchestrator.goal_decomposer import SubGoal
+from carve.cli.orchestrator.review_wiring import run_review_fan_out
 from carve.core.agents import (
     AgentLoop,
     AgentObserver,
@@ -38,7 +43,14 @@ from carve.core.agents import (
     make_read_file_tool,
     make_write_file_tool,
 )
+from carve.core.agents.delegation import DelegationResult
+from carve.core.agents.exceptions import AgentError
 from carve.core.agents.permissions.modes import PermissionMode
+from carve.core.agents.review_fan_out import (
+    _FAILING_SEVERITIES,
+    Finding,
+    ReviewResult,
+)
 from carve.core.config import Config
 from carve.core.state import Plan, Repository
 from carve.core.targets.names import (
@@ -58,6 +70,17 @@ class BuildArtifact:
     `main.py`; the build run row is marked failed in that case and the
     plan stays drafted. ``build_id`` is None on failure (no Build row
     is created) and the build's id otherwise.
+
+    The review-gate fields carry the quality-gate verdict (B2) to the CLI /
+    return surface. ``review_passed`` is ``True`` when no ``blocker``/``major``
+    finding was raised (the gate's pass condition); it is ``True`` on the
+    single-agent / M1 path and on a no-op rebuild, where no live review runs.
+    ``review_findings`` is a compact, JSON-friendly summary of every finding
+    (each ``{reviewer, severity, file, line, message}``), and
+    ``review_blocking_count`` is how many were ``blocker``/``major`` — the
+    findings that BLOCK the build. On a blocked build ``success`` is ``False``,
+    ``review_passed`` is ``False``, ``build_id`` is ``None`` (no Build row),
+    and ``review_findings`` carries the blockers so the CLI can render them.
     """
 
     plan_id: str
@@ -72,6 +95,9 @@ class BuildArtifact:
     tokens_input: int
     tokens_output: int
     cost_usd: float
+    review_passed: bool = True
+    review_findings: list[dict[str, Any]] = field(default_factory=list)
+    review_blocking_count: int = 0
 
 
 class BuildError(Exception):
@@ -257,6 +283,31 @@ def build_plan(
 
     anthropic_client = _build_client(config, client)
 
+    # B2 fork: a Plan produced by multi-engine decomposition (B1) carries a
+    # non-empty `planned_by_engine` — the ordered per-engine slices. Reconstruct
+    # the `list[SubGoal]` from it and AUTHOR via the multi-engine path: each
+    # engineer runs in BUILD capacity (`run_engines` at `parent_mode=BUILD`),
+    # writes its real files, then the authored diff is gated by the live review
+    # fan-out. A design WITHOUT `planned_by_engine` (a single-engine / M1 plan)
+    # falls through to the unchanged M1 single-`AgentLoop` build path below —
+    # the same fallback discipline B1 used at plan time.
+    sub_goals = _reconstruct_sub_goals(design)
+    if sub_goals:
+        return _build_multi_engine(
+            plan_id=plan_id,
+            plan_row=plan_row,
+            sub_goals=sub_goals,
+            design=design,
+            config=config,
+            project_dir=project_dir,
+            repository=repository,
+            client=anthropic_client,
+            pipeline_name=pipeline_name,
+            active_target=active_target,
+            observer=observer,
+            max_turns=max_turns,
+        )
+
     pipeline_dir_rel = f"el/{pipeline_name}"
     pipeline_dir_abs = project_dir / pipeline_dir_rel
     snapshot = _snapshot_pipeline_dir(pipeline_dir_abs)
@@ -426,6 +477,380 @@ def build_plan(
         tokens_output=agent_result.token_usage.output_tokens,
         cost_usd=agent_result.token_usage.cost_usd(config.models.default_model),
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-engine build authoring + the live review gate (B2)
+# ---------------------------------------------------------------------------
+
+
+def _reconstruct_sub_goals(design: dict[str, Any]) -> list[SubGoal]:
+    """Rebuild the ordered ``list[SubGoal]`` from a design's ``planned_by_engine``.
+
+    B1's multi-engine planner stamps ``design["planned_by_engine"]`` — an ordered
+    ``[{sub_goal, classification, files}]`` — recording which engine designed
+    which slice, in order. B2 reconstructs the decomposition from it so the SAME
+    engineers author at BUILD that designed at PLAN. A non-empty result selects
+    the multi-engine build path; an EMPTY result (the key is absent, not a list,
+    or carries no well-formed entry) means a single-engine / M1 plan and selects
+    the unchanged M1 build path.
+
+    Malformed entries are skipped defensively (a non-dict entry, or one missing a
+    non-empty string ``sub_goal``/``classification``); the routing off
+    ``classification`` is the same the planner validated against the registry, so
+    a well-formed B1 plan reconstructs cleanly here.
+    """
+    raw = design.get("planned_by_engine")
+    if not isinstance(raw, list):
+        return []
+    sub_goals: list[SubGoal] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        sub_goal = entry.get("sub_goal")
+        classification = entry.get("classification")
+        if not isinstance(sub_goal, str) or not sub_goal.strip():
+            continue
+        if not isinstance(classification, str) or not classification.strip():
+            continue
+        sub_goals.append(SubGoal(sub_goal=sub_goal.strip(), classification=classification.strip()))
+    return sub_goals
+
+
+def _build_multi_engine(
+    *,
+    plan_id: str,
+    plan_row: Plan,
+    sub_goals: list[SubGoal],
+    design: dict[str, Any],
+    config: Config,
+    project_dir: Path,
+    repository: Repository,
+    client: Any,
+    pipeline_name: str,
+    active_target: str,
+    observer: AgentObserver | None,
+    max_turns: int,
+) -> BuildArtifact:
+    """Author a multi-engine Plan with N engineers, then gate on the review fan-out.
+
+    The B2 build path. Each reconstructed ``SubGoal`` is authored by its engineer
+    in BUILD capacity (:func:`run_engines` at ``parent_mode=BUILD`` — sequential,
+    one runner) so it writes its real slice (dlt → ``el/**``, dbt → ``models/**``).
+    The authored file set is the UNION of every engine's harness-tracked
+    ``DelegationResult.files_changed`` — NOT a single ``el/<name>/`` dir snapshot,
+    which can't see both trees. That union is the diff handed to the live review
+    fan-out, whose verdict GATES the build:
+
+    * any engine that did not ``succeeded`` (out of turns, no ``submit_result``,
+      self-reported ``failed``/``needs_user_input``) fails the build cleanly — the
+      run row goes ``failed`` and NO ``Build`` row is written (mirroring B1's "do
+      not persist a partial");
+    * a ``blocker``/``major`` review finding BLOCKS — no ``Build`` row / no
+      ``current_build_id`` advance / the plan stays drafted; the artifact carries
+      ``success=False`` + ``review_passed=False`` + the blocking findings;
+    * a clean (or only ``minor``/``info``) review proceeds — the ``Build`` row is
+      written with a ``review`` block in its manifest, ``current_build_id``
+      advances, the plan is marked built, and warnings surface on the artifact.
+
+    A build fix iteration is deliberately deferred (B2 surfaces a blocked build;
+    it does not auto-fix).
+    """
+    goal = plan_row.goal
+
+    run_id = repository.create_run(kind="build", target_id=plan_id, pipeline_name=None)
+    repository.update_run_status(run_id, "running")
+
+    # Snapshot the pre-build content of every PLANNED file so the review diff
+    # renders authored slices against their prior version (greenfield files
+    # diff from empty). The planned set is the union of `planned_by_engine`'s
+    # file lists — a superset of what actually gets authored, which is fine:
+    # the diff is keyed on the authored `files_changed`, and a planned-but-
+    # unauthored file simply never appears.
+    pre_build = _snapshot_files(_planned_files(design), project_dir)
+
+    # One registry, threaded into both the engine run and the reviewer routing,
+    # so the routes (engine + reviewer) resolve against one source of truth.
+    registry = build_registry(project_dir, config)
+
+    # Fail-closed hooks boundary BEFORE any delegation (the build flow's
+    # promise): parse carve/hooks.toml eagerly so a malformed file aborts before
+    # an engineer or reviewer runs. The factory is threaded into both runs so the
+    # file is parsed once.
+    hook_factory = build_extensibility_hook_factory(
+        project_dir=project_dir,
+        paths=config.paths,
+        approver=None,
+    )
+
+    try:
+        results = run_engines(
+            sub_goals,
+            config=config,
+            project_dir=project_dir,
+            client=client,
+            model=config.models.default_model,
+            registry=registry,
+            hook_factory=hook_factory,
+            parent_mode=PermissionMode.BUILD,
+            max_turns=max_turns,
+        )
+    except Exception as exc:
+        repository.update_run_status(run_id, "failed", error=str(exc))
+        raise
+
+    rollup = roll_up_cost(results)
+
+    # The authored manifest is the UNION of each engine's harness-tracked
+    # `files_changed` — order-stable, de-duped — never a dir snapshot.
+    authored = _union_files_changed(results)
+
+    # Any engine that did not succeed → fail the build cleanly; no Build row.
+    failed = next((r for r in results if r.status != "succeeded"), None)
+    if failed is not None:
+        repository.update_run_status(
+            run_id,
+            "failed",
+            error=(
+                f"A build engineer returned status={failed.status!r} "
+                f"(not a usable authored slice): {failed.result_summary}"
+            ),
+        )
+        return _multi_engine_artifact(
+            plan_id=plan_id,
+            pipeline_name=pipeline_name,
+            active_target=active_target,
+            files_written=authored,
+            summary=failed.result_summary,
+            run_id=run_id,
+            success=False,
+            build_id=None,
+            rollup=rollup,
+            review=None,
+        )
+
+    # The live review fan-out over the authored diff — the quality gate. The
+    # reviewer sequence is selected from which engines authored (registry-driven,
+    # unioned + de-duped); each reviewer delegates at READ_ONLY on `{diff, goal}`.
+    # The fan-out + persistence run under the same fail-the-run guard as the
+    # engines above: the engineers have already authored real files and the run
+    # row is `running`, so an exception here (a malformed reviewer payload →
+    # ReviewFanOutError, a routing miss → NoAgentMatch, a DB error on persist)
+    # must mark the run terminal — never leave an orphaned `running` row — and
+    # surface as a clean BuildError rather than an uncaught traceback. The gate
+    # stays fail-CLOSED: any such exception propagates BEFORE a Build row is
+    # written, so nothing ships.
+    try:
+        review = run_review_fan_out(
+            classifications=[s.classification for s in sub_goals],
+            files_changed=authored,
+            goal=goal,
+            config=config,
+            project_dir=project_dir,
+            client=client,
+            model=config.models.default_model,
+            registry=registry,
+            pre_build=pre_build,
+            hook_factory=hook_factory,
+            max_turns=max_turns,
+        )
+
+        if not review.passed:
+            # A blocker/major finding BLOCKS — surface it, do not silently ship.
+            # No Build row, no current_build_id advance, the plan stays drafted.
+            blockers = _blocking_findings(review)
+            repository.update_run_status(
+                run_id,
+                "failed",
+                error=(
+                    f"Review gate blocked the build: {len(blockers)} "
+                    f"blocker/major finding(s). {_summarize_findings(blockers)}"
+                ),
+            )
+            logger.warning(
+                "Build of plan %r blocked by %d blocker/major review finding(s).",
+                plan_id,
+                len(blockers),
+            )
+            return _multi_engine_artifact(
+                plan_id=plan_id,
+                pipeline_name=pipeline_name,
+                active_target=active_target,
+                files_written=authored,
+                summary=_summarize_findings(blockers),
+                run_id=run_id,
+                success=False,
+                build_id=None,
+                rollup=rollup,
+                review=review,
+            )
+
+        # Clean (or warnings-only) review → persist the build. The verdict lands
+        # on the Build manifest (a `review` block) AND the returned artifact.
+        repository.create_or_update_pipeline(
+            name=pipeline_name,
+            description=_design_description(design),
+            pipeline_dir=f"el/{pipeline_name}",
+        )
+        repository.attach_pipeline_to_run(run_id, pipeline_name)
+        build = repository.create_build(
+            pipeline_name=pipeline_name,
+            plan_id=plan_id,
+            target=active_target,
+            manifest={"files": authored, "review": _review_manifest_block(review)},
+        )
+        repository.set_pipeline_current_build(pipeline_name, build.id)
+        repository.mark_plan_built(plan_id=plan_id, pipeline_name=pipeline_name)
+        repository.update_run_status(run_id, "success")
+    except Exception as exc:
+        # Mark the run terminal so it never orphans as `running`. Re-raise a
+        # BuildError/AgentError as-is (the CLI renders each cleanly with its own
+        # exit code); wrap anything else (e.g. ReviewFanOutError, which the CLI
+        # would otherwise let through as a raw traceback) in BuildError.
+        repository.update_run_status(run_id, "failed", error=str(exc))
+        if isinstance(exc, (BuildError, AgentError)):
+            raise
+        raise BuildError(
+            f"Build of plan {plan_id!r} failed during review/persistence: {exc}"
+        ) from exc
+
+    return _multi_engine_artifact(
+        plan_id=plan_id,
+        pipeline_name=pipeline_name,
+        active_target=active_target,
+        files_written=authored,
+        summary=_summarize_findings(review.findings) or "Built; review clean.",
+        run_id=run_id,
+        success=True,
+        build_id=build.id,
+        rollup=rollup,
+        review=review,
+    )
+
+
+def _multi_engine_artifact(
+    *,
+    plan_id: str,
+    pipeline_name: str,
+    active_target: str,
+    files_written: list[str],
+    summary: str,
+    run_id: str,
+    success: bool,
+    build_id: str | None,
+    rollup: CostRollup,
+    review: ReviewResult | None,
+) -> BuildArtifact:
+    """Assemble the multi-engine path's :class:`BuildArtifact`, verdict included."""
+    findings = list(review.findings) if review is not None else []
+    return BuildArtifact(
+        plan_id=plan_id,
+        pipeline_name=pipeline_name,
+        pipeline_dir=f"el/{pipeline_name}",
+        target=active_target,
+        files_written=files_written,
+        summary=summary,
+        run_id=run_id,
+        success=success,
+        build_id=build_id,
+        tokens_input=rollup.usage.input_tokens,
+        tokens_output=rollup.usage.output_tokens,
+        cost_usd=rollup.cost_usd,
+        # No review ran (an engine failed before the gate) ⇒ the gate did not
+        # reject anything ⇒ `review_passed` reflects the verdict if present,
+        # else True. The blocking `success=False` is carried by `success`.
+        review_passed=review.passed if review is not None else True,
+        review_findings=[_finding_summary(f) for f in findings],
+        review_blocking_count=len(_blocking_findings(review)) if review is not None else 0,
+    )
+
+
+def _planned_files(design: dict[str, Any]) -> list[str]:
+    """The union of every engine's planned file paths from ``planned_by_engine``."""
+    raw = design.get("planned_by_engine")
+    files: list[str] = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            entry_files = entry.get("files")
+            if isinstance(entry_files, list):
+                files.extend(f for f in entry_files if isinstance(f, str))
+    # Back-compat: a flat `planned_files` list (B1 keeps one alongside).
+    flat = design.get("planned_files")
+    if isinstance(flat, list):
+        files.extend(f for f in flat if isinstance(f, str))
+    return list(dict.fromkeys(files))
+
+
+def _snapshot_files(rel_paths: list[str], project_dir: Path) -> dict[Path, str]:
+    """Capture ``{abs_path: text}`` for each existing file (pre-build content).
+
+    Missing files are omitted — they diff from empty (greenfield) at render time.
+    """
+    snapshot: dict[Path, str] = {}
+    for rel in rel_paths:
+        abs_path = (project_dir / rel).resolve()
+        if abs_path.is_file():
+            try:
+                snapshot[abs_path] = abs_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                # A binary pre-build file (e.g. a dbt seed `.csv`, a fixture):
+                # not text-diffable, so omit it from the snapshot. The render
+                # emits a "Binary files differ" stub from the authored side
+                # rather than crashing the build's review gate.
+                continue
+    return snapshot
+
+
+def _union_files_changed(results: list[DelegationResult]) -> list[str]:
+    """Union every engine's harness-tracked ``files_changed``, order-stable + de-duped."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for result in results:
+        for path in result.files_changed:
+            if path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
+def _blocking_findings(review: ReviewResult | None) -> list[Finding]:
+    """The ``blocker``/``major`` findings — the ones that gate the build."""
+    if review is None:
+        return []
+    # Single-source the gating severities from the driver, so "what blocks" can
+    # never drift between `review_fan_out.passed` and this build-side gate.
+    return [f for f in review.findings if f.severity in _FAILING_SEVERITIES]
+
+
+def _finding_summary(finding: Finding) -> dict[str, Any]:
+    """A compact, JSON-friendly view of one finding for the artifact / manifest."""
+    return {
+        "reviewer": finding.reviewer,
+        "severity": finding.severity.value,
+        "file": finding.file,
+        "line": finding.line,
+        "message": finding.message,
+    }
+
+
+def _review_manifest_block(review: ReviewResult) -> dict[str, Any]:
+    """The ``review`` block nested into the Build manifest (``manifest_json``).
+
+    ``manifest_json`` is the Build's only free-form JSONB column, so the verdict
+    nests inside it alongside ``files`` — ``{passed, findings}`` — making the
+    review queryable from ``/builds`` later without a schema change.
+    """
+    return {
+        "passed": review.passed,
+        "findings": [_finding_summary(f) for f in review.findings],
+    }
+
+
+def _summarize_findings(findings: list[Finding]) -> str:
+    """A one-line-per-finding human summary for run errors / artifact summaries."""
+    return " | ".join(f"[{f.severity.value}] {f.reviewer} {f.file}: {f.message}" for f in findings)
 
 
 # ---------------------------------------------------------------------------

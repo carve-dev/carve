@@ -24,7 +24,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
@@ -465,16 +465,19 @@ class Repository:
         pipeline_name: str,
         plan_id: str,
         target: str,
-        manifest: dict[str, list[str]] | None = None,
+        manifest: dict[str, Any] | None = None,
     ) -> Build:
         """Insert a new Build row and return it.
 
         The id is generated as ``build_<uuid4().hex>`` so the build is
         addressable from the moment it lands. ``manifest`` is serialized
         into ``manifest_json`` (default: ``{"files": []}`` for the empty
-        case). The Pipeline FK on ``current_build_id`` is *not* updated
-        here — call ``set_pipeline_current_build`` after the insert
-        commits so a failed FK update doesn't roll back the build row.
+        case); besides ``files`` it may carry a nested ``review`` block
+        (the build's quality-gate verdict — ``{passed, findings}``) since
+        ``manifest_json`` is the Build's free-form JSONB column. The
+        Pipeline FK on ``current_build_id`` is *not* updated here — call
+        ``set_pipeline_current_build`` after the insert commits so a failed
+        FK update doesn't roll back the build row.
         """
         build_id = "build_" + uuid.uuid4().hex
         manifest_payload = manifest if manifest is not None else {"files": []}

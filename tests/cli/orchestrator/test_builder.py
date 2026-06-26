@@ -232,6 +232,12 @@ def test_build_writes_files_and_marks_plan_built(
     assert (project_dir / "el/csv_ingest" / "main.py").is_file()
     assert (project_dir / "el/csv_ingest" / "requirements.txt").is_file()
 
+    # B2 widened BuildArtifact: the single-agent / M1 path runs no live review,
+    # so the quality-gate fields default to a clean verdict.
+    assert artifact.review_passed is True
+    assert artifact.review_findings == []
+    assert artifact.review_blocking_count == 0
+
     # Build artifact carries the new build id.
     assert artifact.build_id is not None
     assert artifact.build_id.startswith("build_")
