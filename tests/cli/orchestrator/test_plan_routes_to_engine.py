@@ -122,8 +122,24 @@ def test_plan_routes_to_dlt_engineer_and_captures_design(
 
     client = _SequencedClient(
         [
-            # 1) the classify call → a dlt label
-            _resp([_tool_use("classify_goal", {"label": "new_pipeline"}, "c1")]),
+            # 1) the decompose call → a single dlt sub-goal (#44's single-engine
+            #    route is the N=1 case: a single-step goal decomposes to one item).
+            _resp(
+                [
+                    _tool_use(
+                        "decompose_goal",
+                        {
+                            "sub_goals": [
+                                {
+                                    "sub_goal": "ingest the Stripe API into the warehouse",
+                                    "classification": "new_pipeline",
+                                }
+                            ]
+                        },
+                        "d1",
+                    )
+                ]
+            ),
             # 2) the dlt-engineer child loop (DESIGN capacity): read a bound
             #    tool, then submit a `mode:"design"` payload — no files authored.
             _resp(
@@ -272,8 +288,23 @@ def test_routed_engine_failure_falls_back_to_m1_path(
     }
     client = _SequencedClient(
         [
-            # 1) classify → a dlt label (so it routes to the engineer).
-            _resp([_tool_use("classify_goal", {"label": "new_pipeline"}, "c1")]),
+            # 1) decompose → a single dlt sub-goal (so it routes to the engineer).
+            _resp(
+                [
+                    _tool_use(
+                        "decompose_goal",
+                        {
+                            "sub_goals": [
+                                {
+                                    "sub_goal": "ingest the Stripe API into the warehouse",
+                                    "classification": "new_pipeline",
+                                }
+                            ]
+                        },
+                        "d1",
+                    )
+                ]
+            ),
             # 2) the dlt-engineer child loop stops with prose, no submit_result
             #    → the runner returns DelegationResult(status="failed").
             _end_turn(

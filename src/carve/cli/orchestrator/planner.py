@@ -39,12 +39,18 @@ from pathlib import Path
 from typing import Any
 
 from carve.cli.orchestrator.cost_rollup import compose_runtime_estimate, roll_up_cost
-from carve.cli.orchestrator.delegation_run import run_single_engine
+from carve.cli.orchestrator.delegation_run import build_registry, run_engines
 from carve.cli.orchestrator.extensibility_wiring import (
+    build_extensibility_hook_factory,
     build_extensibility_hooks,
     build_skill_pack_tool,
 )
 from carve.cli.orchestrator.goal_classifier import GoalClassificationError
+from carve.cli.orchestrator.goal_decomposer import (
+    GoalDecompositionError,
+    SubGoal,
+    decompose_goal,
+)
 from carve.core.agents import (
     AgentLoop,
     AgentObserver,
@@ -742,6 +748,27 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _union_dependency_hints(acc: dict[str, Any], new: dict[str, Any]) -> None:
+    """Union ``new``'s dependency hints into ``acc`` (mutating ``acc``).
+
+    Merging N engines' ``dependencies`` maps for the Plan's impact: the common
+    shape is ``{"python": ["dlt>=0.4"], ...}``. List-valued keys CONCATENATE
+    (de-duped, first-seen order preserved) so a dlt engine's ``["dlt>=0.4"]`` and
+    a dbt engine's ``["dbt>=1.0"]`` under the same ``"python"`` key both survive;
+    only true scalar keys are last-writer-wins (a scalar has no meaningful
+    union). A list/scalar type clash also takes the newer value (defensive — the
+    hints are model-authored, so we never assume the shape).
+    """
+    for key, value in new.items():
+        existing = acc.get(key)
+        if isinstance(value, list) and isinstance(existing, list):
+            acc[key] = existing + [item for item in value if item not in existing]
+        elif key not in acc:
+            acc[key] = list(value) if isinstance(value, list) else value
+        else:
+            acc[key] = value
+
+
 # ---------------------------------------------------------------------------
 # Plan-id generation
 # ---------------------------------------------------------------------------
@@ -816,61 +843,100 @@ def _try_routed_plan(
     max_turns: int,
     user_destination: dict[str, str],
 ) -> PlanArtifact | None:
-    """Run the goal through a live single engine, or ``None`` to fall back.
+    """Decompose the goal, run each engine, and merge — or ``None`` to fall back.
 
-    Classifies + routes via :func:`run_single_engine`, which delegates at
-    ``parent_mode=PLAN`` so the engineer runs in **design capacity** (no code
-    authored). On a *successful* design the engine's real
-    :class:`DelegationResult` is rolled up through the Unit-1 ``roll_up_cost``
-    seam and its ``outputs`` are captured into a reviewable :class:`PlanArtifact`.
+    The goal is first **decomposed** (:func:`decompose_goal`) into an ordered
+    list of sub-goals — a single-step goal yields a 1-element list, so the #44
+    single-engine route is preserved as the N=1 case. Each sub-goal is then run
+    through :func:`run_engines`, which delegates at ``parent_mode=PLAN`` so every
+    engineer runs in **design capacity** (no code authored). On full success the
+    N engines' real :class:`DelegationResult`s are merged into ONE reviewable
+    :class:`PlanArtifact`: the proposed file manifests concatenate (labeled by
+    sub-goal/engine), the impact unions, and the cost is the SUM across all
+    results via :func:`roll_up_cost`.
 
-    Falls back to the unchanged monolithic M1 plan flow (returns ``None``) in
-    two cases, on one consistent contract:
+    Falls back to the unchanged monolithic M1 plan flow (returns ``None``) on one
+    consistent contract — extending #44's from 1 result to N:
 
-    * a :class:`GoalClassificationError` / :class:`NoAgentMatch` — a clean
-      no-route (an unclassifiable goal still works); or
-    * a non-``"succeeded"`` :class:`DelegationResult` — the engineer ran out of
-      turns, returned prose without ``submit_result``, or self-reported
-      ``failed``/``needs_user_input``. We do NOT persist that as a ``drafted``
-      Plan with a fabricated name; the M1 path can still synthesize a real,
-      reviewable design for the goal. (Falling back is cleaner than raising:
-      it mirrors the no-route branch and keeps the verb working.)
-
-    Single engine only: exactly one ``DelegationResult`` fed as a single-element
-    rollup. No decomposition, no fan-out (sub-slice B).
+    * a :class:`GoalDecompositionError` / :class:`GoalClassificationError` /
+      :class:`NoAgentMatch` — a clean no-route (an undecomposable / unroutable
+      goal still works through the M1 path); or
+    * **any** sub-goal's :class:`DelegationResult` is non-``"succeeded"`` — an
+      engineer ran out of turns, returned prose without ``submit_result``, or
+      self-reported ``failed``/``needs_user_input``. We do NOT persist a partial
+      routed Plan with a fabricated name; the M1 path can still synthesize a
+      real, reviewable design for the goal. (Falling back is cleaner than
+      raising: it mirrors the no-route branch and keeps the verb working.)
     """
+    # Build the registry ONCE and thread the SAME instance into both the
+    # decomposer (its candidate set) and the runner (its route resolution), so
+    # the candidate labels and the routes resolve against one source of truth.
+    registry = build_registry(project_dir, config)
+
+    # Establish the fail-closed boundary BEFORE the decompose LLM call: parse
+    # carve/hooks.toml eagerly here (run_single_engine did this before its
+    # classify call) so a malformed file aborts the plan with HookConfigError
+    # without ever spending an LLM call. We deliberately do NOT wrap this in the
+    # decompose try/except — a bad hooks file is a hard config error, not a
+    # clean no-route. The parsed factory is threaded into run_engines so the
+    # file is parsed exactly once.
+    hook_factory = build_extensibility_hook_factory(
+        project_dir=project_dir,
+        paths=config.paths,
+        approver=None,
+    )
+
     try:
-        result = run_single_engine(
-            goal,
+        sub_goals = decompose_goal(goal, client=client, model=model, registry=registry)
+    except (GoalDecompositionError, GoalClassificationError) as exc:
+        # A clean no-decomposition: fall back to the M1 path (preserves the M1
+        # extract-load flow while the engines mature; keeps Unit-1 tests green).
+        logger.debug("Goal not decomposable into engines (%s); using M1 path.", exc)
+        return None
+
+    try:
+        results = run_engines(
+            sub_goals,
             config=config,
             project_dir=project_dir,
             client=client,
             model=model,
+            registry=registry,
+            hook_factory=hook_factory,
             parent_mode=PermissionMode.PLAN,
             max_turns=max_turns,
         )
-    except (GoalClassificationError, NoAgentMatch) as exc:
-        # A clean no-route: fall back to the M1 path (preserves the M1
-        # extract-load flow while the engines mature; keeps Unit-1 tests green).
-        logger.debug("Goal not routed to a declarative engine (%s); using M1 path.", exc)
+    except NoAgentMatch as exc:
+        # A sub-goal's classification matched no registered agent: a clean
+        # no-route, same fallback contract as an undecomposable goal.
+        logger.debug("A sub-goal matched no engine (%s); using M1 path.", exc)
         return None
 
-    # A routed engine that did not *succeed* in design capacity (it ran out of
+    # ANY routed engine that did not *succeed* in design capacity (it ran out of
     # turns, returned prose without `submit_result`, or self-reported
-    # `failed`/`needs_user_input`) must NOT be persisted as a `drafted` Plan with
-    # a fabricated name — that was the masking bug. Fall back to the M1 path, the
+    # `failed`/`needs_user_input`) must NOT be persisted as a partial `drafted`
+    # Plan — that would mask a broken sub-goal. Fall back to the M1 path, the
     # same contract as the no-route branch above (cleaner than raising: the M1
     # flow can still produce a real, reviewable design for this goal).
-    if result.status != "succeeded":
+    failed = next((r for r in results if r.status != "succeeded"), None)
+    if failed is not None:
         logger.debug(
-            "Routed engine returned status=%r (not a usable design): %s; using M1 path.",
-            result.status,
-            result.result_summary,
+            "A routed engine returned status=%r (not a usable design): %s; using M1 path.",
+            failed.status,
+            failed.result_summary,
         )
         return None
 
-    return _artifact_from_delegation(
-        result,
+    # `decompose_goal` guarantees a non-empty sub-goal list (it raises rather
+    # than returning []), so `results` is non-empty here — but guard the merge's
+    # `results[0]` access rather than rely on that invariant from a distance: an
+    # empty result set is "nothing routed", which is the M1 fallback.
+    if not results:
+        return None
+
+    return _artifact_from_delegations(
+        results,
+        sub_goals,
         goal=goal,
         plan_id=plan_id,
         model=model,
@@ -879,8 +945,9 @@ def _try_routed_plan(
     )
 
 
-def _artifact_from_delegation(
-    result: DelegationResult,
+def _artifact_from_delegations(
+    results: list[DelegationResult],
+    sub_goals: list[SubGoal],
     *,
     goal: str,
     plan_id: str,
@@ -888,67 +955,121 @@ def _artifact_from_delegation(
     config: Config,
     user_destination: dict[str, str],
 ) -> PlanArtifact:
-    """Build a reviewable :class:`PlanArtifact` from the engineer's DESIGN.
+    """Merge N engineers' DESIGNs into ONE reviewable :class:`PlanArtifact`.
 
-    The routed engineer ran in **design capacity** (``parent_mode=PLAN`` —
-    read/design authority, no code authored), so it returns a DESIGN via
-    ``submit_result.outputs`` rather than authored files. The contract::
+    Each routed engineer ran in **design capacity** (``parent_mode=PLAN`` —
+    read/design authority, no code authored), so each returns a DESIGN via
+    ``submit_result.outputs`` rather than authored files. The contract per
+    engine::
 
         { "mode": "design", "strategy": str, "planned_files": [str],
           "design_summary": str, "dependencies": {...},
           "expected_outputs": {...} }
 
-    is captured into the Plan: ``planned_files`` becomes the Plan's **proposed
-    file manifest** (the "file diffs (what each subagent would write)") — an
-    EMPTY ``files_changed`` at plan is *correct*, so we never rely on it for the
-    manifest; ``strategy`` + ``design_summary`` become the reviewable design
-    summary; ``dependencies`` becomes the impact analysis; ``expected_outputs``
-    feeds the runtime estimate (via the shipped ``compose_runtime_estimate``,
-    routed through ``roll_up_cost``) and the impact's ``tables_created``. The
-    exact LLM cost + token totals roll up from the **single** live
-    ``DelegationResult``. A user-fixed destination is honored verbatim.
+    The merge is **lean** (per the lean-plan-build ADR) — a merge of the
+    per-engine *estimates*, not a bespoke heavyweight artifact:
+
+    * **manifest:** each engine's ``planned_files`` is captured as a labeled
+      entry (``{sub_goal, classification, files}``) under ``planned_by_engine``
+      so the human sees which engine proposes what; a flat concatenated
+      ``planned_files`` is kept for back-compat. ``files_changed`` stays
+      correctly EMPTY at plan, so the manifest is never read from it.
+    * **impact:** the engines' ``dependencies`` are unioned and every engine's
+      ``tables_created`` concatenated.
+    * **cost:** ``roll_up_cost(results)`` — the merged cost is the SUM of every
+      engine's ``DelegationResult`` usage/cost (the seam is already N-ary).
+    * **runtime:** ``compose_runtime_estimate`` over all engines'
+      ``expected_outputs`` hints (first-run / subsequent halves sum across
+      engines — a pipeline's total first load is the sum of its stages').
+
+    ``pipeline_name`` derives from the first/primary sub-goal (or the goal). A
+    user-fixed destination is honored verbatim. ``results`` and ``sub_goals``
+    are positionally aligned (``run_engines`` returns results in sub-goal order).
     """
-    rollup = roll_up_cost([result])
-
-    outputs = result.outputs
-    expected_outputs = _coerce_dict(outputs.get("expected_outputs"))
-
-    submitted_name = _coerce_str(outputs.get("pipeline_name"), default="")
-    pipeline_name = _routed_pipeline_name(submitted_name, goal)
+    rollup = roll_up_cost(results)
 
     # The proposed file manifest — the heart of a reviewable plan. NEVER from
-    # `files_changed` (correctly empty at plan): from the design's planned_files.
-    planned_files = _coerce_str_list(outputs.get("planned_files"), fallback=[])
+    # `files_changed` (correctly empty at plan): from each design's planned_files,
+    # labeled by sub-goal/engine so the human sees which engine proposes what,
+    # plus a flat concatenation for back-compat.
+    planned_by_engine: list[dict[str, Any]] = []
+    planned_files: list[str] = []
+    engine_outputs: list[dict[str, Any]] = []
+    merged_dependencies: dict[str, Any] = {}
+    tables_created: list[str] = []
+    requirements: list[str] = []
+    strategies: list[str] = []
+    design_summaries: list[str] = []
 
-    # The reviewable design summary: strategy + design_summary the engineer
-    # proposed, falling back to the result summary so the Plan is never hollow.
-    strategy = _coerce_str(outputs.get("strategy"), default="")
-    design_summary = _coerce_str(
-        outputs.get("design_summary"),
-        default=result.result_summary or "",
+    for result, sub_goal in zip(results, sub_goals, strict=True):
+        outputs = result.outputs
+        engine_outputs.append(dict(outputs))
+
+        files = _coerce_str_list(outputs.get("planned_files"), fallback=[])
+        planned_by_engine.append(
+            {
+                "sub_goal": sub_goal.sub_goal,
+                "classification": sub_goal.classification,
+                "files": files,
+            }
+        )
+        planned_files.extend(files)
+
+        # Impact: UNION dependency hints across engines. A plain `.update` would
+        # let a later engine clobber a shared key — for the canonical dlt+dbt
+        # decomposition both surface `{"python": [...]}`, so dbt's would erase
+        # dlt's and the merged Plan would under-report its dependencies. List
+        # values concatenate (de-duped, order-preserving); only true scalars are
+        # last-writer-wins (no meaningful union exists for a scalar).
+        _union_dependency_hints(merged_dependencies, _coerce_dict(outputs.get("dependencies")))
+
+        expected_outputs = _coerce_dict(outputs.get("expected_outputs"))
+        tables_created.extend(_coerce_str_list(expected_outputs.get("tables_created"), fallback=[]))
+
+        requirements.extend(_coerce_str_list(outputs.get("requirements"), fallback=[]))
+
+        strategy = _coerce_str(outputs.get("strategy"), default="")
+        if strategy:
+            strategies.append(strategy)
+        summary = _coerce_str(
+            outputs.get("design_summary"),
+            default=result.result_summary or "",
+        )
+        if summary:
+            design_summaries.append(summary)
+
+    # De-dup the flat requirements (order-preserving): two engines can each
+    # require the same package, and a build's pip-install list should carry it
+    # once. The per-engine detail is retained in `planned_by_engine`.
+    requirements = list(dict.fromkeys(requirements))
+
+    # The primary sub-goal names the artifact (naming firms up in a later
+    # increment; the routed engines' job is the diff, not naming the artifact).
+    primary = results[0].outputs
+    submitted_name = _coerce_str(primary.get("pipeline_name"), default="")
+    pipeline_name = _routed_pipeline_name(submitted_name, goal)
+
+    description = (
+        "\n\n".join(design_summaries) or "\n\n".join(strategies) or results[0].result_summary or ""
     )
-    description = design_summary or strategy or result.result_summary or ""
 
-    requirements = _coerce_str_list(outputs.get("requirements"), fallback=[])
-
-    # Impact analysis: the engineer's dependency hints + which tables the build
-    # would create (from expected_outputs, when the engineer surfaced them).
-    impact: dict[str, Any] = {"dependencies": _coerce_dict(outputs.get("dependencies"))}
-    tables_created = _coerce_str_list(expected_outputs.get("tables_created"), fallback=[])
+    impact: dict[str, Any] = {"dependencies": merged_dependencies}
     if tables_created:
         impact["tables_created"] = tables_created
 
-    # Runtime estimate from the design's `expected_outputs` duration hints
-    # (the contract nests them there). `compose_runtime_estimate` reads hints
-    # off a result's `outputs`, so compose over a hint-bearing synthetic result
-    # whose `outputs` is `expected_outputs`; cost stays from the real rollup.
+    # Runtime estimate from every design's `expected_outputs` duration hints
+    # (the contract nests them there). `compose_runtime_estimate` reads hints off
+    # each result's `outputs`, so compose over one hint-bearing synthetic result
+    # per engine (its `outputs` is that engine's `expected_outputs`); the halves
+    # sum across engines. Cost stays from the real rollup over `results`.
     runtime = compose_runtime_estimate(
         [
             _delegation_result_from_loop(
                 result.usage,
                 model=model,
-                outputs=expected_outputs,
+                outputs=_coerce_dict(result.outputs.get("expected_outputs")),
             )
+            for result in results
         ]
     )
     runtime_estimate: dict[str, Any] = {
@@ -961,16 +1082,18 @@ def _artifact_from_delegation(
         "mode": "design",
         "pipeline_name": pipeline_name,
         "description": description,
-        "strategy": strategy,
-        "design_summary": design_summary,
+        "strategy": "\n\n".join(strategies),
+        "design_summary": "\n\n".join(design_summaries),
         "requirements": requirements,
-        # The proposed file manifest — what each subagent would write at build.
+        # The merged proposed file manifest — what each subagent would write at
+        # build, labeled by sub-goal/engine, plus a flat concatenation.
         "planned_files": planned_files,
+        "planned_by_engine": planned_by_engine,
         "impact": impact,
         "runtime_estimate": runtime_estimate,
-        "engine_outputs": dict(outputs),
-        "result_summary": result.result_summary,
-        "status": result.status,
+        "engine_outputs": engine_outputs,
+        "result_summary": "\n\n".join(r.result_summary for r in results if r.result_summary),
+        "status": "succeeded",
     }
     if user_destination:
         design["destination"] = dict(user_destination)
