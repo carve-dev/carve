@@ -2,16 +2,18 @@
 
 Five events, in two groups:
 
-* **Wired now** — ``pre_tool`` / ``post_tool``. Their emitters exist (the
-  ``AgentLoop`` fires the tool hooks at its gate→pre_tool→execute→post_tool
-  seam, ``loop.py``), so a subscription here is fully live this slice.
+* **Wired now** — ``pre_tool`` / ``post_tool`` / ``post_build``. The tool
+  hooks' emitter is the ``AgentLoop`` (it fires them at its
+  gate→pre_tool→execute→post_tool seam, ``loop.py``); ``post_build``'s
+  emitter is the **build flow** (``cli/orchestrator/builder.py`` fires it
+  after a ``Build`` row is durably recorded — plan-build Unit 2). A
+  subscription to any of these is fully live.
 
-* **Deferred emitters (seam only)** — ``pre_deploy`` / ``post_build`` /
-  ``on_run_failed``. The **subscription mechanism is built and tested**;
-  their EMITTERS land in later increments (deploy = Incr 6, build /
-  pipelines = Incr 3, runtime ``run.failed`` = Incr 4). The registry
-  accepts handlers for these events **without firing them** — firing
-  arrives with each emitter. This is a deliberate seam, not missing
+* **Deferred emitters (seam only)** — ``pre_deploy`` / ``on_run_failed``.
+  The **subscription mechanism is built and tested**; their EMITTERS land
+  in later increments (deploy = Incr 6, runtime ``run.failed`` = Incr 4).
+  The registry accepts handlers for these events **without firing them** —
+  firing arrives with each emitter. This is a deliberate seam, not missing
   functionality: the slice bar is "the subscription registers and the
   runner gates/clamps/fail-closes it"; the end-to-end "a ``pre_deploy``
   hook blocks a deploy" is verified with the deploy emitter at its own
@@ -40,25 +42,30 @@ class HookEvent(StrEnum):
     ON_RUN_FAILED = "on_run_failed"
 
 
-# Events whose emitters exist in this slice (the loop fires them). A
-# subscription to one of these is live immediately.
-EMITTED_EVENTS: frozenset[HookEvent] = frozenset({HookEvent.PRE_TOOL, HookEvent.POST_TOOL})
+# Events whose emitters exist (the loop fires the tool hooks; the build
+# flow fires ``post_build`` after a Build is recorded — plan-build Unit 2).
+# A subscription to one of these is live immediately.
+EMITTED_EVENTS: frozenset[HookEvent] = frozenset(
+    {HookEvent.PRE_TOOL, HookEvent.POST_TOOL, HookEvent.POST_BUILD}
+)
 
 # Events whose subscription is wired but whose emitter is a later
 # increment. Registering a handler here is allowed (and tested); it simply
 # never fires until the owning increment emits the event.
 DEFERRED_EMITTER_EVENTS: frozenset[HookEvent] = frozenset(
-    {HookEvent.PRE_DEPLOY, HookEvent.POST_BUILD, HookEvent.ON_RUN_FAILED}
+    {HookEvent.PRE_DEPLOY, HookEvent.ON_RUN_FAILED}
 )
 
 
 class DeferredEmitterEvent(RuntimeError):
     """Raised if code tries to *emit* a not-yet-wired event this slice.
 
-    Subscribing to ``pre_deploy``/``post_build``/``on_run_failed`` is fine
-    (the seam). Attempting to fire one *now* is a programming error — the
-    emitter belongs to a later increment — so :meth:`HookRegistry.emit`
-    refuses it loudly rather than silently dropping handlers.
+    Subscribing to ``pre_deploy``/``on_run_failed`` is fine (the seam).
+    Attempting to fire one *now* is a programming error — the emitter
+    belongs to a later increment — so :meth:`HookRegistry.emit` refuses it
+    loudly rather than silently dropping handlers. (``post_build`` left
+    this set in plan-build Unit 2: its emitter — the build flow — now
+    exists, so emitting it fires handlers like any wired event.)
     """
 
 

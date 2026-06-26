@@ -22,9 +22,15 @@ def test_emitted_events_fire_handlers() -> None:
 
 
 def test_deferred_events_accept_subscriptions_but_do_not_fire() -> None:
-    """The seam: pre_deploy/post_build/on_run_failed register without firing."""
+    """The seam: pre_deploy/on_run_failed register without firing.
+
+    `post_build` LEFT this set in plan-build Unit 2 — its emitter (the build
+    flow) now exists — so only `pre_deploy`/`on_run_failed` remain deferred.
+    """
     registry = HookRegistry()
     fired: list[str] = []
+    # The remaining deferred events are exactly pre_deploy + on_run_failed.
+    assert DEFERRED_EMITTER_EVENTS == frozenset({HookEvent.PRE_DEPLOY, HookEvent.ON_RUN_FAILED})
     for event in DEFERRED_EMITTER_EVENTS:
         registry.subscribe(event, lambda _p: fired.append("x"))
         # Subscription is accepted (no error).
@@ -33,6 +39,23 @@ def test_deferred_events_accept_subscriptions_but_do_not_fire() -> None:
         with pytest.raises(DeferredEmitterEvent):
             registry.emit(event, {})
     assert fired == []  # nothing fired
+
+
+def test_post_build_is_no_longer_deferred() -> None:
+    """post_build left DEFERRED_EMITTER_EVENTS — its emitter exists now."""
+    assert HookEvent.POST_BUILD not in DEFERRED_EMITTER_EVENTS
+    assert HookEvent.POST_BUILD in EMITTED_EVENTS
+
+
+def test_emitting_post_build_fires_handlers_without_raising() -> None:
+    """emit(POST_BUILD, payload) now fires handlers, not DeferredEmitterEvent."""
+    registry = HookRegistry()
+    seen: list[dict[str, object]] = []
+    registry.subscribe(HookEvent.POST_BUILD, lambda payload: seen.append(payload))
+    payload = {"pipeline_name": "stripe", "build_id": "build_x", "target": "dev"}
+    # Must NOT raise DeferredEmitterEvent — the emitter is wired (plan-build).
+    registry.emit(HookEvent.POST_BUILD, payload)
+    assert seen == [payload]
 
 
 def test_emitted_and_deferred_partition_the_event_set() -> None:

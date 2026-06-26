@@ -15,6 +15,16 @@ admitted the call: it can only **further-restrict** (raise to abort),
 never enable a denied call. A :class:`HookExecutionError` propagates out
 of the callable; the loop catches a raising hook and turns it into a
 tool-call abort.
+
+:func:`build_post_build_hook` is the **lifecycle** analogue for
+``post_build``. A lifecycle hook takes the event payload (no tool/command)
+rather than ``(tool_name, tool_input)``, expands the payload keys into the
+command, and runs each matching spec through the *same* gated
+:class:`HookRunner`. The difference from a tool hook is **when** it fires
+and what a raise means: ``post_build`` fires **after** the ``Build`` row is
+durably recorded, so the build flow treats a raising hook as
+surfaced-not-rolled-back (post-commit), not an abort — the gate still
+clamps/denies the command exactly as for a tool hook, but the Build stands.
 """
 
 from __future__ import annotations
@@ -32,6 +42,11 @@ logger = logging.getLogger(__name__)
 
 # Matches ``loop.Hook``: (tool_name, tool_input) -> None; may raise to abort.
 ToolHook = Callable[[str, dict[str, Any]], None]
+
+# A lifecycle hook: (payload) -> None; may raise (a HookExecutionError). The
+# caller decides what a raise means — for ``post_build`` it is post-commit,
+# so the build flow surfaces a raise but does NOT roll the Build back.
+LifecycleHook = Callable[[dict[str, Any]], None]
 
 
 def build_tool_hooks(
@@ -90,4 +105,69 @@ def _expand(template: str, tool_name: str, tool_input: dict[str, Any]) -> str:
     return out
 
 
-__all__ = ["ToolHook", "build_tool_hooks"]
+def build_post_build_hook(specs: list[HookSpec], runner: HookRunner) -> LifecycleHook | None:
+    """Build the single ``post_build`` lifecycle hook from ``specs``.
+
+    Filters ``specs`` for :attr:`HookEvent.POST_BUILD` and returns a
+    callable ``(payload) -> None`` that runs each matching spec's command
+    (its ``{placeholders}`` expanded from the payload) through the same
+    gated :class:`HookRunner` a tool hook uses. Returns ``None`` when no
+    spec subscribes to ``post_build`` so the build flow can skip the call.
+
+    A ``post_build`` spec's ``match`` filter is **inert** — there is no
+    tool/command to match against a lifecycle event, so a ``match`` on a
+    ``post_build`` hook is ignored rather than rejected (a hook with no
+    ``match`` is the common, intended case). A :class:`HookExecutionError`
+    propagates out of the callable (a denied / non-zero / timed-out
+    command); the build flow decides how to surface it — for ``post_build``
+    that is post-commit (logged, the Build stands), not a roll-back.
+    """
+    post = [s for s in specs if s.event is HookEvent.POST_BUILD]
+    if not post:
+        return None
+
+    def _hook(payload: dict[str, Any]) -> None:
+        for spec in post:
+            command = _expand_lifecycle(spec.run, payload)
+            # Same gated runner as tool hooks: a denied / non-zero command
+            # raises HookExecutionError. Unlike a pre-action tool hook, the
+            # build flow treats that raise as post-commit (surfaced, the
+            # Build stands) — but the gate clamp/deny is identical.
+            runner.run(spec, command=command)
+
+    return _hook
+
+
+def _expand_lifecycle(template: str, payload: dict[str, Any]) -> str:
+    """Substitute lifecycle ``{key}`` placeholders from the event payload.
+
+    The lifecycle analogue of :func:`_expand`: only the payload's own keys
+    are substituted (``{pipeline_name}`` / ``{build_id}`` / ``{target}`` /
+    ``{plan_id}`` / ``{files}`` for ``post_build``). A list/tuple value (e.g.
+    ``{files}``) renders **space-joined** — the natural shell form
+    (``el/a.py el/b.py``), not a Python list repr (``['el/a.py']``) a hook
+    author would never want in a command. Scalars render via ``str``. This is
+    an explicit per-key replace, not arbitrary ``str.format`` over attacker
+    keys, and the expanded command still passes through the bash gate — an
+    expanded value carrying a metacharacter is denied there, so the expansion
+    can't smuggle a second command past the gate.
+    """
+    out = template
+    for key, value in payload.items():
+        placeholder = "{" + key + "}"
+        if placeholder in out:
+            rendered = (
+                " ".join(str(item) for item in value)
+                if isinstance(value, list | tuple)
+                else str(value)
+            )
+            out = out.replace(placeholder, rendered)
+    return out
+
+
+__all__ = [
+    "LifecycleHook",
+    "ToolHook",
+    "build_post_build_hook",
+    "build_tool_hooks",
+]
