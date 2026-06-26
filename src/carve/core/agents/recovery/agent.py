@@ -7,10 +7,9 @@ Public surface:
   :class:`RecoveryAttemptResult`.
 * :class:`SubmitDiagnosisCapture` — the terminator-tool capture object.
 
-The function mirrors the shape of
-``carve.core.agents.extract_load.agent.run_extract_load_agent``: build
-tools per invocation, compose the system prompt with a trigger-context
-preamble, instantiate `AgentLoop`, drive the loop, capture the
+The function follows the standard harness-agent shape: build tools per
+invocation, compose the system prompt with a trigger-context preamble,
+instantiate `AgentLoop`, drive the loop, capture the
 ``submit_diagnosis`` payload, return.
 
 The orchestrator (``carve.cli.orchestrator.recovery``) is the layer
@@ -32,6 +31,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from carve.core.agents.loop import AgentLoop, AgentResult
+from carve.core.agents.m1_tools import (
+    make_allowlisted_write_file_tool,
+    make_read_file_tool,
+    make_run_snowflake_query_tool,
+)
 from carve.core.agents.observer import AgentObserver, NullObserver
 from carve.core.agents.recovery.invocation import (
     DeployDdlApplyInvocation,
@@ -42,11 +46,6 @@ from carve.core.agents.recovery.invocation import (
     TriggerContext,
 )
 from carve.core.agents.tools import Tool, ToolExecutionError, ToolInput, ToolResult
-from carve.core.agents.tools.extract_load_tools import (
-    make_read_file_tool,
-    make_run_snowflake_query_tool,
-    make_write_file_tool,
-)
 from carve.core.deploy.recovery import (
     RecoveryContext,
     RecoveryHandler,
@@ -92,9 +91,9 @@ class RecoveryAttemptResult:
 class SubmitDiagnosisCapture:
     """Captures the agent's terminator-tool payload.
 
-    Mirrors :class:`SubmitStepCapture` from extract-load but with the
-    recovery-specific schema (``category`` / ``summary`` /
-    ``action_taken``). A second ``submit_diagnosis`` call within the
+    A terminator-tool capture with the recovery-specific schema
+    (``category`` / ``summary`` / ``action_taken``). A second
+    ``submit_diagnosis`` call within the
     same capture raises ``ToolExecutionError`` — the loop's terminator
     semantics already prevent this in practice but the guard is cheap
     insurance.
@@ -441,7 +440,11 @@ def build_tools_for_invocation(
 
     allowed_paths = _allowed_write_paths(invocation)
     if allowed_paths is not None and allowed_paths:
-        tools.append(make_write_file_tool(project_dir, allowed_paths))
+        # The allow-listed (two-arg) write factory — recovery confines writes to
+        # `el/<name>/{main.py,requirements.txt}`. Imported under its true name (not
+        # aliased to the one-arg `make_write_file_tool`) so a refactor can't
+        # silently widen the write scope to all of project_dir.
+        tools.append(make_allowlisted_write_file_tool(project_dir, allowed_paths))
 
     if invocation.trigger == TriggerContext.DEPLOY_DDL_APPLY and snowflake_ddl_executor is not None:
         tools.append(make_run_snowflake_ddl_tool(snowflake_ddl_executor))
@@ -657,8 +660,8 @@ def run_recovery_agent(
 def _resolve_client(config: Any, client: Any | None) -> Any:
     """Return ``client`` if provided, else build one from ``config``.
 
-    Mirrors the extract-load agent's helper. Tests pass a fake client
-    that records calls; production callers leave this alone.
+    Tests pass a fake client that records calls; production callers
+    leave this alone.
     """
     from carve.core.agents.client_factory import make_client
 

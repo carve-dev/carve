@@ -21,11 +21,11 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from carve.core.agents.m1_tools import make_read_file_tool
 from carve.core.agents.permissions.gate import Approver, PermissionGate
 from carve.core.agents.subagent_registry import grant_stub_tool, is_grant_stub
 from carve.core.agents.tools import Tool
 from carve.core.agents.tools.bash_tool import make_bash_tool
-from carve.core.agents.tools.extract_load_tools import make_read_file_tool
 from carve.core.agents.tools.fs_tools import make_create_file_tool, make_edit_tool
 from carve.core.agents.tools.search_tools import make_glob_tool, make_grep_tool
 from carve.core.agents.tools.todo_tool import TodoList, make_todo_tool

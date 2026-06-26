@@ -15,11 +15,18 @@ These tests assert that:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
-from carve.core.agents.recovery.agent import make_run_snowflake_ddl_tool
-from carve.core.agents.tools import ToolExecutionError
+from carve.core.agents.recovery.agent import (
+    build_tools_for_invocation,
+    make_run_snowflake_ddl_tool,
+)
+from carve.core.agents.recovery.invocation import ElRunInvocation
+from carve.core.agents.tools import Tool, ToolExecutionError
+from carve.core.config.schema import Config, ModelsConfig, ProjectConfig, ServerConfig
 
 
 @dataclass
@@ -103,3 +110,45 @@ def test_run_snowflake_ddl_rejects_multi_statement() -> None:
 
     assert "Multi-statement input is not allowed" in str(excinfo.value)
     assert executor.calls == []
+
+
+# ---------------------------------------------------- recovery binds the
+# allow-listed write tool (the extract_load retirement rehomed the two-arg
+# allow-listed `make_write_file_tool` into `m1_tools`; this proves recovery's
+# tool assembly still binds the CONTAINED variant end-to-end, not the plain
+# one-arg one — the write scope stays `el/<name>/{main.py,requirements.txt}`).
+
+
+def _write_tool(tools: list[Tool]) -> Tool:
+    return next(t for t in tools if t.name == "write_file")
+
+
+def test_el_run_invocation_binds_allowlisted_write_tool(tmp_path: Path) -> None:
+    """`build_tools_for_invocation` for an EL-run failure binds the allow-listed write."""
+    invocation = ElRunInvocation(
+        pipeline_name="iowa",
+        active_target="dev",
+        project_dir=tmp_path,
+        config=Config(
+            project=ProjectConfig(name="rec-test"),
+            models=ModelsConfig(anthropic_api_key="sk-test"),
+            server=ServerConfig(state_store="postgresql://stub"),
+        ),
+        failed_run_id="run_x",
+        error_text="boom",
+    )
+    # The repository is only bound into the read-run-logs tool (never called at
+    # construction), so a mock suffices to assemble the tool set offline.
+    tools = build_tools_for_invocation(invocation, repository=MagicMock())
+    write = _write_tool(tools.tools)
+
+    # On-list write (el/iowa/main.py) is accepted.
+    result = write.executor({"path": "el/iowa/main.py", "content": "import dlt\n"})
+    assert isinstance(result, dict)
+    assert (tmp_path / "el" / "iowa" / "main.py").read_text(encoding="utf-8") == "import dlt\n"
+
+    # An off-list path under the SAME component is rejected — the bound tool is
+    # the allow-listed variant, not the plain one-arg writer.
+    with pytest.raises(ToolExecutionError, match="not on the write allow-list"):
+        write.executor({"path": "el/iowa/secret.py", "content": "x"})
+    assert not (tmp_path / "el" / "iowa" / "secret.py").exists()
