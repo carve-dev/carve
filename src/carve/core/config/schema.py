@@ -371,6 +371,31 @@ class ComponentConfig(BaseModel):
             raise ValueError(f"dbt_engine must be 'fusion' or 'dbt-core'; got {value!r}")
         return value
 
+    @field_validator("dbt_version")
+    @classmethod
+    def _safe_dbt_version(cls, value: str | None) -> str | None:
+        # `dbt_version` flows into BOTH a pip requirement (`dbt-core==<version>`)
+        # AND a managed-engine directory name (`<install_root>/<engine>-<version>`)
+        # that connect then execs (`<dir>/bin/dbt`). An unconstrained value is a
+        # path-traversal → code-execution sink (e.g. `../../../tmp/evil` escapes
+        # `install_root`) and a pip-token sink. Pin it to a version-token charset
+        # (no path separators, `..`, NUL, whitespace, or leading `-`), mirroring
+        # the `_safe_dbt_path`/`_safe_ref_branch` discipline already in this module.
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("dbt_version must not be empty")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", stripped):
+            raise ValueError(
+                "dbt_version must be a version token (alphanumerics and '.', '_', "
+                "'+', '-'; no path separators, whitespace, or leading '-'); "
+                f"got {value!r}"
+            )
+        if ".." in stripped:
+            raise ValueError(f"dbt_version must not contain '..'; got {value!r}")
+        return stripped
+
     @field_validator("dbt_env")
     @classmethod
     def _known_dbt_env(cls, value: str | None) -> str | None:

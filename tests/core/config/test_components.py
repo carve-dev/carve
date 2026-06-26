@@ -128,6 +128,29 @@ class TestComponentConfigValidation:
                 sync_mode="rebase",
             )
 
+    def test_valid_dbt_version_accepted(self) -> None:
+        c = ComponentConfig(type="dbt", mode="same-repo", dbt_version="2.0.0-rc1")
+        assert c.dbt_version == "2.0.0-rc1"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../../../../tmp/evil",  # path traversal → escapes install_root
+            "1.8.0/../evil",  # separator + traversal
+            "1.8/0",  # path separator
+            "-1.8.0",  # option-shaped (leading '-')
+            "1.8.0 --index-url x",  # whitespace / pip-token smuggle
+            "a..b",  # embedded '..'
+            "",  # empty
+        ],
+    )
+    def test_unsafe_dbt_version_rejected(self, bad: str) -> None:
+        # `dbt_version` flows into a managed-engine dir name that connect mkdirs
+        # + execs, and into a pip requirement — so an unconstrained value is a
+        # path-traversal/code-exec + pip-token sink. The validator rejects it.
+        with pytest.raises(ValidationError, match="dbt_version"):
+            ComponentConfig(type="dbt", mode="same-repo", dbt_version=bad)
+
 
 class TestComponentUrlValidation:
     """The `url` transport allow-list (defense-in-depth for `git clone`).

@@ -9,6 +9,7 @@ import typer
 
 from carve.cli.commands import (
     build,
+    connect,
     deploy,
     init,
     logs,
@@ -86,6 +87,7 @@ def _main_callback(
 
 
 app.command(name="init")(init.command)
+app.command(name="connect")(connect.command)
 app.command(name="plan")(plan.command)
 app.command(name="build")(build.command)
 app.command(name="plan-and-build")(plan_and_build.command)

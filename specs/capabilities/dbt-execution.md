@@ -56,6 +56,8 @@ For all **managed** backends: **Carve's value is orchestrating the *full cross-t
 
 ### Engine provisioning + pinning (bundled only)
 
+> **Updated during implementation (2026-06-26):** [connect](./connect.md)'s lean first slice now **provides the install half** named here. This capability's `engine.py` resolves + pins (and shipped first, leaving the install deferred); connect's `installer.install_engine` materializes the **dbt-core** engine into a Carve-managed venv and returns the binary path that is injected as `LocalDbtBackend(dbt_executable=…)` — closing the injected-path contract end-to-end. **Fusion (the Apache-2.0 dbt Core v2.0 Rust binary) is still deferred**: resolution pins it correctly, but its install raises `EngineInstallNotSupported`. So the bundled-local engine is *runnable today on the dbt-core path*; the Fusion path resolves/pins but does not yet install.
+
 Carve does **not** front-load "install dbt + pick a version" at `carve init`. For the `bundled` env, the engine is **provisioned lazily on first dbt use by the [onboarding agent](./connect.md)**: it resolves the engine/version by warehouse (Fusion-or-core per above), installs it into the worker's managed environment, and **writes the pin back into the component config** (`dbt_engine`/`dbt_version`). Magical on first touch, **declarative and reproducible thereafter** — a lockfile, not a black box. A power user may **elect + pin eagerly** at init (`carve init --dbt-engine … --dbt-version …`) for offline installs or version policy.
 
 **License guardrail:** the bundled engine is **dbt Core v2.0 (Apache 2.0)** — the OSS relicensing of the Fusion engine (June 2026) — **not** the ELv2 "dbt Fusion" commercial build, which forbids managed-service use and would taint OSS + hosted Carve.
