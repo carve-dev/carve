@@ -73,7 +73,8 @@ def test_alembic_upgrade_head_on_empty_postgres(
         tables = set(inspector.get_table_names())
 
         # The five M1-shape tables, the workspaces table, the runtime queue
-        # tables (0008), plus alembic's bookkeeping table.
+        # tables (0008), the scheduler tables (0009), plus alembic's bookkeeping
+        # table.
         assert {
             "runs",
             "logs",
@@ -84,6 +85,8 @@ def test_alembic_upgrade_head_on_empty_postgres(
             "jobs",
             "workers",
             "step_runs",
+            "schedules",
+            "schedule_changes",
         }.issubset(tables)
         assert "alembic_version" in tables
 
@@ -123,7 +126,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0008_runtime_queue"
+        assert head_rev == "0009_runtime_schedules"
     finally:
         engine.dispose()
 
@@ -742,5 +745,120 @@ def test_0008_downgrade_drops_queue_tables(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0007_workspaces"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0009_runtime_schedules
+# ---------------------------------------------------------------------------
+
+
+def test_0009_creates_schedule_tables_with_indexes_and_check(
+    postgres_state_store_url: str,
+) -> None:
+    """0009 lands schedules/schedule_changes + the partial due index + the CHECK."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        assert {"schedules", "schedule_changes"}.issubset(tables)
+
+        sched_indexes = {ix["name"] for ix in inspector.get_indexes("schedules")}
+        assert "ix_schedules_one_per_pipeline" in sched_indexes
+        assert "ix_schedules_due" in sched_indexes
+
+        change_indexes = {ix["name"] for ix in inspector.get_indexes("schedule_changes")}
+        assert "ix_schedule_changes_pipeline_changed_at" in change_indexes
+
+        # The pause-origin CHECK is declared.
+        checks = {c["name"] for c in inspector.get_check_constraints("schedules")}
+        assert "ck_schedules_pause_origin" in checks
+    finally:
+        engine.dispose()
+
+
+def test_0009_pause_origin_check_rejects_inconsistent_state(
+    postgres_state_store_url: str,
+) -> None:
+    """The CHECK rejects a paused row with NULL origin (and an active one with a set origin).
+
+    The ``paused_by IS NOT NULL`` guard is what makes the paused branch evaluate
+    to ``false`` (not NULL) for a NULL origin — a NULL-valued CHECK would PASS.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        now = datetime.now(UTC)
+        insert = text(
+            "INSERT INTO schedules "
+            "(id, pipeline, cron, target, paused, paused_by, timezone, "
+            " tenant_id, created_at, updated_at) "
+            "VALUES (:id, :p, '* * * * *', 'dev', :paused, :paused_by, 'UTC', "
+            " 1, :now, :now)"
+        )
+        # Valid: active with NULL origin.
+        with engine.begin() as conn:
+            conn.execute(
+                insert,
+                {"id": "s1", "p": "a", "paused": False, "paused_by": None, "now": now},
+            )
+        # Valid: paused with origin 'recovery' (the deferred recovery value ships).
+        with engine.begin() as conn:
+            conn.execute(
+                insert,
+                {"id": "s2", "p": "b", "paused": True, "paused_by": "recovery", "now": now},
+            )
+        # Invalid: paused with NULL origin.
+        with engine.begin() as conn:
+            try:
+                conn.execute(
+                    insert,
+                    {"id": "s3", "p": "c", "paused": True, "paused_by": None, "now": now},
+                )
+                raise AssertionError("expected the CHECK to reject paused + NULL origin")
+            except IntegrityError:
+                pass
+        # Invalid: active with a set origin.
+        with engine.begin() as conn:
+            try:
+                conn.execute(
+                    insert,
+                    {"id": "s4", "p": "d", "paused": False, "paused_by": "user", "now": now},
+                )
+                raise AssertionError("expected the CHECK to reject active + set origin")
+            except IntegrityError:
+                pass
+    finally:
+        engine.dispose()
+
+
+def test_0009_downgrade_drops_schedule_tables(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0009 -> 0008 drops schedules/schedule_changes."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert {"schedules", "schedule_changes"}.issubset(set(inspect(engine).get_table_names()))
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0008_runtime_queue")
+
+        remaining = set(inspect(engine).get_table_names())
+        assert "schedules" not in remaining
+        assert "schedule_changes" not in remaining
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0008_runtime_queue"
     finally:
         engine.dispose()

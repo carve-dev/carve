@@ -1,15 +1,17 @@
-"""``carve schedule`` — the narrow code→data re-seed bridge.
+"""``carve schedule`` — the live schedule surface (data) + the deferred reseed bridge.
 
-This unit ships only ``carve schedule reseed <pipeline>`` as a **deferred
-stub**. ``reseed`` re-applies a pipeline's ``[seed_schedule]`` block to the
-live ``schedules`` row — but that table does not exist yet (it is the
-Increment-4 runtime's), so there is nothing to re-apply onto. The command
-exits non-zero with a clear "not available yet" message rather than silently
-no-opping.
+The everyday controls operate on the ``schedules`` table as **data** (the
+scheduler's source of truth):
 
-The everyday schedule controls (``carve schedule list/show/pause/resume``) are
-the runtime's (they operate on the ``schedules`` table as data); they are out
-of scope here and deliberately not registered.
+* ``carve schedule list`` / ``show`` — read the live schedule + its audit trail.
+* ``carve schedule pause`` / ``resume`` — gate firing instantly (audited).
+* ``carve schedule set-cron`` — change (or stand up) a schedule's cron instantly
+  (audited); UPSERTs so a schedule can be created without the reconciler-seed.
+
+``carve schedule reseed <pipeline>`` stays a **deferred stub**: it re-applies a
+pipeline's ``[seed_schedule]`` block onto the live row, which is the PIPELINES
+reconciler's job (spec 08) — it exits non-zero with a clear "not available yet"
+message rather than silently no-opping.
 """
 
 from __future__ import annotations
@@ -17,13 +19,27 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+from carve.cli.commands.schedule.commands import (
+    list_command,
+    pause_command,
+    resume_command,
+    set_cron_command,
+    show_command,
+)
+
 console = Console()
 
 app = typer.Typer(
     name="schedule",
-    help="Re-seed a pipeline's schedule from its [seed_schedule] block.",
+    help="List, show, pause, resume, and set the cron of live schedules.",
     no_args_is_help=True,
 )
+
+app.command(name="list")(list_command)
+app.command(name="show")(show_command)
+app.command(name="pause")(pause_command)
+app.command(name="resume")(resume_command)
+app.command(name="set-cron")(set_cron_command)
 
 
 @app.command(name="reseed")

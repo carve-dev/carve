@@ -40,7 +40,9 @@ The runtime is deliberately narrow per design decision [5.6](../ARCHITECTURE.md)
 
 ### State store additions
 
-> **Updated during implementation (2026-06-26):** the runtime's *lean first slice* shipped only the three tables the queue→run→persist loop needs — `jobs`, `workers`, and `step_runs` (Alembic migration `0008_runtime_queue`). The `schedules` / `schedule_changes` / `events` / `*_archive` tables below are **DEFERRED** to later runtime slices (they belong to the scheduler / archiver / events loops, which this slice does not ship). One correction that matters: **`step_runs` is created by THIS migration**, not carried from M1 — see the corrected note at the end of this section. The full table set below remains the spec's target design; the SQL that *shipped* is the `jobs`/`workers`/`step_runs` subset (with the partial unique indexes intact and a `jobs.error_message` column added during implementation; `id` columns are app-generated `String` rather than `UUID`).
+> **Updated during implementation (2026-06-26):** the runtime's *lean first slice* shipped only the three tables the queue→run→persist loop needs — `jobs`, `workers`, and `step_runs` (Alembic migration `0008_runtime_queue`). One correction that matters: **`step_runs` is created by THIS migration**, not carried from M1 — see the corrected note at the end of this section.
+>
+> **Updated during implementation (2026-06-26, scheduler slice):** the **scheduler slice** (migration `0009_runtime_schedules`) now ships the **`schedules` + `schedule_changes`** tables — un-fenced below from `[DEFERRED — scheduler slice]` to `[SHIPPED — migration 0009]`. Implementation deltas worth recording: (1) the **`ck_schedules_pause_origin` CHECK carries a `paused_by IS NOT NULL` guard** (both the ORM `__table_args__` and the migration) — without it a `paused=true, paused_by=NULL` row passes, because a SQL-NULL-valued CHECK passes in Postgres; this is the **CHECK-NULL bug fixed during this slice**, regression-tested at both the ORM and raw-SQL layers; (2) `id` columns are app-generated `String` (`sched_<uuid hex>`), not DB `UUID`; (3) `schedule_changes.actor_token_id` is **nullable pending the auth slice** (the CLI writes `source='cli'`, `actor_token_id=NULL`); (4) the per-mutation event emit is a **no-op `_emit(kind, payload)` seam** (`schedules._emit`, `TODO(events slice)`), not a live emitter — the `events` table + emitter stay deferred. The `events` / `*_archive` tables below remain **DEFERRED** to later runtime slices (the archiver / events loops, which this slice does not ship). The full table set below is the spec's target design.
 
 Per ARCHITECTURE §9.3, the runtime's full table set is below (the **DEFERRED** tables are fenced inline). The shipped migration `0008_runtime_queue` creates `jobs` + `workers` + `step_runs`:
 
@@ -128,7 +130,9 @@ CREATE INDEX ix_events_unprocessed ON events(occurred_at) WHERE processed_at IS 
 
 -- Live schedule (DATA): created + owned here. The reconciler (spec 08) seeds/maintains rows at
 -- first registration; the scheduler below reads this as its source of truth; `carve schedule
--- pause/resume/set-cron` mutate it live. See ARCHITECTURE §9.1.  [DEFERRED — scheduler slice]
+-- pause/resume/set-cron` mutate it live. See ARCHITECTURE §9.1.  [SHIPPED — migration 0009]
+-- Shipped shape: `id` is an app-generated String (`sched_<hex>`), not UUID; the CHECK below
+-- carries the load-bearing `paused_by IS NOT NULL` guard (see the callout above).
 CREATE TABLE schedules (
   id UUID PRIMARY KEY,
   pipeline TEXT NOT NULL,
@@ -142,15 +146,19 @@ CREATE TABLE schedules (
   next_fires_at TIMESTAMPTZ,
   tenant_id BIGINT NOT NULL DEFAULT 1,
   -- pause origin is set iff paused; there is no 'code' origin ([seed_schedule] cannot pause, spec 08)
+  -- SHIPPED with a `paused_by IS NOT NULL` guard: a bare `paused_by IN (...)` yields SQL NULL for a
+  -- NULL origin, and a NULL-valued CHECK PASSES in Postgres — so the guard is what actually rejects a
+  -- `paused=true, paused_by=NULL` row (the CHECK-NULL bug fixed this slice; regression-tested ORM + raw-SQL).
   CONSTRAINT ck_schedules_pause_origin CHECK (
     (paused = false AND paused_by IS NULL) OR
-    (paused = true  AND paused_by IN ('user', 'recovery'))
+    (paused = true  AND paused_by IS NOT NULL AND paused_by IN ('user', 'recovery'))
   )
 );
 CREATE UNIQUE INDEX ix_schedules_one_per_pipeline ON schedules(pipeline, tenant_id);
 CREATE INDEX ix_schedules_due ON schedules(next_fires_at) WHERE paused = false;
 
--- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)  [DEFERRED — scheduler slice]
+-- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)  [SHIPPED — migration 0009]
+-- Shipped shape: `actor_token_id` is nullable pending the auth slice (the CLI writes source='cli', actor_token_id=NULL).
 CREATE TABLE schedule_changes (
   id BIGSERIAL PRIMARY KEY,
   pipeline TEXT NOT NULL,
@@ -175,7 +183,9 @@ Notes:
 
 ### Scheduler
 
-`src/carve/runtime/scheduler.py` implements a single asyncio loop inside `carve serve`:
+> **Updated during implementation (2026-06-26, scheduler slice):** the scheduler **shipped** at `src/carve/runtime/scheduler.py`, factored into two functions rather than the single inline loop sketched below: a synchronous **`run_due_once(schedules, job_queue, now, *, tenant_id=1) -> int`** (one deterministic pass: `list_due` → `enqueue_scheduled(scheduled_for=this_tick)` → `set_last_fired`, returning the count enqueued) and the async **`scheduler_loop(schedules, job_queue, *, interval_s=30.0, clock=system_clock, shutdown=None, tenant_id=1)`** that bridges each `run_due_once` off the event loop via **`asyncio.to_thread`** (the state store is sync — same pattern as the shipped `worker.py`) and sleeps to the next boundary. Concrete shipped shape vs. the sketch: the repo is a constructed **`Schedules`** object (`core/state/schedules.py`), not `state_store.schedules`; cron math lives in the **`runtime/cron.py`** module functions **`this_tick_at(cron, now, timezone)` / `next_tick_after(...)`** (timezone-aware via croniter + zoneinfo, DST-correct, raising typed `CronError` on an unsatisfiable expression), not a `schedule.this_tick_at()` method; the `Clock` seam is `runtime/clock.py` (`Clock` Protocol / `system_clock` / `FakeClock`) with **`sleep_until_next_boundary(interval_s)`** doing the epoch-aligned boundary math. `set_last_fired` advances `next_fires_at` to the FOLLOWING tick in the same transaction (the partial-index-stays-accurate property below holds). The `schedule.skipped`/`schedule.fired` emits go through the no-op **`schedules._emit`** seam (no `events` table this slice). A pass that raises is logged and swallowed so one bad poll never kills the loop. The default interval shipped as **30s**. The conceptual loop below is retained as design intent.
+
+`src/carve/runtime/scheduler.py` implements a single asyncio loop inside `carve serve` (original design sketch):
 
 ```python
 async def scheduler_loop(state_store: StateStore, *, interval_s: float = 30.0, clock: Clock = system_clock):
@@ -208,14 +218,16 @@ Key properties:
 
 ### Schedule mutations (live data)
 
-The schedule is **data**, mutated instantly via `carve schedule` (and the equivalent REST/MCP surface wired in spec 09). `src/carve/cli/schedule.py` ships:
+> **Updated during implementation (2026-06-26, scheduler slice):** the live-mutation surface **shipped**. The CLI lives at **`src/carve/cli/commands/schedule/`** (`__init__.py` Typer group + `commands.py`), not `cli/schedule.py`; the mutators are methods on the constructed **`Schedules`** repo (`core/state/schedules.py`: `pause`/`resume`/`set_cron`, plus `seed`/`set_last_fired`/`list_due`/`list_all`/`get`/`list_changes`). Each mutator runs **one transaction** that row-locks (`FOR UPDATE`), mutates the row, recomputes `next_fires_at` on a cron/timezone change, appends a `schedule_changes` audit row, and calls the **no-op `_emit` seam** (the `schedule.*` event-emit stays a seam — `events` table deferred). Shipped deltas vs. the sketch: `set-cron`'s target flag is **`--target-pipeline`** (not `--target`), and `set_cron` **UPSERTs** — it creates the row if absent (default target `'prod'`) so a schedule can be stood up end-to-end without the deferred reconciler-seed; cron + timezone are validated up front (exit 2). **STILL DEFERRED (kept fenced below):** the recovery **`auto_pause_recovery`/`auto_resume_recovery`** system mutators (the `paused_by='recovery'` column value + CHECK origin ship; the recovery mutator integration defers — they exist in the spec body, not in code); `carve schedule reseed` (a deferred stub that exits non-zero with a clear message — the `[seed_schedule]` re-apply is PIPELINES/spec-08's job).
+
+The schedule is **data**, mutated instantly via `carve schedule` (and the equivalent REST/MCP surface wired in spec 09). `src/carve/cli/commands/schedule/` ships:
 
 ```
 carve schedule list                         # all schedules with cron, timezone, paused, last/next fire
 carve schedule show <pipeline>
 carve schedule pause <pipeline> [--reason]
 carve schedule resume <pipeline> [--reason]
-carve schedule set-cron <pipeline> "<cron>" [--timezone TZ] [--reason]
+carve schedule set-cron <pipeline> "<cron>" [--timezone TZ] [--target-pipeline TARGET] [--reason]
 ```
 
 These call `state_store.schedules` mutators (`pause`, `resume`, `set_cron`), each of which, in one transaction:
@@ -492,7 +504,9 @@ The registry is populated at `carve serve` startup with the built-in executors (
 
 ### `carve serve` lifecycle
 
-`src/carve/cli/serve.py`:
+> **Updated during implementation (2026-06-26, scheduler slice):** a **minimal, scheduler-only** `carve serve` shipped at **`src/carve/cli/commands/serve.py`** — it runs JUST the `scheduler_loop` as a single asyncio task with graceful shutdown (SIGINT/SIGTERM set an `asyncio.Event`; falls back to `KeyboardInterrupt` where signal handlers can't be installed), over the same setup block as `carve worker` (`load_config` → resolve active target → engine → `initialize_database` → `JobQueue` + `Schedules`). Its only flag this slice is **`--interval`** (default 30s). **DEFERRED:** the full multi-loop **SUPERVISOR** (scheduler + reaper + archiver + worker pool + FastAPI), every `--port`/`--host`/`--workers`/`--no-*` flag, the auto-migrate/token-bootstrap startup sequence, and the in-flight-drain grace period below — all retained as design intent. The startup/shutdown sequences below are the supervisor's target design, not what the scheduler-only serve does.
+
+`src/carve/cli/serve.py` (original design sketch — the full supervisor):
 
 ```
 carve serve [OPTIONS]
@@ -578,12 +592,20 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 > - **Integration (worker end-to-end):** a worker runs a queued job end-to-end (job + run + `step_runs` all terminal); `run_once` on an empty queue is a no-op; a second `run_once` after completion claims nothing; **a setup failure on a claimed job marks it failed, not orphaned** (`tests/runtime/test_worker_end_to_end.py`).
 > - **CLI:** `carve worker --once` exits zero on an empty queue and after running a job; `--workers > 1` is rejected (`tests/cli/commands/test_worker_command.py`).
 >
-> The bullets below remain the spec's full-runtime test target (**DEFERRED** with the scheduler / reaper / archiver / serve slices):
+> > **Updated during implementation (2026-06-26, scheduler slice):** the **scheduler slice** shipped tests for the cron math / scheduler / schedules repo / `carve schedule` / minimal `carve serve` / migration 0009 it delivered. Shipped this slice:
+> - **Unit (cron):** `*/5` ticks, strictly-after-an-exact-tick, inclusive `this_tick_at`, UTC-aware results, schedule-timezone evaluation, **DST spring-forward (no double/skip) + fall-back (fires once)**, and the **unsatisfiable cron → typed `CronError`** (not a croniter traceback) (`tests/runtime/test_cron.py`).
+> - **Unit (scheduler):** a due schedule fires exactly once; a second pass in the same window **skips, no double-enqueue**; a fire **advances `next_fires_at`** so it doesn't re-fire; a paused row is skipped; a 20-minute clock jump produces **one** fire, not four; `scheduler_loop` is deterministic + boundary-aligned under `FakeClock` and stops on shutdown without firing (`tests/runtime/test_scheduler.py`).
+> - **Unit (schedules repo):** `seed` creates + is idempotent-upsert; `list_due` returns only due/unpaused (and excludes `next_fires_at IS NULL`); `set_last_fired` advances to the following tick + leaves the row not-due; `pause`/`resume` set/clear origin + append audit; `set_cron` recomputes + audits + UPSERTs when absent; **the `ck_schedules_pause_origin` CHECK rejects a paused-NULL-origin row, rejects an active-non-NULL-origin row, and accepts the `recovery` origin** (`tests/runtime/state/test_schedules_repository.py`).
+> - **CLI (`carve schedule`):** `set-cron` creates + audits; bad cron / bad timezone / unsatisfiable → **exit 2 (no write)**; `pause`/`resume` mutate + audit; unknown pipeline → exit 1; `list`/`show` render (`tests/cli/commands/test_schedule_command.py`).
+> - **CLI (`carve serve`):** the scheduler-only serve runs the loop + stops on shutdown; help describes scheduler-only; bad config → exit 2 (`tests/cli/commands/test_serve_command.py`).
+> - **Migration 0009:** creates the schedule tables + indexes + CHECK; the **raw-SQL** pause-origin CHECK rejects an inconsistent state; downgrade drops both (`tests/migrations/test_migrations.py`).
+>
+> The bullets below remain the spec's full-runtime test target (the **scheduler / schedule-mutation / pause-origin** bullets are now **SHIPPED** by the tests above; the **reaper / archiver / serve-supervisor** bullets stay **DEFERRED** with their slices):
 
-- **Unit (scheduler):** cron `*/5 * * * *` fires at expected times under a controlled `Clock`; missed ticks (clock jumps forward by 20 minutes) produce one fire, not four
-- **Unit (schedule source of truth):** the scheduler fires from the `schedules` table row, not from `pipelines/<name>.toml`; a paused row is skipped by `list_due`; mutating a `[seed_schedule]` block (without `carve schedule reseed`) does not change which ticks fire
-- **Integration (schedule mutation audited):** `carve schedule pause`/`resume`/`set-cron` updates the row, takes effect within one scheduler loop interval, emits the matching `schedule.*` event, and appends a `schedule_changes` row with `before`/`after`/`actor_token_id`/`source` — no deploy/reconcile involved
-- **Unit (pause origin gate):** `auto_pause_recovery` sets `paused_by='recovery'` on an active row but leaves a `paused_by='user'` row untouched; `auto_resume_recovery` resumes a `paused_by='recovery'` row but is suppressed when a user paused it in the interim; the `ck_schedules_pause_origin` CHECK rejects a paused row with NULL `paused_by` (and an active row with a non-NULL one)
+- **Unit (scheduler):** cron `*/5 * * * *` fires at expected times under a controlled `Clock`; missed ticks (clock jumps forward by 20 minutes) produce one fire, not four — **SHIPPED**
+- **Unit (schedule source of truth):** the scheduler fires from the `schedules` table row, not from `pipelines/<name>.toml`; a paused row is skipped by `list_due`; mutating a `[seed_schedule]` block (without `carve schedule reseed`) does not change which ticks fire — **SHIPPED** (the scheduler reads only `Schedules.list_due`; paused-row skip is tested)
+- **Integration (schedule mutation audited):** `carve schedule pause`/`resume`/`set-cron` updates the row, takes effect within one scheduler loop interval, emits the matching `schedule.*` event, and appends a `schedule_changes` row with `before`/`after`/`actor_token_id`/`source` — no deploy/reconcile involved — **SHIPPED** (the `schedule.*` *emit* rides the no-op `_emit` seam — the durable `events` row is deferred with the events slice)
+- **Unit (pause origin gate):** `auto_pause_recovery` sets `paused_by='recovery'` on an active row but leaves a `paused_by='user'` row untouched; `auto_resume_recovery` resumes a `paused_by='recovery'` row but is suppressed when a user paused it in the interim; the `ck_schedules_pause_origin` CHECK rejects a paused row with NULL `paused_by` (and an active row with a non-NULL one) — **PARTIAL**: the **CHECK** half is SHIPPED + tested (ORM + raw-SQL); the `auto_pause_recovery`/`auto_resume_recovery` mutator half is **DEFERRED** (the recovery slice — the column value + CHECK origin ship, the mutators don't)
 - **Unit (job_queue dedup):** two consecutive `enqueue_scheduled` for the same pipeline+scheduled_for: the second raises `QueuedJobAlreadyExists`
 - **Unit (job_queue manual upsert):** `enqueue_manual` on a pipeline with an existing queued job updates it; the returned job_id matches the existing job's id
 - **Unit (optimistic claim):** spawn 10 concurrent `claim_next` calls against 1 queued job; exactly one returns a job, nine return None
@@ -600,7 +622,9 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 
 ## Acceptance
 
-> **Updated during implementation (2026-06-26):** the criteria below are the **full-runtime** acceptance target and remain the spec's bar. The **lean first slice** satisfies the slice-scoped subset: **`carve worker --once`** (and the loop) against a freshly-initialized Postgres claims a queued job, creates its `runs` row, transitions it to `running`, executes the pipeline, and persists `step_runs` + the terminal `runs`/`jobs` rows; the **partial unique indexes structurally prevent more than one queued and one running job per pipeline**; **50 concurrent manual triggers** produce 1 running + 1 queued (the `enqueue_manual` upsert), not 50 queued; a worker failure after claim never orphans the job (it is marked `failed`). The scheduler / `carve schedule` / reaper / archiver / `carve serve` / graceful-shutdown criteria are **DEFERRED** with their slices.
+> **Updated during implementation (2026-06-26):** the criteria below are the **full-runtime** acceptance target and remain the spec's bar. The **lean first slice** satisfies the slice-scoped subset: **`carve worker --once`** (and the loop) against a freshly-initialized Postgres claims a queued job, creates its `runs` row, transitions it to `running`, executes the pipeline, and persists `step_runs` + the terminal `runs`/`jobs` rows; the **partial unique indexes structurally prevent more than one queued and one running job per pipeline**; **50 concurrent manual triggers** produce 1 running + 1 queued (the `enqueue_manual` upsert), not 50 queued; a worker failure after claim never orphans the job (it is marked `failed`).
+>
+> **Updated during implementation (2026-06-26, scheduler slice):** the **scheduler slice** satisfies the next subset: the **scheduler treats the `schedules` table as the source of truth** and fires due rows onto the queue (within one ≤30s loop interval), advancing `next_fires_at` so each window fires once; **`carve schedule pause/resume/set-cron` changes firing within one loop interval without a deploy/reconcile, and every such change appends a `schedule_changes` audit row**; **a human's explicit pause is structurally protected** — the `ck_schedules_pause_origin` CHECK (with the `paused_by IS NOT NULL` guard) ships, so the recovery slice's `auto_pause_recovery`/`auto_resume_recovery` will land against a complete origin column (the *mutators themselves* — and thus the "recovery never overrides a `user` pause" runtime rule — are **DEFERRED** with the recovery slice). **Still DEFERRED** with their slices: reaper stale-claim detection, the archiver verify-then-delete, the full `carve serve` supervisor + graceful drain, and crash recovery.
 
 - `carve serve --workers 1` against a freshly-initialized Postgres runs end-to-end: scheduler fires due jobs, worker claims and runs them, reaper reclaims stale claims, archiver moves old rows
 - The scheduler treats the `schedules` table as the source of truth; `carve schedule pause/resume/set-cron` changes firing within one loop interval without a deploy or reconcile, and every such change appends a `schedule_changes` audit row
@@ -635,4 +659,5 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 - **Archive table partitioning.** *Implementation default.* No partitioning in OSS (a single-team install's archive grows slowly enough that partitioning is unjustified complexity). Hosted partitions by month for query performance — that's a hosted-side concern, out of scope for this spec.
 - **Backpressure when the queue is overloaded.** *Implementation default.* No special handling initially; if the queue grows unbounded, that's the user's signal to add workers. Future enhancement: a `max_queue_depth` setting that rejects new triggers above the threshold. Defer until someone hits it.
 - **Behavior when Postgres becomes unreachable mid-run.** *Implementation default.* Workers attempt to reconnect with backoff; heartbeats stop; reaper reclaims the job after threshold. The in-flight subprocess (dlt/dbt) keeps running and may complete its destination writes — those are idempotent enough (dlt's incremental state, dbt's run_results) that the eventual rerun won't double-write. Documented in `docs/runtime-troubleshooting.md`.
-- **Ownership of `schedule_changes` and the `carve schedule` live-mutation surface.** *Needs human confirmation — smallest-reasonable choice made.* The reference model and ADR name the `schedule_changes` audit log + the `schedule` RBAC scope but do not pin which spec ships them; spec 08 explicitly delegates the live `schedules` table and `carve schedule list/show/pause/resume` to this spec (08 §"Out of scope"). So this spec ships the `schedule_changes` table (migration 0008) and `cli/schedule.py`, while spec 08 retains `[seed_schedule]` + `carve schedule reseed`. Confirm this split (vs. ARCHITECTURE §9.3 listing `schedules` among earlier tables) when specs 08/09 are next touched.
+- **Owed (non-blocking, scheduler slice): convert `Schedules.seed`/`set_cron`'s create path from check-then-insert to `ON CONFLICT`.** *Forward item — flagged by the python reviewer, not a change in this slice.* `seed`/`set_cron` row-lock then insert-or-update (`_get_locked` → `add`), which is correct for this slice's **single-actor CLI** create path. But the FUTURE PIPELINES reconciler will call `seed` **concurrently** at registration, so before/with the reconciler slice the create path should convert to `INSERT … ON CONFLICT (pipeline, tenant_id) DO UPDATE` — matching the shipped `JobQueue.enqueue_scheduled`/`enqueue_manual` ON-CONFLICT precedent — to close the concurrent-seed race. Pick it up when the reconciler-seed lands.
+- **Ownership of `schedule_changes` and the `carve schedule` live-mutation surface.** ✅ **CONFIRMED + IMPLEMENTED (2026-06-26, scheduler slice).** This slice ships the split the engineer flagged, resolving the open question: **this spec (runtime) owns** the live `schedules` table + `schedule_changes` (migration `0009_runtime_schedules`) + the `carve schedule list/show/pause/resume/set-cron` mutation surface (`cli/commands/schedule/`) + the `Schedules` repo's mutators; **PIPELINES/spec-08 keeps** the `[seed_schedule]` reconciler-seed + `carve schedule reseed` (a deferred stub here that exits non-zero and points at the reconciler). Note: `schedule_changes` shipped in migration **0009** (the scheduler slice), not 0008 (the original "migration 0008" guess predated the slice split). The split is consistent with 08 §"Out of scope" delegating the live table + mutation surface to this spec; ARCHITECTURE §9.3's table ordering is descriptive, not an ownership claim.

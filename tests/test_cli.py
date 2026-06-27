@@ -109,7 +109,6 @@ def test_version_matches_pyproject(runner: CliRunner) -> None:
 @pytest.mark.parametrize(
     ("command", "args"),
     [
-        ("serve", []),
         ("version", []),
     ],
 )
@@ -118,7 +117,13 @@ def test_command_stub_exits_zero(
     command: str,
     args: list[str],
 ) -> None:
-    """Stubs that haven't grown a real implementation yet still exit 0."""
+    """Stubs that haven't grown a real implementation yet still exit 0.
+
+    ``serve`` graduated to the real (minimal, scheduler-only) command in the
+    Increment-4 scheduler slice — it now resolves config + runs the loop, so it
+    exits 2 without a project (its real behavior is covered by
+    ``tests/cli/commands/test_serve_command.py``) and no longer belongs here.
+    """
     result = runner.invoke(app, [command, *args])
     assert result.exit_code == 0, result.output
 
