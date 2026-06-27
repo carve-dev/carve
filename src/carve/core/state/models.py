@@ -401,6 +401,122 @@ class StepRun(Base):
     created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Scheduler: schedules + schedule_changes (Increment 4 — scheduler slice)
+# ---------------------------------------------------------------------------
+#
+# The scheduler treats ``schedules`` as the **source of truth** (not
+# ``pipelines/<name>.toml``, not the reconciler). A row fires its pipeline onto
+# the ``jobs`` queue at each cron tick; ``carve schedule pause/resume/set-cron``
+# mutates the live row instantly, and every mutation appends a
+# ``schedule_changes`` audit row. The ``[seed_schedule]`` reconciler-seed +
+# ``carve schedule reseed`` (PIPELINES) and the full ``events`` table/emitter
+# are deferred — this slice ships the live schedule + its audit trail only.
+
+
+class Schedule(Base):
+    """A live pipeline schedule — the scheduler's source of truth.
+
+    One row per ``(pipeline, tenant_id)`` (the unique
+    ``ix_schedules_one_per_pipeline``). ``next_fires_at`` is the load-bearing
+    column: the scheduler's ``list_due`` selects ``paused = false AND
+    next_fires_at <= now`` (riding the **partial** ``ix_schedules_due`` index,
+    ``WHERE paused = false``), and every fire must **advance** ``next_fires_at``
+    to the FOLLOWING cron tick in the same transaction — otherwise the row stays
+    due and re-fires every loop tick (the dedup backstop would mask it, which is
+    the wrong reason). ``cron`` is evaluated in ``timezone`` (DST-correct via
+    croniter + zoneinfo); ``next_fires_at``/``last_fired_at`` are stored UTC-aware.
+
+    ``paused`` gates firing; ``paused_by`` records the *origin* of a pause
+    (``user`` via CLI/API, or ``recovery`` for the deferred auto-pause). The
+    ``ck_schedules_pause_origin`` CHECK structurally enforces "origin is set iff
+    paused, and is one of ('user', 'recovery')" so the later recovery slice's
+    ``auto_pause_recovery`` lands against a complete, correct column.
+    """
+
+    __tablename__ = "schedules"
+    __table_args__ = (
+        # Pause origin is set iff the row is paused, and is one of the two
+        # allowed origins. Recovery auto-pause (origin='recovery') ships as a
+        # valid value now; the recovery *mutators* are deferred.
+        # ``paused_by IS NOT NULL`` is load-bearing: a bare
+        # ``paused_by IN (...)`` yields SQL NULL when ``paused_by`` is NULL, and
+        # a CHECK that evaluates to NULL PASSES (Postgres only rejects an
+        # explicit ``false``). The ``IS NOT NULL`` guard forces the paused branch
+        # to ``false`` (not NULL) for a NULL origin, so the row is rejected.
+        CheckConstraint(
+            "(paused = false AND paused_by IS NULL) "
+            "OR (paused = true AND paused_by IS NOT NULL "
+            "AND paused_by IN ('user', 'recovery'))",
+            name="ck_schedules_pause_origin",
+        ),
+        # One live schedule per pipeline+tenant.
+        Index(
+            "ix_schedules_one_per_pipeline",
+            "pipeline",
+            "tenant_id",
+            unique=True,
+        ),
+        # The due-query index: ``list_due`` selects unpaused rows whose
+        # next_fires_at has passed. Partial (``WHERE paused = false``) so paused
+        # rows never enter the scan.
+        Index(
+            "ix_schedules_due",
+            "next_fires_at",
+            postgresql_where=sa.text("paused = false"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    # ``pipeline`` is a plain string, NOT a FK to ``pipelines.name`` — a schedule
+    # may be seeded for a pipeline that exists on disk before its ``pipelines``
+    # row is written by a build (same rationale as ``jobs.pipeline``).
+    pipeline: Mapped[str]
+    cron: Mapped[str]
+    target: Mapped[str]
+    paused: Mapped[bool] = mapped_column(default=False)
+    paused_by: Mapped[str | None] = mapped_column(default=None)
+    pause_reason: Mapped[str | None] = mapped_column(default=None)
+    timezone: Mapped[str] = mapped_column(default="UTC")
+    tenant_id: Mapped[int] = mapped_column(default=1)
+    last_fired_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    next_fires_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
+class ScheduleChange(Base):
+    """One audited mutation of a ``schedules`` row (the live-change trail).
+
+    Appended in the same transaction as the row mutation it records.
+    ``change_kind`` is ``pause``/``resume``/``set_cron``/``reseed`` (``reseed``
+    ships as a valid value for the deferred reconciler-seed); ``before``/``after``
+    are JSONB snapshots of the changed fields. ``actor_token_id`` is the
+    mutating auth token — **nullable** (NULL for the code seed and for the CLI
+    until the auth slice fills it; ``source='cli'`` records the surface).
+    """
+
+    __tablename__ = "schedule_changes"
+    __table_args__ = (
+        Index(
+            "ix_schedule_changes_pipeline_changed_at",
+            "pipeline",
+            "changed_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    pipeline: Mapped[str]
+    change_kind: Mapped[str]
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    actor_token_id: Mapped[str | None] = mapped_column(default=None)
+    source: Mapped[str] = mapped_column(default="cli")
+    reason: Mapped[str | None] = mapped_column(default=None)
+    tenant_id: Mapped[int] = mapped_column(default=1)
+    changed_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
 __all__: list[Any] = [
     "Base",
     "Build",
@@ -409,6 +525,8 @@ __all__: list[Any] = [
     "Pipeline",
     "Plan",
     "Run",
+    "Schedule",
+    "ScheduleChange",
     "StepRun",
     "Worker",
     "Workspace",
