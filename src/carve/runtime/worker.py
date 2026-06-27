@@ -38,7 +38,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import carve.runtime.heartbeat as heartbeat
 from carve.core.state.job_queue import PipelineAlreadyRunning
+from carve.runtime.clock import Clock, system_clock
 from carve.runtime.execute_pipeline import execute_pipeline
 from carve.runtime.persisting_step_sink import PersistingStepSink
 from carve.runtime.run_context import PipelineRun
@@ -96,6 +98,9 @@ class WorkerContext:
     # Injectable for tests: a registry wired with fake dlt/dbt/sql seams so the
     # worker runs end-to-end creds-free. ``None`` -> the real builder.
     registry_factory: RegistryFactory | None = None
+    # The time/sleep seam for the heartbeat loop — ``system_clock`` in
+    # production; a ``FakeClock`` in tests drives the heartbeat sleep-free.
+    clock: Clock = system_clock
 
     def build_registry(self) -> StepExecutorRegistry:
         """Build the dlt→dbt→sql registry for a run.
@@ -147,7 +152,12 @@ async def run_once(ctx: WorkerContext) -> bool:
             target=job.target,
         )
         try:
-            await asyncio.to_thread(ctx.job_queue.transition_to_running, job.id, run_id)
+            transitioned = await asyncio.to_thread(
+                ctx.job_queue.transition_to_running,
+                job.id,
+                run_id,
+                expected_worker_id=worker_id,
+            )
         except PipelineAlreadyRunning:
             # Another job for this pipeline is already running; back off cleanly
             # (release the claim, cancel this run) — not a failure.
@@ -160,35 +170,68 @@ async def run_once(ctx: WorkerContext) -> bool:
             )
             return False
 
+        if not transitioned:
+            # The ownership guard no-opped: this worker stalled past the reaper
+            # threshold, was reclaimed, and the job is now queued / owned by a
+            # new worker. We lost the claim — do NOT run (the new owner will).
+            # Cancel our orphaned run; the reclaim left the job for the new
+            # owner, so there is nothing to fail-stomp here.
+            logger.warning(
+                "worker %s lost claim on job %s (reclaimed); skipping", worker_id, job.id
+            )
+            await asyncio.to_thread(
+                ctx.repository.update_run_status,
+                run_id,
+                "cancelled",
+                "claim lost (reclaimed by reaper)",
+            )
+            return False
+
         await asyncio.to_thread(ctx.repository.update_run_status, run_id, "running")
-        result = await _execute_job(
-            ctx, job_pipeline=job.pipeline, run_id=run_id, target=job.target
-        )
+        handle = heartbeat.start(ctx.job_queue, job.id, clock=ctx.clock, worker_id=worker_id)
+        try:
+            result = await _execute_job(
+                ctx, job_pipeline=job.pipeline, run_id=run_id, target=job.target
+            )
+        finally:
+            # Stop the heartbeat the instant execution ends (success OR error) so
+            # a beat can never leak past job completion.
+            await handle.stop()
     except Exception as exc:
         # Setup or execute failure on a claimed job: resolve the claim so it is
         # never orphaned (the reaper is deferred this slice). Best-effort — a
         # down DB may also reject these writes, but the common single-op hiccup
         # is recovered, and `worker_loop` survives regardless.
         logger.exception("worker job %s failed; marking failed", job.id)
-        await _fail_job(ctx, job_id=job.id, run_id=run_id, error=str(exc))
+        await _fail_job(ctx, job_id=job.id, run_id=run_id, error=str(exc), worker_id=worker_id)
         return True
 
-    await _finalize(ctx, job_id=job.id, run_id=run_id, result=result)
+    await _finalize(ctx, job_id=job.id, run_id=run_id, result=result, worker_id=worker_id)
     return True
 
 
-async def _fail_job(ctx: WorkerContext, *, job_id: str, run_id: str | None, error: str) -> None:
+async def _fail_job(
+    ctx: WorkerContext, *, job_id: str, run_id: str | None, error: str, worker_id: str
+) -> None:
     """Best-effort mark the run (if created) + the job terminal ``failed``.
 
     Each write is suppressed independently so a failure on one (e.g. the run
     row was never created) still attempts the other — the job claim must be
-    resolved even when the run side can't be.
+    resolved even when the run side can't be. The ``mark_finished`` is
+    ownership-guarded (``expected_worker_id``): a reclaimed job's fail-write
+    correctly no-ops rather than stomping the new owner.
     """
     if run_id is not None:
         with contextlib.suppress(Exception):
             await asyncio.to_thread(ctx.repository.update_run_status, run_id, "failed", error)
     with contextlib.suppress(Exception):
-        await asyncio.to_thread(ctx.job_queue.mark_finished, job_id, "failed", error_message=error)
+        await asyncio.to_thread(
+            ctx.job_queue.mark_finished,
+            job_id,
+            "failed",
+            error_message=error,
+            expected_worker_id=worker_id,
+        )
 
 
 async def _execute_job(
@@ -217,13 +260,25 @@ async def _finalize(
     job_id: str,
     run_id: str,
     result: RunResult,
+    worker_id: str,
 ) -> None:
-    """Stamp the job + run terminal from the derived ``RunResult.status``."""
+    """Stamp the job + run terminal from the derived ``RunResult.status``.
+
+    The job's terminal write is ownership-guarded (``expected_worker_id``): if
+    this worker was reclaimed mid-execute, the finalize no-ops rather than
+    stomping the job a new owner now holds.
+    """
     run_status = _RUN_STATUS_BY_RESULT.get(result.status, "failed")
     job_status = _JOB_STATUS_BY_RESULT.get(result.status, "failed")
     error = None if result.status == "succeeded" else f"run {result.status}"
     await asyncio.to_thread(ctx.repository.update_run_status, run_id, run_status, error)
-    await asyncio.to_thread(ctx.job_queue.mark_finished, job_id, job_status, error_message=error)
+    await asyncio.to_thread(
+        ctx.job_queue.mark_finished,
+        job_id,
+        job_status,
+        error_message=error,
+        expected_worker_id=worker_id,
+    )
 
 
 async def worker_loop(
@@ -282,6 +337,7 @@ def _with_worker_id(ctx: WorkerContext, worker_id: str) -> WorkerContext:
         components=ctx.components,
         worker_id=worker_id,
         registry_factory=ctx.registry_factory,
+        clock=ctx.clock,
     )
 
 

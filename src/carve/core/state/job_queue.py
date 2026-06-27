@@ -28,7 +28,7 @@ same ``sessionmaker`` the :class:`~carve.core.state.repository.Repository` uses.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
@@ -230,16 +230,70 @@ class JobQueue:
 
     # ------------------------------------------------------------- Transitions
 
-    def transition_to_running(self, job_id: str, run_id: str) -> None:
+    def transition_to_running(
+        self,
+        job_id: str,
+        run_id: str,
+        *,
+        expected_worker_id: str | None = None,
+    ) -> bool:
         """Promote a ``claimed`` job to ``running``, binding it to its ``runs`` row.
 
         Re-checks the one-running-per-pipeline invariant: the move to
         ``status='running'`` collides with ``ix_jobs_one_running_per_pipeline``
         if another job for the same pipeline is already running, which surfaces
-        as :class:`PipelineAlreadyRunning`. The worker releases its claim on
-        that error rather than running a second concurrent execution.
+        as :class:`PipelineAlreadyRunning`. The worker releases its claim on that
+        error rather than running a second concurrent execution.
+
+        **The ownership guard.** When ``expected_worker_id`` is supplied, the
+        flip is a guarded conditional ``UPDATE ... WHERE id=:job_id AND
+        claimed_by=:worker_id AND status='claimed'`` — atomic, no read-then-write
+        window. A worker that stalled past the reaper threshold, was reclaimed
+        (its job returned to ``queued`` / re-claimed by a peer), and then returns
+        matches **0 rows**: this is a **silent no-op** returning ``False`` (it
+        lost the claim — the worker backs off, never stomps the new owner). When
+        ``expected_worker_id is None`` the claim guard is skipped (existing
+        callers/tests keep their behavior): a missing job then raises
+        :class:`KeyError` as before.
+
+        Returns ``True`` if the flip landed, ``False`` if the guard no-opped.
         """
         now = _utcnow()
+        if expected_worker_id is not None:
+            stmt = sa.text(
+                """
+                UPDATE jobs
+                SET status = 'running', run_id = :run_id, started_at = :now
+                WHERE id = :job_id
+                  AND claimed_by = :worker_id
+                  AND status = 'claimed'
+                RETURNING id
+                """
+            )
+            with self._session_factory() as session:
+                try:
+                    updated = session.execute(
+                        stmt,
+                        {
+                            "job_id": job_id,
+                            "run_id": run_id,
+                            "now": now,
+                            "worker_id": expected_worker_id,
+                        },
+                    ).scalar_one_or_none()
+                except sa.exc.IntegrityError as exc:
+                    session.rollback()
+                    raise PipelineAlreadyRunning(
+                        f"job {job_id!r} cannot run: pipeline already has a running job"
+                    ) from exc
+                session.commit()
+                # 0 rows: the job was reclaimed/re-claimed away from this worker —
+                # a returning zombie. Silent no-op; the worker treats it as a
+                # lost claim and does NOT run.
+                return updated is not None
+
+        # Backward-compatible unguarded path (expected_worker_id is None): the
+        # existing ORM-style flip, KeyError on a missing job.
         with self._session_factory() as session:
             job = session.get(Job, job_id)
             if job is None:
@@ -254,6 +308,7 @@ class JobQueue:
                 raise PipelineAlreadyRunning(
                     f"pipeline {job.pipeline!r} already has a running job"
                 ) from exc
+            return True
 
     def mark_finished(
         self,
@@ -261,13 +316,55 @@ class JobQueue:
         status: str,
         *,
         error_message: str | None = None,
-    ) -> None:
+        expected_worker_id: str | None = None,
+    ) -> bool:
         """Move a job to a terminal state (``succeeded``/``failed``/...).
 
         Stamps ``finished_at`` and records ``error_message`` verbatim. Terminal
         statuses leave the partial running/queued indexes so the pipeline is
         immediately eligible to be enqueued/claimed again.
+
+        **The ownership guard.** When ``expected_worker_id`` is supplied, the
+        terminal write is a guarded conditional ``UPDATE ... WHERE id=:job_id AND
+        claimed_by=:worker_id AND status IN ('claimed','running')`` — a single
+        atomic statement. A worker that was reclaimed (stalled past the
+        threshold) and returns to finalize matches **0 rows** (the job is now
+        ``queued``/re-claimed by a peer, or already terminal): a **silent
+        no-op** returning ``False`` so the zombie cannot double-finalize or stomp
+        the new owner's state. When ``expected_worker_id is None`` the guard is
+        skipped (existing callers/tests keep their unconditional behavior): a
+        missing job raises :class:`KeyError` as before.
+
+        Returns ``True`` if the terminal write landed, ``False`` if it no-opped.
         """
+        if expected_worker_id is not None:
+            stmt = sa.text(
+                """
+                UPDATE jobs
+                SET status = :status,
+                    finished_at = :now,
+                    error_message = COALESCE(:error_message, error_message)
+                WHERE id = :job_id
+                  AND claimed_by = :worker_id
+                  AND status IN ('claimed', 'running')
+                RETURNING id
+                """
+            )
+            with self._session_factory() as session:
+                updated = session.execute(
+                    stmt,
+                    {
+                        "job_id": job_id,
+                        "status": status,
+                        "now": _utcnow(),
+                        "error_message": error_message,
+                        "worker_id": expected_worker_id,
+                    },
+                ).scalar_one_or_none()
+                session.commit()
+                return updated is not None
+
+        # Backward-compatible unguarded path (expected_worker_id is None).
         with self._session_factory() as session:
             job = session.get(Job, job_id)
             if job is None:
@@ -277,6 +374,7 @@ class JobQueue:
             if error_message is not None:
                 job.error_message = error_message
             session.commit()
+            return True
 
     def release_claim(self, job_id: str) -> None:
         """Return a ``claimed`` job to ``queued`` (e.g. on PipelineAlreadyRunning).
@@ -293,20 +391,114 @@ class JobQueue:
             job.claimed_at = None
             session.commit()
 
-    def update_heartbeat(self, job_id: str, *, now: datetime | None = None) -> None:
-        """Stamp a job's ``heartbeat_at`` (the column ships; the loop is deferred)."""
+    def update_heartbeat(
+        self, job_id: str, *, now: datetime | None = None, expected_worker_id: str | None = None
+    ) -> None:
+        """Stamp a job's ``heartbeat_at``.
+
+        ``expected_worker_id`` makes the beat ownership-aware (uniform with the
+        worker's other writes): if the job is no longer claimed by this worker —
+        e.g. a returning zombie whose job the reaper reclaimed and another worker
+        re-claimed — the beat is a silent no-op rather than refreshing a job we no
+        longer own. ``None`` stamps unconditionally (back-compat).
+        """
         stamp = now if now is not None else _utcnow()
         with self._session_factory() as session:
             job = session.get(Job, job_id)
             if job is None:
                 raise KeyError(f"job {job_id!r} not found")
+            if expected_worker_id is not None and job.claimed_by != expected_worker_id:
+                return
             job.heartbeat_at = stamp
             session.commit()
+
+    def reclaim_stale(
+        self,
+        now: datetime,
+        *,
+        stale_threshold_s: float = 60.0,
+        tenant_id: int = 1,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Atomically reclaim every job whose heartbeat has gone stale.
+
+        ONE statement — a ``WITH stale AS (SELECT ... FOR UPDATE SKIP LOCKED)
+        UPDATE jobs SET status='queued', claimed_by=NULL, claimed_at=NULL,
+        heartbeat_at=NULL FROM stale WHERE jobs.id = stale.id RETURNING jobs.id,
+        jobs.run_id, stale.claimed_by``. Two reapers racing the same stale set
+        cannot double-reclaim: the ``FOR UPDATE SKIP LOCKED`` snapshot makes each
+        reaper lock a disjoint subset (the loser skips the locked rows), and once
+        a row is flipped to ``queued`` it no longer matches ``status IN
+        ('claimed','running')`` — so each stale job is reclaimed by exactly one
+        reaper.
+
+        Returns ``(id, run_id, prior_claimed_by)`` per reclaimed job: ``run_id``
+        lets the reaper fail the orphaned in-flight Run; ``prior_claimed_by`` is
+        the worker that *was* holding the claim (snapshotted in the CTE — the
+        post-``UPDATE`` ``claimed_by`` is already NULL, so it must be captured
+        before the flip) for the ``job.reclaimed`` audit event.
+
+        **The cutoff is computed in Python** (``now - stale_threshold_s``) and
+        passed as the BOUND param ``:cutoff`` — never string-interpolated into an
+        ``INTERVAL`` literal (that would be injection-shaped). This mirrors
+        ``claim_next``'s bound-param style.
+
+        A reclaimed job goes back to ``queued`` with its claim + heartbeat
+        cleared, so it is immediately re-claimable and the next worker re-runs it
+        from scratch (step-level state is discarded). **``run_id`` is RETURNED
+        (so the reaper can fail the orphaned in-flight Run) but is NOT nulled on
+        the job** — it stays for audit; the next worker's
+        ``transition_to_running`` overwrites it on re-claim.
+        """
+        cutoff = now - timedelta(seconds=stale_threshold_s)
+        # ``RETURNING`` reflects the POST-update row, where ``claimed_by`` is now
+        # NULL — so to return the *prior* owner (for the reaper's audit/event) we
+        # snapshot it in a CTE that reads + locks the stale rows first, then UPDATE
+        # ... FROM that snapshot and return the snapshot's ``claimed_by``. The
+        # ``FOR UPDATE`` keeps the read-then-write atomic against a concurrent
+        # reaper (the second reaper's snapshot CTE finds 0 rows once the first has
+        # flipped them to ``queued`` — so still no double-reclaim).
+        stmt = sa.text(
+            """
+            WITH stale AS (
+                SELECT id, run_id, claimed_by
+                FROM jobs
+                WHERE status IN ('claimed', 'running')
+                  AND tenant_id = :tenant_id
+                  AND heartbeat_at < :cutoff
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE jobs
+            SET status = 'queued',
+                claimed_by = NULL,
+                claimed_at = NULL,
+                heartbeat_at = NULL
+            FROM stale
+            WHERE jobs.id = stale.id
+            RETURNING jobs.id, jobs.run_id, stale.claimed_by
+            """
+        )
+        with self._session_factory() as session:
+            rows = session.execute(
+                stmt,
+                {"tenant_id": tenant_id, "cutoff": cutoff},
+            ).all()
+            session.commit()
+        return [(row.id, row.run_id, row.claimed_by) for row in rows]
 
     def get_job(self, job_id: str) -> Job | None:
         """Fetch a job by id, or ``None`` if not found."""
         with self._session_factory() as session:
             return session.get(Job, job_id)
+
+    def _emit(self, kind: str, payload: dict[str, Any]) -> None:
+        """The event-emit seam — a deliberate no-op until the events slice.
+
+        The reaper's ``job.reclaimed`` rides this single method, mirroring
+        ``schedules._emit`` and the persisting-sink seam. Tests patch/spy it to
+        assert the contract (right ``kind`` + ``payload``) without a built-out
+        emitter. No ``events`` table this slice.
+        """
+        # TODO(events slice): persist to the ``events`` table / publish to the bus.
 
     # ----------------------------------------------------------------- Workers
 

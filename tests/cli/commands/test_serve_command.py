@@ -1,9 +1,9 @@
-"""Minimal ``carve serve`` — scheduler-only, starts the loop + shuts down cleanly.
+"""``carve serve`` — scheduler + reaper co-run, starts both + shuts down cleanly.
 
-The full multi-loop supervisor (reaper/archiver/worker pool/API) is deferred —
-this slice's ``carve serve`` runs JUST the scheduler loop with graceful shutdown.
-The tests assert the scheduler-only scope and a clean stop (never hang: a pre-set
-shutdown event / a timeout bounds every wait).
+The full multi-loop supervisor (archiver/worker pool/API/leader-election) is
+deferred — this slice's ``carve serve`` runs the scheduler AND reaper loops under
+one shutdown event with graceful stop. The tests assert the two-loop scope and a
+clean stop (never hang: a pre-set shutdown event / a timeout bounds every wait).
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from carve.core.state.database import (
     initialize_database,
 )
 from carve.core.state.job_queue import JobQueue
+from carve.core.state.repository import Repository
 from carve.core.state.schedules import Schedules
 
 runner = CliRunner()
@@ -35,7 +36,7 @@ name = "serve-cli-test"
 """
 
 
-def _handles(database_url: str) -> tuple[Schedules, JobQueue]:
+def _handles(database_url: str) -> tuple[Schedules, JobQueue, Repository]:
     config = Config(
         project=ProjectConfig(name="serve-cli-test"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
@@ -45,23 +46,24 @@ def _handles(database_url: str) -> tuple[Schedules, JobQueue]:
     engine = create_engine_from_config(config)
     initialize_database(engine)
     factory = create_session_factory(engine)
-    return Schedules(factory), JobQueue(factory)
+    return Schedules(factory), JobQueue(factory), Repository(factory)
 
 
-async def test_serve_runs_scheduler_loop_and_stops_on_shutdown(
+async def test_serve_runs_scheduler_and_reaper_and_stops_on_shutdown(
     postgres_state_store_url: str,
 ) -> None:
-    """``_serve`` fires a due schedule, then stops when shutdown is signalled.
+    """``_serve`` co-runs scheduler + reaper, then stops when shutdown is signalled.
 
-    Drives ``_serve`` (the async core the command runs) directly with a real
-    interval so the boundary sleep is short, and cancels via a watchdog after the
-    fire lands — bounded by a 5s timeout so a hang fails loudly rather than
-    blocking the suite.
+    Drives ``_serve`` (the async core the command runs) directly with short
+    intervals so the boundary sleeps are quick. A due schedule proves the
+    scheduler ran; a planted stale job proves the reaper ran. Cancellation via a
+    watchdog after both fire — bounded by a 5s timeout so a hang fails loudly
+    rather than blocking the suite.
     """
-    schedules, job_queue = _handles(postgres_state_store_url)
+    schedules, job_queue, repository = _handles(postgres_state_store_url)
     sched = schedules.seed("sales", "*/5 * * * *", "dev")
-    # Force it due right now so the first pass fires.
-    from carve.core.state.models import Schedule
+    # Force the schedule due right now so the first scheduler pass fires.
+    from carve.core.state.models import Job, Schedule
 
     with schedules._session_factory() as session:
         row = session.get(Schedule, sched.id)
@@ -69,21 +71,44 @@ async def test_serve_runs_scheduler_loop_and_stops_on_shutdown(
         row.next_fires_at = datetime(2020, 1, 1, tzinfo=UTC)
         session.commit()
 
-    fired: list[bool] = []
-    original = schedules._emit
+    # Plant a STALE claimed job for a different pipeline so the reaper reclaims it.
+    stale = job_queue.enqueue_scheduled("stuck", "dev")
+    job_queue.claim_next("worker-dead")
+    with job_queue._session_factory() as session:
+        job_row = session.get(Job, stale.id)
+        assert job_row is not None
+        job_row.status = "running"
+        job_row.claimed_by = "worker-dead"
+        job_row.heartbeat_at = datetime(2020, 1, 1, tzinfo=UTC)  # ancient → stale
+        session.commit()
 
-    def spy(kind: str, payload: dict[str, object]) -> None:
+    fired: list[bool] = []
+    sched_original = schedules._emit
+
+    def sched_spy(kind: str, payload: dict[str, object]) -> None:
         if kind == "schedule.fired":
             fired.append(True)
-        original(kind, payload)
+        sched_original(kind, payload)
 
-    schedules._emit = spy  # type: ignore[method-assign]
+    schedules._emit = sched_spy  # type: ignore[method-assign]
 
-    serve_task = asyncio.create_task(_serve(schedules, job_queue, interval_s=0.05))
+    reclaimed: list[bool] = []
+    queue_original = job_queue._emit
+
+    def queue_spy(kind: str, payload: dict[str, object]) -> None:
+        if kind == "job.reclaimed":
+            reclaimed.append(True)
+        queue_original(kind, payload)
+
+    job_queue._emit = queue_spy  # type: ignore[method-assign]
+
+    serve_task = asyncio.create_task(
+        _serve(schedules, job_queue, repository, interval_s=0.05, reaper_interval_s=0.05)
+    )
 
     async def watchdog() -> None:
-        for _ in range(200):
-            if fired:
+        for _ in range(400):
+            if fired and reclaimed:
                 serve_task.cancel()
                 return
             await asyncio.sleep(0.02)
@@ -92,17 +117,26 @@ async def test_serve_runs_scheduler_loop_and_stops_on_shutdown(
     await asyncio.gather(watchdog())
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(serve_task, timeout=5.0)
-    assert fired, "the scheduler-only serve loop should have fired the due schedule"
+    assert fired, "the scheduler loop should have fired the due schedule"
+    assert reclaimed, "the reaper loop should have reclaimed the stale job"
+
+    # The reaper actually reclaimed the stale job (queued, claim cleared).
+    back = job_queue.get_job(stale.id)
+    assert back is not None
+    assert back.status == "queued"
+    assert back.claimed_by is None
 
 
-def test_serve_command_help_describes_scheduler_only(
+def test_serve_command_help_describes_scheduler_and_reaper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The command exists and documents its scheduler-only scope (no supervisor)."""
+    """The command documents its scheduler + reaper scope and both options."""
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
     assert "scheduler" in result.output.lower()
+    assert "reaper" in result.output.lower()
     assert "--interval" in result.output
+    assert "--reaper-interval" in result.output
 
 
 def test_serve_command_bad_config_exits_two(

@@ -13,7 +13,9 @@ Postgres-fixture-gated (the queue + step_runs persistence are Postgres-only).
 
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -218,6 +220,127 @@ async def test_second_run_once_after_completion_claims_nothing(
     assert await run_once(worker_context) is True
     # The queue is now empty (the job is terminal); a re-claim is idempotent.
     assert await run_once(worker_context) is False
+
+
+async def test_heartbeat_advances_during_execute_then_stops_at_completion(
+    worker_context: WorkerContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker beats while a job executes, and the heartbeat stops at the end.
+
+    Replaces ``_execute_job`` with a stub that awaits until it observes the DB
+    ``heartbeat_at`` advance past the claim's stamp (proving the heartbeat loop is
+    running concurrently with execution), then returns success. A ``FakeClock``
+    drives the heartbeat sleep-free. After completion, ``heartbeat_at`` no longer
+    advances — the handle was stopped in the worker's ``finally``.
+    """
+    import carve.runtime.worker as worker_mod
+    from carve.runtime.clock import FakeClock
+    from carve.runtime.execute_pipeline import RunResult
+
+    queue = worker_context.job_queue
+    job = queue.enqueue_manual("stripe", "dev", trigger="manual")
+
+    clock = FakeClock(datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
+    ctx = WorkerContext(
+        repository=worker_context.repository,
+        job_queue=queue,
+        paths=worker_context.paths,
+        connections=worker_context.connections,
+        dbt_executable=worker_context.dbt_executable,
+        worker_id="test-worker",
+        registry_factory=worker_context.registry_factory,
+        clock=clock,
+    )
+
+    async def _slow_execute(
+        c: WorkerContext, *, job_pipeline: str, run_id: str, target: str
+    ) -> Any:
+        # Wait until at least 2 heartbeats land past the claim stamp (the loop is
+        # running concurrently). The FakeClock advances each beat, so heartbeat_at
+        # moves forward; bound the wait so a broken heartbeat fails the test.
+        seen: set[Any] = set()
+        for _ in range(2000):
+            hb = queue.get_job(job.id)
+            if hb is not None and hb.heartbeat_at is not None:
+                seen.add(hb.heartbeat_at)
+            if len(seen) >= 2:
+                break
+            await asyncio.sleep(0)
+        assert len(seen) >= 2, "heartbeat_at did not advance during execute"
+        return RunResult(
+            status="succeeded",
+            completed=frozenset({"only"}),
+            failed=frozenset(),
+            skipped=frozenset(),
+        )
+
+    monkeypatch.setattr(worker_mod, "_execute_job", _slow_execute)
+
+    ran = await run_once(ctx)
+    assert ran is True
+
+    # The job is terminal succeeded — the guarded mark_finished (with the worker's
+    # id) landed, and the heartbeat handle was stopped at completion.
+    finished = queue.get_job(job.id)
+    assert finished is not None
+    assert finished.status == "succeeded"
+    hb_at_completion = finished.heartbeat_at
+
+    # No further beats after completion: heartbeat_at is stable across many loop
+    # turns (the handle was cancelled in the worker's finally).
+    for _ in range(50):
+        await asyncio.sleep(0)
+    after = queue.get_job(job.id)
+    assert after is not None
+    assert after.heartbeat_at == hb_at_completion
+
+
+async def test_worker_guarded_writes_noop_when_reclaimed_mid_run(
+    worker_context: WorkerContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker reclaimed mid-execute can't stomp the job — its finalize no-ops.
+
+    Simulates the zombie race end-to-end: while worker A executes, the job is
+    reclaimed (back to queued) and re-claimed + transitioned by worker B. Worker
+    A's guarded ``mark_finished(expected_worker_id=A)`` then matches 0 rows, so
+    B's state survives — no double-finalize.
+    """
+    import carve.runtime.worker as worker_mod
+    from carve.runtime.execute_pipeline import RunResult
+
+    queue = worker_context.job_queue
+    repo = worker_context.repository
+    job = queue.enqueue_manual("stripe", "dev", trigger="manual")
+
+    async def _execute_then_get_reclaimed(
+        c: WorkerContext, *, job_pipeline: str, run_id: str, target: str
+    ) -> Any:
+        # Mid-run, the reaper reclaims A's job (→ queued) and worker B re-claims +
+        # transitions it. A is now a zombie.
+        await asyncio.to_thread(queue.reclaim_stale, datetime.now(UTC), stale_threshold_s=-1.0)
+        await asyncio.to_thread(queue.claim_next, "worker-B")
+        run_b = await asyncio.to_thread(repo.create_run, "pipeline", job.id, target="dev")
+        await asyncio.to_thread(
+            queue.transition_to_running, job.id, run_b, expected_worker_id="worker-B"
+        )
+        return RunResult(
+            status="succeeded",
+            completed=frozenset({"only"}),
+            failed=frozenset(),
+            skipped=frozenset(),
+        )
+
+    monkeypatch.setattr(worker_mod, "_execute_job", _execute_then_get_reclaimed)
+
+    ran = await run_once(worker_context)  # worker_id="test-worker" (worker A)
+    assert ran is True
+
+    # Worker A's finalize no-opped: the job is still B's running claim, not A's
+    # terminal succeeded.
+    back = queue.get_job(job.id)
+    assert back is not None
+    assert back.status == "running"
+    assert back.claimed_by == "worker-B"
 
 
 async def test_setup_failure_on_claimed_job_marks_failed_not_orphaned(
