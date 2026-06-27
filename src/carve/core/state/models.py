@@ -258,12 +258,158 @@ class Workspace(Base):
     status: Mapped[str] = mapped_column(default="clean")
 
 
+# ---------------------------------------------------------------------------
+# Runtime queue: jobs, workers, step_runs (Increment 4 — queue+worker slice)
+# ---------------------------------------------------------------------------
+#
+# The runtime turns a queued unit of work into a persisted run. Three tables
+# carry it: ``jobs`` (the durable work queue), ``workers`` (the processes that
+# drain it), and ``step_runs`` (the per-step persistence the ``StepSink`` writes
+# — see the runtime delivery spec's discrepancy note: the spec claimed this was
+# carried from M1, but the tree had only ``runs``/``logs``, so this slice
+# CREATES it). The scheduler/heartbeat/reaper/archiver loops and their tables
+# (``schedules``/``events``/``*_archive``) are deferred to later runtime slices.
+
+
+class Job(Base):
+    """A unit of work in the durable runtime queue.
+
+    A job is enqueued (``status='queued'``), claimed by exactly one worker
+    (``claimed``), promoted to ``running`` once the worker has created its
+    ``runs`` row, then reaches a terminal state (``succeeded``/``failed``/
+    ``cancelled``/``timed_out``). The two **partial unique indexes** are the
+    load-bearing invariant: at most one ``queued`` and at most one ``running``
+    job may exist per ``(pipeline, tenant_id)`` — enforced by Postgres, not
+    application code, so a racing enqueue/claim cannot break it by accident.
+
+    ``run_id`` is the FK to the ``runs`` row the worker creates at
+    ``transition_to_running`` (NULL while queued/claimed). ``heartbeat_at`` is
+    stamped once at claim in this slice; the heartbeat *loop* + reaper are
+    deferred. ``trigger`` records what enqueued the job (``scheduled``/
+    ``manual``/``api``); ``scheduled_for`` is the due time for a scheduled job
+    (NULL for a manual one).
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        # At most one queued job per pipeline+tenant. The ON CONFLICT target
+        # for ``enqueue_scheduled``/``enqueue_manual`` — a racing second
+        # enqueue fails safe rather than double-queueing.
+        Index(
+            "ix_jobs_one_queued_per_pipeline",
+            "pipeline",
+            "tenant_id",
+            unique=True,
+            postgresql_where=sa.text("status = 'queued'"),
+        ),
+        # At most one running job per pipeline+tenant. Backs
+        # ``transition_to_running``'s ``PipelineAlreadyRunning`` serialization.
+        Index(
+            "ix_jobs_one_running_per_pipeline",
+            "pipeline",
+            "tenant_id",
+            unique=True,
+            postgresql_where=sa.text("status = 'running'"),
+        ),
+        # The claim ordering index: ``claim_next`` selects the oldest-due
+        # queued job (``scheduled_for ASC NULLS LAST, created_at ASC``).
+        Index(
+            "ix_jobs_claim_order",
+            "tenant_id",
+            "scheduled_for",
+            "created_at",
+            postgresql_where=sa.text("status = 'queued'"),
+        ),
+        # Supports the (deferred) reaper's stale-claim scan.
+        Index("ix_jobs_heartbeat_at", "heartbeat_at"),
+        Index("ix_jobs_status_created_at", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    # ``pipeline`` is a plain string, NOT a FK to ``pipelines.name``: a
+    # manual/api trigger may enqueue a pipeline that exists on disk before a
+    # ``pipelines`` row is written by a build (see the migration comment).
+    pipeline: Mapped[str]
+    target: Mapped[str]
+    status: Mapped[str] = mapped_column(default="queued")
+    trigger: Mapped[str] = mapped_column(default="manual")
+    scheduled_for: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    tenant_id: Mapped[int] = mapped_column(default=1)
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", name="fk_jobs_run_id"),
+        default=None,
+    )
+    claimed_by: Mapped[str | None] = mapped_column(default=None)
+    claimed_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    started_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    error_message: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
+class Worker(Base):
+    """A process that drains the job queue.
+
+    The id is the spec's ``<hostname>:<pid>:<startup-uuid>`` — stable for the
+    life of one worker process, unique across restarts. ``last_heartbeat_at``
+    is written at registration (and, in later slices, by the heartbeat loop).
+    ``status`` is ``active``/``stopped`` — set ``stopped`` at clean shutdown.
+    """
+
+    __tablename__ = "workers"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    host: Mapped[str]
+    pid: Mapped[int]
+    label: Mapped[str | None] = mapped_column(default=None)
+    tenant_id: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(default="active")
+    started_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    last_heartbeat_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
+class StepRun(Base):
+    """One step's execution, persisted by the runtime's ``StepSink``.
+
+    The ``StepSink`` seam declared in ``execute_pipeline`` has waited for this
+    table since Increment 3: ``step_started`` inserts a ``running`` row,
+    ``step_finished`` transitions it to the step's terminal ``status``
+    (``succeeded``/``failed``/``skipped``) with ``outputs`` (the threaded
+    cross-step dict, JSONB), ``error_message``, ``finished_at``, and
+    ``duration_ms``. ``run_id`` is the FK to the parent ``runs`` row;
+    ``(run_id, step_id, attempt)`` identifies a row across retries.
+    """
+
+    __tablename__ = "step_runs"
+    __table_args__ = (
+        Index("ix_step_runs_run_id", "run_id"),
+        Index("ix_step_runs_run_id_step_id_attempt", "run_id", "step_id", "attempt"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", name="fk_step_runs_run_id"))
+    step_id: Mapped[str]
+    step_type: Mapped[str]
+    status: Mapped[str] = mapped_column(default="running")
+    attempt: Mapped[int] = mapped_column(default=1)
+    outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_message: Mapped[str | None] = mapped_column(default=None)
+    started_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    duration_ms: Mapped[int | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
 __all__: list[Any] = [
     "Base",
     "Build",
+    "Job",
     "Log",
     "Pipeline",
     "Plan",
     "Run",
+    "StepRun",
+    "Worker",
     "Workspace",
 ]

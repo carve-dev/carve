@@ -46,6 +46,7 @@ from carve.runtime.jinja_context import (
     make_jinja_context,
     render_step_vars,
 )
+from carve.runtime.persisting_step_sink import PersistingStepSink
 from carve.runtime.pipeline_dag import PipelineDAG
 from carve.runtime.run_context import PipelineRun
 from carve.runtime.step_executor import (
@@ -54,11 +55,18 @@ from carve.runtime.step_executor import (
     StepResult,
     StepStatus,
 )
+from carve.runtime.worker import (
+    WorkerContext,
+    make_worker_id,
+    run_once,
+    worker_loop,
+)
 
 __all__ = [
     "DEFAULT_AVAILABLE_SLOTS",
     "JinjaRenderError",
     "NoOpStepSink",
+    "PersistingStepSink",
     "PipelineDAG",
     "PipelineRun",
     "RunResult",
@@ -69,11 +77,15 @@ __all__ = [
     "StepResult",
     "StepSink",
     "StepStatus",
+    "WorkerContext",
     "apply_failure_mode",
     "derive_run_status",
     "execute_pipeline",
     "make_jinja_context",
+    "make_worker_id",
     "render_step_vars",
     "resolve_dbt_component",
     "resolve_dlt_component",
+    "run_once",
+    "worker_loop",
 ]

@@ -5,6 +5,7 @@
 ## Status
 
 - **Status:** Drafting
+- > **Lean first slice landed (2026-06-26).** The runtime is the largest net-new module; it ships in slices. **This first slice shipped the queue → run → persist loop**: migration `0008_runtime_queue` (`jobs` + `workers` + `step_runs`, with the two partial unique indexes); the **sync `JobQueue`** (`core/state/job_queue.py` — `enqueue_scheduled` ON-CONFLICT dedup, `enqueue_manual` upsert, `FOR UPDATE SKIP LOCKED` `claim_next`, `transition_to_running`/`mark_finished`/`release_claim`, worker register/unregister, `create_step_run`/`finish_step_run`); the **real persisting `StepSink`** (`runtime/persisting_step_sink.py` — fills the no-op seam pipelines forward-declared, so `step_runs` persist for the first time); a **minimal worker** (`runtime/worker.py` — `run_once`/`worker_loop`, claim-then-never-orphan); and **`carve worker`** (`cli/commands/worker.py`, `--once`/loop). **DEFERRED to later runtime slices** (each fenced inline below): the **scheduler loop + live `schedules` table + `carve schedule` CLI + `schedule_changes`**; the **heartbeat loop + reaper** (the `heartbeat_at` column ships and is stamped once at claim; the loops defer); the **archiver + `*_archive` tables**; the full **`carve serve`** supervisor + the **`events` table/emitter** (the `step.*` emit is a marked no-op seam); the **worker-pool fan-out** (`--workers N`); and **crash recovery**. Status stays **Drafting** — more slices remain.
 - **Revised for the control-plane model** ([../_strategy/2026-06-control-plane.md](../_strategy/2026-06-control-plane.md), "Resolved design decisions (2026-06-16)"). The reconciler reconciles the pipeline *definition* only (steps, DAG, component refs, pins — owned by [pipelines](./pipelines.md)); the **schedule is data** — this spec's scheduler reads the `schedules` table as its source of truth, seeded once from a pipeline's optional `[seed_schedule]` block (the seed + `carve schedule reseed` live in [pipelines](./pipelines.md); this spec owns the live `schedules` table, the scheduler that reads it, and `carve schedule list/show/pause/resume/set-cron`). This **supersedes UC2's code-vs-runtime-override TTL-precedence machinery** (see [Design notes](#design-notes)). Deploy events are untouched (pending the Wave 2 deploy revision).
 - **Depends on:** [state-store](./state-store.md) (partial unique indexes, FOR UPDATE SKIP LOCKED), [layout](./layout.md) (path resolution at run time)
 - **Blocks:** [pipelines](./pipelines.md) (which ships the actual step-type implementations on top of this spec's executor framework), [rest-api](./rest-api.md), [ui](./ui.md)
@@ -39,10 +40,12 @@ The runtime is deliberately narrow per design decision [5.6](../ARCHITECTURE.md)
 
 ### State store additions
 
-Per ARCHITECTURE §9.3, the runtime adds the following tables (Alembic migration 0008):
+> **Updated during implementation (2026-06-26):** the runtime's *lean first slice* shipped only the three tables the queue→run→persist loop needs — `jobs`, `workers`, and `step_runs` (Alembic migration `0008_runtime_queue`). The `schedules` / `schedule_changes` / `events` / `*_archive` tables below are **DEFERRED** to later runtime slices (they belong to the scheduler / archiver / events loops, which this slice does not ship). One correction that matters: **`step_runs` is created by THIS migration**, not carried from M1 — see the corrected note at the end of this section. The full table set below remains the spec's target design; the SQL that *shipped* is the `jobs`/`workers`/`step_runs` subset (with the partial unique indexes intact and a `jobs.error_message` column added during implementation; `id` columns are app-generated `String` rather than `UUID`).
+
+Per ARCHITECTURE §9.3, the runtime's full table set is below (the **DEFERRED** tables are fenced inline). The shipped migration `0008_runtime_queue` creates `jobs` + `workers` + `step_runs`:
 
 ```sql
--- Active job queue
+-- Active job queue  [SHIPPED — migration 0008]
 CREATE TABLE jobs (
   id UUID PRIMARY KEY,
   pipeline TEXT NOT NULL,
@@ -69,22 +72,41 @@ CREATE INDEX ix_jobs_status_created_at
 CREATE INDEX ix_jobs_heartbeat_at
   ON jobs(heartbeat_at) WHERE status IN ('claimed', 'running');
 
--- Archive: same schema, no partial unique indexes (historical data; dedup invariants no longer enforced)
+-- Archive: same schema, no partial unique indexes (historical data; dedup invariants no longer enforced)  [DEFERRED — archiver slice]
 CREATE TABLE jobs_archive (LIKE jobs INCLUDING ALL EXCLUDING INDEXES);
 CREATE INDEX ix_jobs_archive_pipeline_finished_at ON jobs_archive(pipeline, finished_at DESC);
 
--- Worker registration
+-- Worker registration  [SHIPPED — migration 0008]
 CREATE TABLE workers (
   id TEXT PRIMARY KEY,              -- "<hostname>:<pid>:<startup-uuid>"
   host TEXT NOT NULL,
   pid INTEGER NOT NULL,
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  status TEXT NOT NULL,             -- starting | running | draining | stopped
+  status TEXT NOT NULL,             -- as shipped: active | stopped (the starting/draining states are a later-slice nicety)
+  label TEXT,                       -- added during implementation: the worker-placement label seam (carve worker --label); nullable
   tenant_id BIGINT NOT NULL DEFAULT 1
 );
 
--- Archive tables for runs, logs, step_runs (created here so the archiver has somewhere to write)
+-- Per-step persistence the real StepSink writes  [SHIPPED — migration 0008; CREATED here, NOT carried from M1]
+CREATE TABLE step_runs (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  step_id TEXT NOT NULL,
+  step_type TEXT NOT NULL,          -- dlt | dbt | sql | ...
+  status TEXT NOT NULL DEFAULT 'running',  -- running | succeeded | failed | skipped
+  attempt INTEGER NOT NULL DEFAULT 1,
+  outputs JSONB NOT NULL DEFAULT '{}'::jsonb,  -- named step outputs for downstream Jinja
+  error_message TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  duration_ms INTEGER,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX ix_step_runs_run_id ON step_runs(run_id);
+CREATE INDEX ix_step_runs_run_id_step_id_attempt ON step_runs(run_id, step_id, attempt);
+
+-- Archive tables for runs, logs, step_runs (created here so the archiver has somewhere to write)  [DEFERRED — archiver slice]
 CREATE TABLE runs_archive (LIKE runs INCLUDING ALL EXCLUDING INDEXES);
 CREATE TABLE logs_archive (LIKE logs INCLUDING ALL EXCLUDING INDEXES);
 CREATE TABLE step_runs_archive (LIKE step_runs INCLUDING ALL EXCLUDING INDEXES);
@@ -93,7 +115,7 @@ CREATE INDEX ix_runs_archive_pipeline_finished_at ON runs_archive(pipeline, fini
 CREATE INDEX ix_logs_archive_run_id_timestamp ON logs_archive(run_id, timestamp);
 CREATE INDEX ix_step_runs_archive_run_id ON step_runs_archive(run_id);
 
--- Durable event log (subscribers may include the audit log in hosted)
+-- Durable event log (subscribers may include the audit log in hosted)  [DEFERRED — events slice]
 CREATE TABLE events (
   id BIGSERIAL PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -106,7 +128,7 @@ CREATE INDEX ix_events_unprocessed ON events(occurred_at) WHERE processed_at IS 
 
 -- Live schedule (DATA): created + owned here. The reconciler (spec 08) seeds/maintains rows at
 -- first registration; the scheduler below reads this as its source of truth; `carve schedule
--- pause/resume/set-cron` mutate it live. See ARCHITECTURE §9.1.
+-- pause/resume/set-cron` mutate it live. See ARCHITECTURE §9.1.  [DEFERRED — scheduler slice]
 CREATE TABLE schedules (
   id UUID PRIMARY KEY,
   pipeline TEXT NOT NULL,
@@ -128,7 +150,7 @@ CREATE TABLE schedules (
 CREATE UNIQUE INDEX ix_schedules_one_per_pipeline ON schedules(pipeline, tenant_id);
 CREATE INDEX ix_schedules_due ON schedules(next_fires_at) WHERE paused = false;
 
--- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)
+-- Schedule change audit log (the schedule is DATA; this is its audit trail, replacing git history for schedule edits)  [DEFERRED — scheduler slice]
 CREATE TABLE schedule_changes (
   id BIGSERIAL PRIMARY KEY,
   pipeline TEXT NOT NULL,
@@ -148,7 +170,7 @@ Notes:
 - `tenant_id` defaults to `1` per ARCHITECTURE §9.9 multi-tenancy readiness
 - Partial unique indexes include `tenant_id` so the constraint is per-tenant in hosted
 - Archive tables use `LIKE ... INCLUDING ALL EXCLUDING INDEXES` to inherit columns + types but specify their own indexes (different access patterns)
-- `runs`, `logs`, `step_runs` tables themselves were added in earlier specs (01 carries them forward from M1; 08 may extend with cols); this spec only adds their archives
+- > **Corrected during implementation (2026-06-26):** the original note here claimed `runs`, `logs`, **and `step_runs`** "were added in earlier specs (01 carries them forward from M1)… this spec only adds their archives." That was **false for `step_runs`**: against the tree, `core/state/models.py` carried `Run` + `Log` from M1 but had **no `StepRun` model and no `step_runs` table**. The persisting `StepSink` needs it, so **this capability CREATES `step_runs`** in migration `0008_runtime_queue` (DDL above). Corrected: `runs` and `logs` are carried forward from M1; **`step_runs` is created by this spec's migration 0008** (its `*_archive` siblings stay deferred to the archiver slice). 08 may extend `runs`/`logs` with cols.
 - The `schedules` table (`id PK, pipeline FK UNIQUE, cron, target, paused, paused_by, pause_reason, timezone, last_fired_at, next_fires_at` — ARCHITECTURE §9.1) **is created here** (migration 0008, above), resolving the prior ownership gap where neither spec created it. The reconciler ([pipelines](./pipelines.md)) **seeds/maintains the row** at first registration, applying the pipeline's optional `[seed_schedule]` block as the **initial seed** (cron/timezone/target only — it cannot seed `paused`). Thereafter the row is **live data**: this spec's scheduler reads it as the source of truth, and `carve schedule pause/resume/set-cron` (CLI/API/UI) mutate it instantly. `paused` is the boolean gate `list_due` skips on; `paused_by ∈ {user, recovery}` (NULL iff active) records the **pause origin**, which gates recovery auto-resume (see *Schedule mutations* below). The reconciler runs at `carve serve` boot — well after this migration — so the table always exists before the first row is seeded.
 
 ### Scheduler
@@ -218,7 +240,9 @@ This origin gate is the entire residue of UC2's retired "precedence" concern, re
 
 ### Job queue
 
-`src/carve/runtime/job_queue.py` exposes:
+> **Updated during implementation (2026-06-26):** the job queue **shipped** in the lean first slice, at **`src/carve/core/state/job_queue.py`** (it lives next to the state store's `repository.py` and shares its `sessionmaker`, rather than under `runtime/`). The state store is **synchronous** SQLAlchemy, so the queue methods are plain **sync** (`def`, not `async def`); the async `execute_pipeline`/`StepSink` call them off the event loop via `asyncio.to_thread`. The conceptual `async def` signatures below are accurate as *intent*; the shipped signatures are sync, take `pipeline`/`target` then keyword-only `scheduled_for`/`tenant_id`, and `enqueue_scheduled`'s `scheduled_for` is optional (defaults `None`). Job/run/worker ids are app-generated `String`s (e.g. `job_<uuid hex>`), not DB `UUID`s. The class is `JobQueue`, exposing the methods below **plus**: `update_heartbeat` (stamps `heartbeat_at`; the *loop* is deferred), `get_job`/`get_worker`/`list_step_runs` accessors, `register_worker`/`unregister_worker`, and `create_step_run`/`finish_step_run` (the persisting-sink seam). **SHIPPED** this slice: `enqueue_scheduled`, `enqueue_manual`, `claim_next`, `transition_to_running`, `mark_finished`, `release_claim`. The scheduler that would *call* `enqueue_scheduled` is **DEFERRED** (no scheduler loop ships this slice).
+
+`JobQueue` (conceptually) exposes:
 
 ```python
 async def enqueue_scheduled(
@@ -276,9 +300,13 @@ RETURNING *;
 
 `FOR UPDATE SKIP LOCKED` is the critical Postgres feature: it lets concurrent workers race without blocking. Each queued job is claimed by exactly one worker; losers see no row matched and sleep before retrying.
 
+> **Updated during implementation (2026-06-26):** the shipped `claim_next` adds one predicate to the inner `SELECT` — `AND (scheduled_for IS NULL OR scheduled_for <= now)` — so a future-dated scheduled job isn't claimed before its time (a manual job, with `scheduled_for IS NULL`, is always due). The ordering and `FOR UPDATE SKIP LOCKED` are otherwise the spec's exact query.
+
 ### Worker loop
 
-`src/carve/runtime/worker.py`:
+> **Updated during implementation (2026-06-26):** a **minimal** worker shipped at `src/carve/runtime/worker.py` — the smallest thing that closes claim → run → persist. The shape differs from the sketch below: a `run_once(ctx)` coroutine claims and runs **at most one** job (returning whether one ran), and `worker_loop(ctx, …)` polls `run_once` on an interval until a `shutdown` event is set, registering a `workers` row on entry and unregistering on exit. State flows through a `WorkerContext` dataclass (the sync `Repository` + `JobQueue`, `ProjectPaths`, connections, dbt executable, and an injectable `registry_factory` for creds-free tests). It builds the run via `execute_pipeline(..., sink=PersistingStepSink(run_id, job_queue))` over a freshly built `dlt→dbt→sql` registry (`build_step_executor_registry`). **The load-bearing safety property:** once a job is claimed it is the worker's, so **any** failure after the claim — a setup DB error (create-run / transition / status write) just as much as an execute error — marks the job **and** run `failed` (best-effort), so a claimed job is never orphaned. This matters precisely because **the reaper that would otherwise reclaim a stuck job is DEFERRED** this slice. `PipelineAlreadyRunning` is the one non-failure exit: the claim is released and the run cancelled. **DEFERRED:** the **heartbeat *loop*** (the `heartbeat_at` column ships and is stamped once at claim, but no `HeartbeatHandle`/background beat), the **reaper**, **crash recovery**, and the worker-pool fan-out (`--workers N` > 1 is rejected). `execute_pipeline` is the already-shipped pipelines entry point (Increment 3), not a spec-08 future. The original async sketch below is retained as design intent.
+
+`src/carve/runtime/worker.py` (original design sketch):
 
 ```python
 async def worker_loop(worker_id: str, state_store: StateStore, *, poll_interval_s: float = 2.0):
@@ -428,6 +456,12 @@ steps_window = "30d"
 
 The archiver runs alongside scheduler + reaper + worker pool in `carve serve`. In hosted, it can run as a separate process to avoid contention.
 
+### Persisting StepSink (the seam pipelines forward-declared)
+
+> **Added during implementation (2026-06-26):** the **real persisting `StepSink`** shipped at `src/carve/runtime/persisting_step_sink.py` (`PersistingStepSink`). Since Increment 3, `execute_pipeline` has carried a forward-declared `StepSink` Protocol defaulting to a **no-op** so the DAG walk stayed runtime-independent — **this slice fills that seam**, and it is the **first time `execute_pipeline` persists anything**. On `step_started` it inserts a `running` `step_runs` row (via `JobQueue.create_step_run`); on `step_finished` it transitions that row to the step's terminal status with the threaded `outputs` (JSONB) / `error_message` / timings (via `finish_step_run`). It threads the `step_runs.id` between start and finish per `(step_id, attempt)`. Because the state store is sync, each DB call is bridged off the event loop via `asyncio.to_thread`. The paired `step.*` **event emit stays a no-op seam** (marked `TODO(events slice)`) — the `events` table + emitter are a later slice.
+>
+> **Forward note (security reviewer, non-blocking — for the events/UI slice, not a change here):** the persisting sink writes step `error_message` and `outputs` **verbatim**. The later slice that first *surfaces* `step_runs` to users (events / UI) should add redaction at the surfacing boundary, since step outputs/errors can carry secrets. Recorded here so the future slice owns it.
+
 ### Step executor framework
 
 `src/carve/runtime/step_executor_base.py`:
@@ -496,7 +530,13 @@ A second SIGTERM during shutdown skips the grace period and exits immediately, l
 
 ### `carve worker` lifecycle
 
-`src/carve/cli/worker.py`:
+> **Updated during implementation (2026-06-26):** `carve worker` **shipped** in the lean first slice at **`src/carve/cli/commands/worker.py`** (under `cli/commands/`, mirroring the other commands). Flags as shipped:
+> ```
+> carve worker [--once] [--poll-interval SECONDS] [--workers INTEGER]
+> ```
+> `--once` claims and runs a **single** queued job then exits (a no-op message on an empty queue); without it, the command loops `run_once` every `--poll-interval` seconds (default 1.0) until Ctrl-C. `--workers` defaults to 1 and **any value > 1 is rejected** with a clear "single worker in this slice" message — the worker-pool fan-out is **DEFERRED**. The command mirrors `carve runs`' setup (load `Config`, build the engine, `initialize_database`, construct `Repository` + `JobQueue`), resolves the active target + `ProjectPaths`/connections, and drives `worker_loop`/`run_once` over the creds-free `dlt→dbt→sql` registry. `carve serve` stays the existing stub (its FastAPI server + scheduler/reaper/archiver supervisor is **DEFERRED**).
+
+`src/carve/cli/worker.py` (original design sketch):
 
 ```
 carve worker [OPTIONS]
@@ -530,6 +570,16 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 
 ## Tests
 
+> **Updated during implementation (2026-06-26):** the **lean first slice** shipped tests for the queue / worker / persisting sink it delivered; the scheduler / reaper / archiver / serve / schedule-mutation bullets below are **DEFERRED** with their slices. Shipped this slice:
+> - **Unit (enqueue dedup):** `enqueue_scheduled` queues a job; a second for the same pipeline raises `QueuedJobAlreadyExists`; different pipelines both queue; **concurrent** `enqueue_scheduled` yields exactly one queued job (`tests/runtime/state/test_job_queue_enqueue.py`).
+> - **Unit (manual upsert):** `enqueue_manual` upserts onto the existing queued row and returns its id; inserts when none exists (same file).
+> - **Unit (optimistic claim):** concurrent `claim_next` claims a job exactly once; empty queue returns `None`; a future-`scheduled_for` job is skipped; `transition_to_running` raises `PipelineAlreadyRunning` on a second running job; `release_claim` returns a claimed job to queued (`tests/runtime/state/test_job_queue_claim.py`).
+> - **Unit (persisting sink):** `step_started`→`step_finished` persists a succeeded `step_run`; failure records `error_message`; retries record one `step_run` per attempt (`tests/runtime/test_persisting_step_sink.py`).
+> - **Integration (worker end-to-end):** a worker runs a queued job end-to-end (job + run + `step_runs` all terminal); `run_once` on an empty queue is a no-op; a second `run_once` after completion claims nothing; **a setup failure on a claimed job marks it failed, not orphaned** (`tests/runtime/test_worker_end_to_end.py`).
+> - **CLI:** `carve worker --once` exits zero on an empty queue and after running a job; `--workers > 1` is rejected (`tests/cli/commands/test_worker_command.py`).
+>
+> The bullets below remain the spec's full-runtime test target (**DEFERRED** with the scheduler / reaper / archiver / serve slices):
+
 - **Unit (scheduler):** cron `*/5 * * * *` fires at expected times under a controlled `Clock`; missed ticks (clock jumps forward by 20 minutes) produce one fire, not four
 - **Unit (schedule source of truth):** the scheduler fires from the `schedules` table row, not from `pipelines/<name>.toml`; a paused row is skipped by `list_due`; mutating a `[seed_schedule]` block (without `carve schedule reseed`) does not change which ticks fire
 - **Integration (schedule mutation audited):** `carve schedule pause`/`resume`/`set-cron` updates the row, takes effect within one scheduler loop interval, emits the matching `schedule.*` event, and appends a `schedule_changes` row with `before`/`after`/`actor_token_id`/`source` — no deploy/reconcile involved
@@ -549,6 +599,8 @@ Events are durable (Postgres row) and the basis for webhooks (spec 09 wires that
 - **Integration (archiver verify-then-delete):** inject a synthetic failure between insert and delete; archive table has the rows, active table still has them, no data loss
 
 ## Acceptance
+
+> **Updated during implementation (2026-06-26):** the criteria below are the **full-runtime** acceptance target and remain the spec's bar. The **lean first slice** satisfies the slice-scoped subset: **`carve worker --once`** (and the loop) against a freshly-initialized Postgres claims a queued job, creates its `runs` row, transitions it to `running`, executes the pipeline, and persists `step_runs` + the terminal `runs`/`jobs` rows; the **partial unique indexes structurally prevent more than one queued and one running job per pipeline**; **50 concurrent manual triggers** produce 1 running + 1 queued (the `enqueue_manual` upsert), not 50 queued; a worker failure after claim never orphans the job (it is marked `failed`). The scheduler / `carve schedule` / reaper / archiver / `carve serve` / graceful-shutdown criteria are **DEFERRED** with their slices.
 
 - `carve serve --workers 1` against a freshly-initialized Postgres runs end-to-end: scheduler fires due jobs, worker claims and runs them, reaper reclaims stale claims, archiver moves old rows
 - The scheduler treats the `schedules` table as the source of truth; `carve schedule pause/resume/set-cron` changes firing within one loop interval without a deploy or reconcile, and every such change appends a `schedule_changes` audit row
