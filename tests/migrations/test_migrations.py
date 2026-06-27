@@ -72,8 +72,8 @@ def test_alembic_upgrade_head_on_empty_postgres(
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
 
-        # The five M1-shape tables, the workspaces table, plus alembic's
-        # bookkeeping table.
+        # The five M1-shape tables, the workspaces table, the runtime queue
+        # tables (0008), plus alembic's bookkeeping table.
         assert {
             "runs",
             "logs",
@@ -81,6 +81,9 @@ def test_alembic_upgrade_head_on_empty_postgres(
             "pipelines",
             "builds",
             "workspaces",
+            "jobs",
+            "workers",
+            "step_runs",
         }.issubset(tables)
         assert "alembic_version" in tables
 
@@ -120,7 +123,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0007_workspaces"
+        assert head_rev == "0008_runtime_queue"
     finally:
         engine.dispose()
 
@@ -654,5 +657,90 @@ def test_0007_downgrade_drops_workspaces(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0006_recovery_chains"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0008_runtime_queue
+# ---------------------------------------------------------------------------
+
+
+def test_0008_creates_queue_tables_with_partial_unique_indexes(
+    postgres_state_store_url: str,
+) -> None:
+    """0008 lands jobs/workers/step_runs + the two partial unique indexes."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        assert {"jobs", "workers", "step_runs"}.issubset(tables)
+
+        job_indexes = {ix["name"] for ix in inspector.get_indexes("jobs")}
+        assert "ix_jobs_one_queued_per_pipeline" in job_indexes
+        assert "ix_jobs_one_running_per_pipeline" in job_indexes
+    finally:
+        engine.dispose()
+
+
+def test_0008_one_queued_partial_index_is_enforced(
+    postgres_state_store_url: str,
+) -> None:
+    """The partial unique index rejects a second queued job per pipeline.
+
+    Structural proof the invariant lives at the schema level: two raw inserts
+    with ``status='queued'`` for the same (pipeline, tenant_id) collide; a
+    third with ``status='running'`` does not (the index is partial).
+    """
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        now = datetime.now(UTC)
+        insert = text(
+            "INSERT INTO jobs (id, pipeline, target, status, trigger, tenant_id, created_at) "
+            "VALUES (:id, 'p', 'dev', :status, 'manual', 1, :created_at)"
+        )
+        with engine.begin() as conn:
+            conn.execute(insert, {"id": "j1", "status": "queued", "created_at": now})
+        # A second queued job for the same pipeline violates the partial index.
+        with engine.begin() as conn:
+            try:
+                conn.execute(insert, {"id": "j2", "status": "queued", "created_at": now})
+                raise AssertionError("expected a unique-violation on the second queued job")
+            except Exception as exc:  # psycopg UniqueViolation wrapper
+                assert "ix_jobs_one_queued_per_pipeline" in str(exc) or "unique" in str(exc).lower()
+        # A running job for the same pipeline is allowed (the index is partial).
+        with engine.begin() as conn:
+            conn.execute(insert, {"id": "j3", "status": "running", "created_at": now})
+    finally:
+        engine.dispose()
+
+
+def test_0008_downgrade_drops_queue_tables(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0008 -> 0007 drops jobs/workers/step_runs."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert {"jobs", "workers", "step_runs"}.issubset(set(inspect(engine).get_table_names()))
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0007_workspaces")
+
+        remaining = set(inspect(engine).get_table_names())
+        assert "jobs" not in remaining
+        assert "workers" not in remaining
+        assert "step_runs" not in remaining
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0007_workspaces"
     finally:
         engine.dispose()

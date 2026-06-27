@@ -20,6 +20,7 @@ from carve.cli.commands import (
     runs,
     serve,
     version,
+    worker,
 )
 from carve.cli.commands.agents import app as agents_app
 from carve.cli.commands.auth import app as auth_app
@@ -95,6 +96,7 @@ app.command(name="deploy")(deploy.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)
 app.command(name="serve")(serve.command)
+app.command(name="worker")(worker.command)
 app.command(name="version")(version.command)
 app.add_typer(auth_app, name="auth")
 app.add_typer(target_app, name="target")
