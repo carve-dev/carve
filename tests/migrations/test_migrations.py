@@ -74,7 +74,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
 
         # The five M1-shape tables, the workspaces table, the runtime queue
         # tables (0008), the scheduler tables (0009), the events table (0010),
-        # plus alembic's bookkeeping table.
+        # the archive tables (0011), plus alembic's bookkeeping table.
         assert {
             "runs",
             "logs",
@@ -88,6 +88,10 @@ def test_alembic_upgrade_head_on_empty_postgres(
             "schedules",
             "schedule_changes",
             "events",
+            "jobs_archive",
+            "runs_archive",
+            "logs_archive",
+            "step_runs_archive",
         }.issubset(tables)
         assert "alembic_version" in tables
 
@@ -127,7 +131,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0010_runtime_events"
+        assert head_rev == "0011_runtime_archive"
     finally:
         engine.dispose()
 
@@ -948,5 +952,87 @@ def test_0010_downgrade_drops_events_table(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0009_runtime_schedules"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0011_runtime_archive
+# ---------------------------------------------------------------------------
+
+
+def test_0011_creates_archive_tables_with_access_indexes(
+    postgres_state_store_url: str,
+) -> None:
+    """0011 lands the four ``*_archive`` clone tables + their four access indexes.
+
+    Each archive table is a ``LIKE … INCLUDING ALL EXCLUDING INDEXES`` clone, so
+    it mirrors its active table's columns but carries **no** foreign keys (LIKE
+    never copies FKs) — what lets it hold standalone history.
+    """
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        assert {
+            "jobs_archive",
+            "runs_archive",
+            "logs_archive",
+            "step_runs_archive",
+        }.issubset(tables)
+
+        # The four documented access-pattern indexes exist on the right tables.
+        assert "ix_jobs_archive_pipeline_finished_at" in {
+            ix["name"] for ix in inspector.get_indexes("jobs_archive")
+        }
+        assert "ix_runs_archive_pipeline_finished_at" in {
+            ix["name"] for ix in inspector.get_indexes("runs_archive")
+        }
+        assert "ix_logs_archive_run_id_timestamp" in {
+            ix["name"] for ix in inspector.get_indexes("logs_archive")
+        }
+        assert "ix_step_runs_archive_run_id" in {
+            ix["name"] for ix in inspector.get_indexes("step_runs_archive")
+        }
+
+        # An archive table mirrors its active table's columns ...
+        assert {c["name"] for c in inspector.get_columns("jobs_archive")} == {
+            c["name"] for c in inspector.get_columns("jobs")
+        }
+        # ... but carries no foreign keys (LIKE never copies them).
+        assert inspector.get_foreign_keys("jobs_archive") == []
+        assert inspector.get_foreign_keys("runs_archive") == []
+    finally:
+        engine.dispose()
+
+
+def test_0011_downgrade_drops_archive_tables(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0011 -> 0010 drops the four archive tables, restoring 0010's schema."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert {"jobs_archive", "runs_archive", "logs_archive", "step_runs_archive"}.issubset(
+            set(inspect(engine).get_table_names())
+        )
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0010_runtime_events")
+
+        remaining = set(inspect(engine).get_table_names())
+        for table in ("jobs_archive", "runs_archive", "logs_archive", "step_runs_archive"):
+            assert table not in remaining
+        # 0010's schema is intact (active tables + events stay).
+        assert {"jobs", "runs", "logs", "step_runs", "events"}.issubset(remaining)
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0010_runtime_events"
     finally:
         engine.dispose()

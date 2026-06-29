@@ -39,6 +39,10 @@ _SUB_FILES: dict[str, str] = {
     "models": "models.toml",
     "runner": "runner.toml",
     "server": "server.toml",
+    # `runtime.toml` carries the `[runtime]` section (its in-file tables are
+    # `[archive]` etc., so the full dotted path is `runtime.archive`), mirroring
+    # how `connections.toml` carries `[snowflake.<name>]`.
+    "runtime": "runtime.toml",
 }
 
 # Matches `${VAR_NAME}` but not `\${VAR_NAME}`. The negative lookbehind keeps
