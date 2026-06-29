@@ -20,9 +20,11 @@ from typer.testing import CliRunner
 
 from carve.cli.commands.serve import _serve
 from carve.cli.main import app
+from carve.core.config.paths import ProjectPaths
 from carve.core.config.schema import (
     ArchiveConfig,
     Config,
+    ConnectionsConfig,
     ModelsConfig,
     ProjectConfig,
     ServerConfig,
@@ -37,6 +39,7 @@ from carve.core.state.job_queue import JobQueue
 from carve.core.state.models import Job
 from carve.core.state.repository import Repository
 from carve.core.state.schedules import Schedules
+from carve.runtime.worker import WorkerContext
 
 runner = CliRunner()
 
@@ -218,10 +221,65 @@ async def test_serve_no_archiver_skips_the_archiver_loop(
     assert job_queue.get_job("archive_me") is not None
 
 
-def test_serve_command_help_describes_all_three_loops(
+async def test_serve_runs_worker_pool_alongside_loops_and_stops_on_shutdown(
+    postgres_state_store_url: str, tmp_path: Path
+) -> None:
+    """``_serve(..., worker_ctx=…, workers=2)`` runs the pool + 3 loops, stops all.
+
+    With a ``worker_ctx`` supplied, ``_serve`` adds the worker pool as a fourth
+    TaskGroup child. The two ``serve-pool:task{i}`` worker rows registering prove
+    the pool runs alongside the scheduler + reaper + archiver; cancelling ``_serve``
+    drains the pool so both rows end ``stopped`` (unregistered). Bounded by a 5s
+    watchdog + timeout so a drain bug fails loudly.
+    """
+    schedules, job_queue, repository, factory = _handles(postgres_state_store_url)
+    worker_ctx = WorkerContext(
+        repository=repository,
+        job_queue=job_queue,
+        paths=ProjectPaths.from_root(tmp_path),
+        connections=ConnectionsConfig(),
+        dbt_executable="dbt",
+        worker_id="serve-pool",
+    )
+
+    serve_task = asyncio.create_task(
+        _serve(
+            schedules,
+            job_queue,
+            repository,
+            interval_s=0.05,
+            reaper_interval_s=0.05,
+            session_factory=factory,
+            archive_config=_ARCHIVE_CONFIG,
+            archive_interval_s=0.05,
+            run_archiver=True,
+            worker_ctx=worker_ctx,
+            workers=2,
+            grace_period_s=5.0,
+        )
+    )
+
+    registered = False
+    for _ in range(250):
+        if all(job_queue.get_worker(f"serve-pool:task{i}") is not None for i in range(2)):
+            registered = True
+            break
+        await asyncio.sleep(0.02)
+    serve_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(serve_task, timeout=5.0)
+
+    assert registered, "the worker pool did not register its workers alongside the loops"
+    for i in range(2):
+        worker = job_queue.get_worker(f"serve-pool:task{i}")
+        assert worker is not None
+        assert worker.status == "stopped", f"task{i} was not drained/unregistered on shutdown"
+
+
+def test_serve_command_help_describes_all_loops_and_the_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The command documents its scheduler + reaper + archiver scope and every option."""
+    """The command documents its scheduler + reaper + archiver + worker-pool scope."""
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
     assert "scheduler" in result.output.lower()
@@ -231,6 +289,8 @@ def test_serve_command_help_describes_all_three_loops(
     assert "--reaper-interval" in result.output
     assert "--archive-interval" in result.output
     assert "--no-archiver" in result.output
+    assert "--workers" in result.output
+    assert "--drain-timeout" in result.output
 
 
 def test_serve_command_bad_config_exits_two(

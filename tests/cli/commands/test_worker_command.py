@@ -9,6 +9,10 @@ runs end-to-end without any warehouse credentials.
 
 from __future__ import annotations
 
+import os
+import signal
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -117,16 +121,45 @@ def test_worker_once_runs_a_queued_job_and_exits_zero(
     assert run.status == "success"
 
 
-def test_worker_rejects_multiple_workers(
+def test_worker_pool_accepts_multiple_workers_and_drains(
     tmp_path: Path,
     cli_env: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``carve worker --workers 2`` runs a pool, drains a queued job, exits 0 on Ctrl-C.
+
+    Replaces the old ``--workers > 1`` rejection. Loop mode runs until signalled,
+    so a background thread waits for the job to reach a terminal state (proving the
+    pool claimed + ran it) and then sends SIGINT — the stateful handler sets
+    ``shutdown``, the pool drains the (now-empty) queue and exits cleanly. The
+    thread always fires within a bounded window so a stuck pool fails loudly.
+    """
     project = _project(tmp_path)
     monkeypatch.chdir(project)
-    result = runner.invoke(app, ["worker", "--once", "--workers", "2"], env=cli_env)
-    assert result.exit_code == 2
-    assert "not supported" in result.output
+
+    queue = _job_queue(cli_env["DATABASE_URL"])
+    job = queue.enqueue_manual("ping", "dev", trigger="manual")
+
+    probe = _job_queue(cli_env["DATABASE_URL"])
+
+    def _drain_then_signal() -> None:
+        for _ in range(250):  # ~5s ceiling
+            current = probe.get_job(job.id)
+            if current is not None and current.status in {"succeeded", "failed"}:
+                break
+            time.sleep(0.02)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    stopper = threading.Thread(target=_drain_then_signal, daemon=True)
+    stopper.start()
+    result = runner.invoke(app, ["worker", "--workers", "2"], env=cli_env)
+    stopper.join(timeout=5.0)
+
+    assert result.exit_code == 0, result.output
+    finished = queue.get_job(job.id)
+    assert finished is not None
+    assert finished.status == "succeeded"
+    assert finished.run_id is not None
 
 
 def test_worker_once_persists_run_lifecycle_events(
