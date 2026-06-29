@@ -12,12 +12,40 @@ threading it through.
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreConfig
+
+# A duration string is an integer followed by a single unit suffix: ``s``
+# (seconds), ``m`` (minutes), ``h`` (hours), or ``d`` (days). Used by the
+# archiver's retention windows (``"7d"``/``"30d"``/``"3600s"``).
+_DURATION_RE = re.compile(r"(?P<value>\d+)(?P<unit>[smhd])")
+_DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(value: str) -> timedelta:
+    """Parse a duration string like ``"7d"`` / ``"30d"`` / ``"3600s"`` to a ``timedelta``.
+
+    The numeric part must be a non-negative integer and the unit one of
+    ``s``/``m``/``h``/``d``; the result is always **strictly positive**. Raises
+    ``ValueError`` on an unparseable or non-positive value — the config
+    validators turn that into a user-facing ``ConfigError``, and the archiver
+    relies on the positivity so a window can never select rows ``>= now``.
+    """
+    match = _DURATION_RE.fullmatch(value.strip())
+    if match is None:
+        raise ValueError(
+            "duration must be an integer followed by one of s/m/h/d "
+            f"(e.g. '7d', '12h', '3600s'); got {value!r}"
+        )
+    seconds = int(match.group("value")) * _DURATION_UNIT_SECONDS[match.group("unit")]
+    if seconds <= 0:
+        raise ValueError(f"duration must be positive; got {value!r}")
+    return timedelta(seconds=seconds)
 
 
 class ProjectConfig(BaseModel):
@@ -506,6 +534,51 @@ class ComponentConfig(BaseModel):
         return self
 
 
+class ArchiveConfig(BaseModel):
+    """`[runtime.archive]` — the archiver loop's interval + per-table retention windows.
+
+    The archiver (``src/carve/runtime/archiver.py``) moves terminal rows older
+    than each table's window from the live ``jobs``/``runs``/``logs``/``step_runs``
+    tables into their ``*_archive`` siblings. Each ``*_window`` is a duration
+    string (``"7d"``/``"30d"``/``"3600s"``) parsed by :func:`parse_duration`; the
+    validator rejects an unparseable or non-positive value at load time.
+
+    The windows are deliberately staggered so foreign-key ordering holds during a
+    pass: ``jobs`` (7d) age out before the ``runs`` (30d) they reference, and
+    ``logs``/``step_runs`` share ``runs``' 30d so a parent run is only deleted
+    after its children. ``steps_window`` covers ``step_runs``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    interval_s: int = Field(default=3600, ge=1)
+    jobs_window: str = "7d"
+    runs_window: str = "30d"
+    logs_window: str = "30d"
+    steps_window: str = "30d"
+
+    @field_validator("jobs_window", "runs_window", "logs_window", "steps_window")
+    @classmethod
+    def _valid_window(cls, value: str) -> str:
+        # Reject an unparseable / non-positive window at load time (raises
+        # ValueError -> ConfigError), so the archiver never sees a bad duration.
+        parse_duration(value)
+        return value
+
+
+class RuntimeConfig(BaseModel):
+    """`[runtime]` section of `runtime.toml` — the runtime supervisor's tunables.
+
+    Holds the archiver's `[runtime.archive]` block today; the reaper's
+    ``stale_threshold_s`` and worker-pool sizing land here as their config
+    surfaces ship.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    archive: ArchiveConfig = Field(default_factory=ArchiveConfig)
+
+
 class Config(BaseModel):
     """Fully-merged, validated Carve configuration.
 
@@ -521,6 +594,7 @@ class Config(BaseModel):
     models: ModelsConfig
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     state_store: StateStoreConfig = Field(default_factory=StateStoreConfig)
     # `[components.<name>]` blocks keyed by component name. An empty dict
     # is the convention-based **simple mode**: components are discovered
