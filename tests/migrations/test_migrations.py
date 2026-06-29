@@ -73,8 +73,8 @@ def test_alembic_upgrade_head_on_empty_postgres(
         tables = set(inspector.get_table_names())
 
         # The five M1-shape tables, the workspaces table, the runtime queue
-        # tables (0008), the scheduler tables (0009), plus alembic's bookkeeping
-        # table.
+        # tables (0008), the scheduler tables (0009), the events table (0010),
+        # plus alembic's bookkeeping table.
         assert {
             "runs",
             "logs",
@@ -87,6 +87,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
             "step_runs",
             "schedules",
             "schedule_changes",
+            "events",
         }.issubset(tables)
         assert "alembic_version" in tables
 
@@ -126,7 +127,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0009_runtime_schedules"
+        assert head_rev == "0010_runtime_events"
     finally:
         engine.dispose()
 
@@ -860,5 +861,92 @@ def test_0009_downgrade_drops_schedule_tables(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0008_runtime_queue"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0010_runtime_events
+# ---------------------------------------------------------------------------
+
+
+def test_0010_creates_events_table_with_partial_index(
+    postgres_state_store_url: str,
+) -> None:
+    """0010 lands the ``events`` table + the partial ``ix_events_unprocessed``.
+
+    ``payload`` is JSONB NOT NULL; ``id`` is a BIGSERIAL (autoincrement integer
+    PK); the index is partial (``WHERE processed_at IS NULL``).
+    """
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        inspector = inspect(engine)
+        assert "events" in set(inspector.get_table_names())
+
+        cols = {c["name"]: c for c in inspector.get_columns("events")}
+        assert set(cols) == {
+            "id",
+            "kind",
+            "payload",
+            "occurred_at",
+            "processed_at",
+            "tenant_id",
+        }
+        assert isinstance(cols["payload"]["type"], JSONB)
+        assert cols["payload"]["nullable"] is False
+        assert cols["processed_at"]["nullable"] is True
+        occurred_type = cols["occurred_at"]["type"]
+        assert isinstance(occurred_type, TIMESTAMP)
+        assert occurred_type.timezone is True
+
+        event_indexes = {ix["name"] for ix in inspector.get_indexes("events")}
+        assert "ix_events_unprocessed" in event_indexes
+    finally:
+        engine.dispose()
+
+
+def test_0010_unprocessed_index_is_partial(
+    postgres_state_store_url: str,
+) -> None:
+    """The index predicate is ``processed_at IS NULL`` (structural proof)."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        with engine.connect() as conn:
+            indexdef = conn.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_events_unprocessed'")
+            ).scalar_one()
+        # Postgres normalises the predicate; assert the partial clause is present.
+        assert "processed_at IS NULL" in indexdef
+    finally:
+        engine.dispose()
+
+
+def test_0010_downgrade_drops_events_table(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0010 -> 0009 drops ``events`` and restores 0009's schema."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert "events" in set(inspect(engine).get_table_names())
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0009_runtime_schedules")
+
+        remaining = set(inspect(engine).get_table_names())
+        assert "events" not in remaining
+        # 0009's tables are intact.
+        assert {"schedules", "schedule_changes"}.issubset(remaining)
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0009_runtime_schedules"
     finally:
         engine.dispose()

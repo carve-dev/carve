@@ -32,6 +32,7 @@ from carve.core.state.database import (
 from carve.core.state.schedules import ScheduleNotFound, Schedules
 from carve.core.targets.resolution import resolve_active_target
 from carve.runtime.cron import CronError, is_valid_cron, is_valid_timezone
+from carve.runtime.events import EventEmitter
 
 console = Console()
 
@@ -59,7 +60,10 @@ def _build_schedules() -> tuple[Schedules, object]:
 
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
-    schedules = Schedules(create_session_factory(engine))
+    session_factory = create_session_factory(engine)
+    # Inject the emitter so a pause/resume/set-cron writes its durable
+    # ``schedule.*`` event row alongside the ``schedule_changes`` audit row.
+    schedules = Schedules(session_factory, emitter=EventEmitter(session_factory))
     return schedules, engine
 
 

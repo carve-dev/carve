@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy as sa
 
 from carve.core.config.pipeline_schema import DltStepConfig
 from carve.core.config.schema import Config, ModelsConfig, ProjectConfig, ServerConfig
@@ -22,6 +23,8 @@ from carve.core.state.database import (
     initialize_database,
 )
 from carve.core.state.job_queue import JobQueue
+from carve.core.state.models import Event
+from carve.runtime.events import EventEmitter
 from carve.runtime.persisting_step_sink import PersistingStepSink
 from carve.runtime.run_context import PipelineRun
 from carve.runtime.step_executor import StepResult
@@ -38,6 +41,27 @@ def queue(postgres_state_store_url: str) -> JobQueue:
     engine = create_engine_from_config(config)
     initialize_database(engine)
     return JobQueue(create_session_factory(engine))
+
+
+@pytest.fixture
+def emitting_queue(postgres_state_store_url: str) -> JobQueue:
+    """A ``JobQueue`` whose ``_emit`` seam is live (an :class:`EventEmitter`)."""
+    config = Config(
+        project=ProjectConfig(name="sink-events-test"),
+        models=ModelsConfig(anthropic_api_key="sk-test"),
+        server=ServerConfig(),
+        state_store=StateStoreConfig(url=postgres_state_store_url),
+    )
+    engine = create_engine_from_config(config)
+    initialize_database(engine)
+    factory = create_session_factory(engine)
+    return JobQueue(factory, emitter=EventEmitter(factory))
+
+
+def _events(queue: JobQueue, kind: str) -> list[Event]:
+    stmt = sa.select(Event).where(Event.kind == kind).order_by(Event.id.asc())
+    with queue._session_factory() as session:
+        return list(session.scalars(stmt).all())
 
 
 def _run_id(queue: JobQueue) -> str:
@@ -112,3 +136,57 @@ async def test_retries_record_one_step_run_per_attempt(queue: JobQueue) -> None:
     rows = sorted(queue.list_step_runs(run_id), key=lambda r: r.attempt)
     assert [r.attempt for r in rows] == [1, 2]
     assert [r.status for r in rows] == ["failed", "succeeded"]
+
+
+# ------------------------------------------------- the live step.* event seam
+
+
+async def test_step_lifecycle_persists_started_and_completed_events(
+    emitting_queue: JobQueue,
+) -> None:
+    """A succeeded step persists step.started + step.completed (with outputs)."""
+    run_id = _run_id(emitting_queue)
+    sink = PersistingStepSink(run_id=run_id, job_queue=emitting_queue)
+    step = DltStepConfig(id="ingest", component="stripe")
+    run = PipelineRun(pipeline="p", target="dev", id=run_id)
+
+    await sink.step_started(step=step, run=run, attempt=1)
+    started = _events(emitting_queue, "step.started")
+    assert len(started) == 1
+    assert started[0].payload["run_id"] == run_id
+    assert started[0].payload["type"] == "dlt"
+    step_run_id = started[0].payload["step_run_id"]
+
+    await sink.step_finished(
+        step=step,
+        run=run,
+        result=StepResult(status="succeeded", outputs={"tables": ["charges"]}),
+        attempt=1,
+    )
+    completed = _events(emitting_queue, "step.completed")
+    assert len(completed) == 1
+    assert completed[0].payload["step_run_id"] == step_run_id
+    assert completed[0].payload["outputs"] == {"tables": ["charges"]}
+    # No step.failed on the success path.
+    assert _events(emitting_queue, "step.failed") == []
+
+
+async def test_step_failure_persists_step_failed_event(emitting_queue: JobQueue) -> None:
+    """A failed step persists step.failed (carrying error_message)."""
+    run_id = _run_id(emitting_queue)
+    sink = PersistingStepSink(run_id=run_id, job_queue=emitting_queue)
+    step = DltStepConfig(id="boom", component="stripe")
+    run = PipelineRun(pipeline="p", target="dev", id=run_id)
+
+    await sink.step_started(step=step, run=run, attempt=1)
+    await sink.step_finished(
+        step=step,
+        run=run,
+        result=StepResult(status="failed", error_message="kaboom"),
+        attempt=1,
+    )
+    failed = _events(emitting_queue, "step.failed")
+    assert len(failed) == 1
+    assert failed[0].payload["error_message"] == "kaboom"
+    assert failed[0].payload["type"] == "dlt"
+    assert _events(emitting_queue, "step.completed") == []

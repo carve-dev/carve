@@ -38,6 +38,14 @@ from carve.core.state.models import Job, StepRun, Worker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    # Typed under TYPE_CHECKING only — a runtime ``from carve.runtime.events
+    # import EventSink`` would re-enter the ``carve.runtime`` package mid-import
+    # (its ``__init__`` eagerly pulls in the worker chain → this module). With
+    # ``from __future__ import annotations`` the annotation is a string, so the
+    # state store carries no runtime import of ``runtime.events``. The CLI
+    # constructs the concrete ``EventEmitter`` and injects it here.
+    from carve.runtime.events import EventSink
+
 
 class QueuedJobAlreadyExists(RuntimeError):
     """Raised when a pipeline already has a queued job and one more is enqueued.
@@ -70,8 +78,17 @@ class JobQueue:
     ``expire_on_commit=False`` on the factory keeps returned rows readable.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        emitter: EventSink | None = None,
+    ) -> None:
         self._session_factory = session_factory
+        # The injected event sink (the concrete ``EventEmitter`` in production).
+        # ``None`` ⇒ ``_emit`` stays a silent no-op, so every existing
+        # caller/test that constructs ``JobQueue(factory)`` is unchanged.
+        self._emitter = emitter
 
     # ----------------------------------------------------------------- Enqueue
 
@@ -127,7 +144,17 @@ class JobQueue:
             session.commit()
             job = session.get(Job, inserted_id)
             assert job is not None  # just inserted in this transaction
-            return job
+        self._emit(
+            "job.queued",
+            {
+                "job_id": job.id,
+                "pipeline": pipeline,
+                "target": target,
+                "trigger": "scheduled",
+                "scheduled_for": scheduled_for.isoformat() if scheduled_for is not None else None,
+            },
+        )
+        return job
 
     def enqueue_manual(
         self,
@@ -177,7 +204,19 @@ class JobQueue:
             session.commit()
             job = session.get(Job, returned_id)
             assert job is not None
-            return job
+        # A manual job is always ``scheduled_for=NULL`` (runs ASAP). The emit
+        # rides the existing upsert transition — no new transition added.
+        self._emit(
+            "job.queued",
+            {
+                "job_id": job.id,
+                "pipeline": pipeline,
+                "target": target,
+                "trigger": trigger,
+                "scheduled_for": None,
+            },
+        )
+        return job
 
     # ------------------------------------------------------------------- Claim
 
@@ -226,7 +265,10 @@ class JobQueue:
                 session.rollback()
                 return None
             session.commit()
-            return session.get(Job, claimed_id)
+            job = session.get(Job, claimed_id)
+        if job is not None:
+            self._emit("job.claimed", {"job_id": job.id, "worker_id": worker_id})
+        return job
 
     # ------------------------------------------------------------- Transitions
 
@@ -491,14 +533,18 @@ class JobQueue:
             return session.get(Job, job_id)
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
-        """The event-emit seam — a deliberate no-op until the events slice.
+        """The event-emit seam — delegates to the injected :class:`EventSink`.
 
-        The reaper's ``job.reclaimed`` rides this single method, mirroring
-        ``schedules._emit`` and the persisting-sink seam. Tests patch/spy it to
-        assert the contract (right ``kind`` + ``payload``) without a built-out
-        emitter. No ``events`` table this slice.
+        Every queue transition (``job.queued``/``job.claimed``/``job.reclaimed``,
+        ``worker.registered``/``worker.unregistered``) and the persisting sink's
+        ``step.*`` ride this one method; the reaper drives ``job.reclaimed``
+        through it too. With **no** emitter injected it is a silent no-op — the
+        back-compat path every pre-events caller/test keeps. With one injected it
+        writes a durable ``events`` row (best-effort; the emitter swallows its own
+        failures). Tests may still patch/spy it directly.
         """
-        # TODO(events slice): persist to the ``events`` table / publish to the bus.
+        if self._emitter is not None:
+            self._emitter.emit(kind, payload)
 
     # ----------------------------------------------------------------- Workers
 
@@ -539,7 +585,8 @@ class JobQueue:
                 worker.last_heartbeat_at = now
             session.commit()
             session.refresh(worker)
-            return worker
+        self._emit("worker.registered", {"worker_id": worker_id, "host": host, "pid": pid})
+        return worker
 
     def unregister_worker(self, worker_id: str) -> None:
         """Mark a worker ``stopped`` at clean shutdown (no-op if absent)."""
@@ -550,6 +597,8 @@ class JobQueue:
             worker.status = "stopped"
             worker.last_heartbeat_at = _utcnow()
             session.commit()
+            host, pid = worker.host, worker.pid
+        self._emit("worker.unregistered", {"worker_id": worker_id, "host": host, "pid": pid})
 
     def get_worker(self, worker_id: str) -> Worker | None:
         """Fetch a worker row by id, or ``None``."""

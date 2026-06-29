@@ -485,6 +485,44 @@ class Schedule(Base):
     updated_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
 
 
+class Event(Base):
+    """One durable runtime event — the basis for webhooks/audit (spec 09).
+
+    The events slice turns the runtime's no-op ``_emit`` seams durable: each
+    in-scope state transition (``job.*``/``run.*``/``step.*``/``worker.*``/
+    ``schedule.*``) writes one row here via
+    :class:`~carve.runtime.events.EventEmitter`. The write is **best-effort**
+    observability — an emit failure is logged and swallowed, never blocking the
+    run/loop that triggered it.
+
+    ``id`` is ``BIGSERIAL`` — an append-only DB-generated log id, mirroring
+    :class:`ScheduleChange`/:class:`Log`, **not** the app-generated ``String``
+    ids of the entity tables. ``payload`` is ``JSONB`` **NOT NULL** (no default:
+    the emitter always supplies the taxonomy payload). ``processed_at`` is the
+    delivery cursor a future relay/webhook stamps; the partial
+    ``ix_events_unprocessed`` (``WHERE processed_at IS NULL``) keeps the
+    undelivered-scan cheap.
+    """
+
+    __tablename__ = "events"
+    __table_args__ = (
+        # The unprocessed-scan index a relay/webhook (spec 09) rides. Partial
+        # (``WHERE processed_at IS NULL``) so processed rows never enter it.
+        Index(
+            "ix_events_unprocessed",
+            "occurred_at",
+            postgresql_where=sa.text("processed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    kind: Mapped[str]
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    occurred_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    tenant_id: Mapped[int] = mapped_column(default=1)
+
+
 class ScheduleChange(Base):
     """One audited mutation of a ``schedules`` row (the live-change trail).
 
@@ -520,6 +558,7 @@ class ScheduleChange(Base):
 __all__: list[Any] = [
     "Base",
     "Build",
+    "Event",
     "Job",
     "Log",
     "Pipeline",

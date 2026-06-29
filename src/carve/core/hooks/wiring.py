@@ -105,37 +105,64 @@ def _expand(template: str, tool_name: str, tool_input: dict[str, Any]) -> str:
     return out
 
 
-def build_post_build_hook(specs: list[HookSpec], runner: HookRunner) -> LifecycleHook | None:
-    """Build the single ``post_build`` lifecycle hook from ``specs``.
+def _build_lifecycle_hook(
+    specs: list[HookSpec], runner: HookRunner, event: HookEvent
+) -> LifecycleHook | None:
+    """Build the single lifecycle hook for ``event`` from ``specs``.
 
-    Filters ``specs`` for :attr:`HookEvent.POST_BUILD` and returns a
-    callable ``(payload) -> None`` that runs each matching spec's command
-    (its ``{placeholders}`` expanded from the payload) through the same
-    gated :class:`HookRunner` a tool hook uses. Returns ``None`` when no
-    spec subscribes to ``post_build`` so the build flow can skip the call.
+    The shared body behind :func:`build_post_build_hook` and
+    :func:`build_on_run_failed_hook`: filter ``specs`` for ``event`` and return
+    a callable ``(payload) -> None`` that runs each matching spec's command (its
+    ``{placeholders}`` expanded from the payload) through the same gated
+    :class:`HookRunner` a tool hook uses. Returns ``None`` when no spec
+    subscribes to ``event`` so the emitter can skip the call.
 
-    A ``post_build`` spec's ``match`` filter is **inert** — there is no
-    tool/command to match against a lifecycle event, so a ``match`` on a
-    ``post_build`` hook is ignored rather than rejected (a hook with no
-    ``match`` is the common, intended case). A :class:`HookExecutionError`
-    propagates out of the callable (a denied / non-zero / timed-out
-    command); the build flow decides how to surface it — for ``post_build``
-    that is post-commit (logged, the Build stands), not a roll-back.
+    A lifecycle spec's ``match`` filter is **inert** — there is no tool/command
+    to match against a lifecycle event, so a ``match`` on it is ignored rather
+    than rejected (a hook with no ``match`` is the common, intended case). A
+    :class:`HookExecutionError` propagates out of the callable (a denied /
+    non-zero / timed-out command); the emitter decides how to surface it — for
+    both ``post_build`` and ``on_run_failed`` that is post-event (logged, the
+    materialization/failure stands), not a roll-back.
     """
-    post = [s for s in specs if s.event is HookEvent.POST_BUILD]
-    if not post:
+    matching = [s for s in specs if s.event is event]
+    if not matching:
         return None
 
     def _hook(payload: dict[str, Any]) -> None:
-        for spec in post:
+        for spec in matching:
             command = _expand_lifecycle(spec.run, payload)
             # Same gated runner as tool hooks: a denied / non-zero command
             # raises HookExecutionError. Unlike a pre-action tool hook, the
-            # build flow treats that raise as post-commit (surfaced, the
-            # Build stands) — but the gate clamp/deny is identical.
+            # emitter treats that raise as post-event (surfaced, the action
+            # stands) — but the gate clamp/deny is identical.
             runner.run(spec, command=command)
 
     return _hook
+
+
+def build_post_build_hook(specs: list[HookSpec], runner: HookRunner) -> LifecycleHook | None:
+    """Build the single ``post_build`` lifecycle hook from ``specs``.
+
+    A thin wrapper over :func:`_build_lifecycle_hook` for
+    :attr:`HookEvent.POST_BUILD`: the build flow fires it after a ``Build`` row
+    is durably recorded, treating a raise as post-commit (logged, the Build
+    stands), not a roll-back. Returns ``None`` when no spec subscribes.
+    """
+    return _build_lifecycle_hook(specs, runner, HookEvent.POST_BUILD)
+
+
+def build_on_run_failed_hook(specs: list[HookSpec], runner: HookRunner) -> LifecycleHook | None:
+    """Build the single ``on_run_failed`` lifecycle hook from ``specs``.
+
+    The runtime sibling of :func:`build_post_build_hook` for
+    :attr:`HookEvent.ON_RUN_FAILED`: the runtime worker fires it at its
+    ``run.failed`` transition, treating a raise as post-event (logged, the run
+    stays terminal-failed), not a roll-back. Returns ``None`` when no spec
+    subscribes. The payload keys it expands are ``{pipeline}`` / ``{run_id}`` /
+    ``{target}`` / ``{error}`` (the worker supplies those).
+    """
+    return _build_lifecycle_hook(specs, runner, HookEvent.ON_RUN_FAILED)
 
 
 def _expand_lifecycle(template: str, payload: dict[str, Any]) -> str:
@@ -168,6 +195,7 @@ def _expand_lifecycle(template: str, payload: dict[str, Any]) -> str:
 __all__ = [
     "LifecycleHook",
     "ToolHook",
+    "build_on_run_failed_hook",
     "build_post_build_hook",
     "build_tool_hooks",
 ]

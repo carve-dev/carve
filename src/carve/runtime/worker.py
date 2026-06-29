@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import carve.runtime.heartbeat as heartbeat
+from carve.core.hooks.runner import HookExecutionError
 from carve.core.state.job_queue import PipelineAlreadyRunning
 from carve.runtime.clock import Clock, system_clock
 from carve.runtime.execute_pipeline import execute_pipeline
@@ -49,8 +50,10 @@ from carve.runtime.step_types.registry import build_step_executor_registry
 if TYPE_CHECKING:
     from carve.core.config.paths import ProjectPaths
     from carve.core.config.schema import ComponentConfig, ConnectionsConfig
+    from carve.core.hooks.wiring import LifecycleHook
     from carve.core.state.job_queue import JobQueue
     from carve.core.state.repository import Repository
+    from carve.runtime.events import EventSink
     from carve.runtime.execute_pipeline import RunResult
     from carve.runtime.step_executor import StepExecutorRegistry
 
@@ -101,6 +104,15 @@ class WorkerContext:
     # The time/sleep seam for the heartbeat loop — ``system_clock`` in
     # production; a ``FakeClock`` in tests drives the heartbeat sleep-free.
     clock: Clock = system_clock
+    # The durable event sink (the concrete ``EventEmitter`` in production). The
+    # run lifecycle (``run.started``/``run.succeeded``/``run.failed``) is emitted
+    # through it; ``None`` ⇒ no run events (back-compat).
+    emitter: EventSink | None = None
+    # The user ``on_run_failed`` hook (a gated shell command, e.g. notify-slack).
+    # Fired at ``run.failed`` — a DISTINCT mechanism from the durable event:
+    # the emitter never calls the hook and the hook never writes the event; the
+    # worker drives both at the same transition. ``None`` ⇒ no hook fires.
+    on_run_failed: LifecycleHook | None = None
 
     def build_registry(self) -> StepExecutorRegistry:
         """Build the dlt→dbt→sql registry for a run.
@@ -188,6 +200,9 @@ async def run_once(ctx: WorkerContext) -> bool:
             return False
 
         await asyncio.to_thread(ctx.repository.update_run_status, run_id, "running")
+        await _emit_event(
+            ctx, "run.started", {"run_id": run_id, "job_id": job.id, "pipeline": job.pipeline}
+        )
         handle = heartbeat.start(ctx.job_queue, job.id, clock=ctx.clock, worker_id=worker_id)
         try:
             result = await _execute_job(
@@ -203,15 +218,38 @@ async def run_once(ctx: WorkerContext) -> bool:
         # down DB may also reject these writes, but the common single-op hiccup
         # is recovered, and `worker_loop` survives regardless.
         logger.exception("worker job %s failed; marking failed", job.id)
-        await _fail_job(ctx, job_id=job.id, run_id=run_id, error=str(exc), worker_id=worker_id)
+        await _fail_job(
+            ctx,
+            job_id=job.id,
+            run_id=run_id,
+            error=str(exc),
+            worker_id=worker_id,
+            pipeline=job.pipeline,
+            target=job.target,
+        )
         return True
 
-    await _finalize(ctx, job_id=job.id, run_id=run_id, result=result, worker_id=worker_id)
+    await _finalize(
+        ctx,
+        job_id=job.id,
+        run_id=run_id,
+        result=result,
+        worker_id=worker_id,
+        pipeline=job.pipeline,
+        target=job.target,
+    )
     return True
 
 
 async def _fail_job(
-    ctx: WorkerContext, *, job_id: str, run_id: str | None, error: str, worker_id: str
+    ctx: WorkerContext,
+    *,
+    job_id: str,
+    run_id: str | None,
+    error: str,
+    worker_id: str,
+    pipeline: str,
+    target: str,
 ) -> None:
     """Best-effort mark the run (if created) + the job terminal ``failed``.
 
@@ -220,6 +258,12 @@ async def _fail_job(
     resolved even when the run side can't be. The ``mark_finished`` is
     ownership-guarded (``expected_worker_id``): a reclaimed job's fail-write
     correctly no-ops rather than stomping the new owner.
+
+    This is the **setup-exception** ``run.failed`` transition. Two distinct
+    mechanisms fire here (and neither calls the other): the durable ``run.failed``
+    event (observability/webhook substrate) AND the user ``on_run_failed`` hook
+    (a gated notify command). Both are best-effort — a raising hook is logged,
+    never re-raised, so the job stays terminal-failed.
     """
     if run_id is not None:
         with contextlib.suppress(Exception):
@@ -232,6 +276,22 @@ async def _fail_job(
             error_message=error,
             expected_worker_id=worker_id,
         )
+    if run_id is not None:
+        duration_ms = await _run_duration_ms(ctx, run_id) if ctx.emitter is not None else None
+        await _emit_event(
+            ctx,
+            "run.failed",
+            {
+                "run_id": run_id,
+                "job_id": job_id,
+                "pipeline": pipeline,
+                "duration_ms": duration_ms,
+                "error_message": error,
+            },
+        )
+    await _fire_on_run_failed(
+        ctx, {"pipeline": pipeline, "run_id": run_id or "", "target": target, "error": error}
+    )
 
 
 async def _execute_job(
@@ -261,12 +321,20 @@ async def _finalize(
     run_id: str,
     result: RunResult,
     worker_id: str,
+    pipeline: str,
+    target: str,
 ) -> None:
     """Stamp the job + run terminal from the derived ``RunResult.status``.
 
     The job's terminal write is ownership-guarded (``expected_worker_id``): if
     this worker was reclaimed mid-execute, the finalize no-ops rather than
     stomping the job a new owner now holds.
+
+    This is the **executed-then-finished** transition: it emits ``run.succeeded``
+    or ``run.failed`` (keyed on the derived status) as a durable event, and on a
+    failure ALSO fires the user ``on_run_failed`` hook — the two distinct
+    mechanisms documented on :class:`WorkerContext`. Both are best-effort; a
+    raising hook is logged, never re-raised, so the run stays terminal.
     """
     run_status = _RUN_STATUS_BY_RESULT.get(result.status, "failed")
     job_status = _JOB_STATUS_BY_RESULT.get(result.status, "failed")
@@ -279,6 +347,95 @@ async def _finalize(
         error_message=error,
         expected_worker_id=worker_id,
     )
+    duration_ms = await _run_duration_ms(ctx, run_id) if ctx.emitter is not None else None
+    if result.status == "succeeded":
+        await _emit_event(
+            ctx,
+            "run.succeeded",
+            {
+                "run_id": run_id,
+                "job_id": job_id,
+                "pipeline": pipeline,
+                "duration_ms": duration_ms,
+                "error_message": None,
+            },
+        )
+    else:
+        await _emit_event(
+            ctx,
+            "run.failed",
+            {
+                "run_id": run_id,
+                "job_id": job_id,
+                "pipeline": pipeline,
+                "duration_ms": duration_ms,
+                "error_message": error,
+            },
+        )
+        await _fire_on_run_failed(
+            ctx, {"pipeline": pipeline, "run_id": run_id, "target": target, "error": error or ""}
+        )
+
+
+async def _emit_event(ctx: WorkerContext, kind: str, payload: dict[str, object]) -> None:
+    """Write a durable run-lifecycle event, best-effort and off the event loop.
+
+    No-op when no emitter is injected (back-compat). The emitter already swallows
+    its own failures; this extra guard makes doubly sure an observability write
+    can never propagate into the run.
+    """
+    if ctx.emitter is None:
+        return
+    try:
+        await asyncio.to_thread(ctx.emitter.emit, kind, payload)
+    except Exception:
+        logger.warning("run event emit failed (kind=%s); swallowing", kind, exc_info=True)
+
+
+async def _fire_on_run_failed(ctx: WorkerContext, payload: dict[str, object]) -> None:
+    """Fire the user ``on_run_failed`` hook, post-event — a raise is NOT fatal.
+
+    Mirrors ``builder._fire_post_build``'s post-commit contract: the run has
+    already failed, so a hook that raises (a denied / non-zero command, or a bug)
+    is **surfaced (logged), not rolled back** — the run stays terminal-failed.
+    The sync hook (it runs a gated ``bash`` via ``run_bash``) is bridged off the
+    event loop via :func:`asyncio.to_thread`. This is the user-notify mechanism,
+    deliberately separate from the durable ``run.failed`` event.
+    """
+    if ctx.on_run_failed is None:
+        return
+    hook = ctx.on_run_failed
+    try:
+        await asyncio.to_thread(hook, payload)
+    except HookExecutionError as exc:
+        # Gate-denied / non-zero / timed-out command. Post-event: log loudly, do
+        # NOT re-raise — the run is already terminal-failed.
+        logger.error(
+            "on_run_failed hook failed (run_id=%s); the run stays terminal-failed. Error: %s",
+            payload.get("run_id"),
+            exc,
+        )
+    except Exception:
+        # A bug in the hook callable itself must still not kill the worker (this
+        # runs after the run is terminal). Surface it; never propagate.
+        logger.exception(
+            "on_run_failed hook raised unexpectedly (run_id=%s); the run stays terminal-failed",
+            payload.get("run_id"),
+        )
+
+
+async def _run_duration_ms(ctx: WorkerContext, run_id: str) -> int | None:
+    """Best-effort read the run's ``duration_ms`` for a ``run.*`` event payload.
+
+    The terminal run write already computed it; this reads it back for the event.
+    Swallows any failure (returns ``None``) — the event is observability, never
+    worth a raise.
+    """
+    try:
+        run = await asyncio.to_thread(ctx.repository.get_run, run_id)
+    except Exception:
+        return None
+    return run.duration_ms if run is not None else None
 
 
 async def worker_loop(
@@ -338,6 +495,8 @@ def _with_worker_id(ctx: WorkerContext, worker_id: str) -> WorkerContext:
         worker_id=worker_id,
         registry_factory=ctx.registry_factory,
         clock=ctx.clock,
+        emitter=ctx.emitter,
+        on_run_failed=ctx.on_run_failed,
     )
 
 

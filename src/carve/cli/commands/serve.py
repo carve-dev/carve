@@ -39,6 +39,7 @@ from carve.core.state.job_queue import JobQueue
 from carve.core.state.repository import Repository
 from carve.core.state.schedules import Schedules
 from carve.core.targets.resolution import resolve_active_target
+from carve.runtime.events import EventEmitter
 from carve.runtime.reaper import DEFAULT_REAPER_INTERVAL_S, reaper_loop
 from carve.runtime.scheduler import DEFAULT_INTERVAL_S, scheduler_loop
 
@@ -78,8 +79,12 @@ def command(
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     session_factory = create_session_factory(engine)
-    job_queue = JobQueue(session_factory)
-    schedules = Schedules(session_factory)
+    # One emitter shared by both repos: the scheduler's ``schedule.*``/
+    # ``schedule.skipped|fired`` and the reaper's ``job.reclaimed`` (via the
+    # queue) all persist durable ``events`` rows.
+    emitter = EventEmitter(session_factory)
+    job_queue = JobQueue(session_factory, emitter=emitter)
+    schedules = Schedules(session_factory, emitter=emitter)
     repository = Repository(session_factory)
 
     console.print(

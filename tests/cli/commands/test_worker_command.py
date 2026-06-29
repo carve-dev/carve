@@ -127,3 +127,28 @@ def test_worker_rejects_multiple_workers(
     result = runner.invoke(app, ["worker", "--once", "--workers", "2"], env=cli_env)
     assert result.exit_code == 2
     assert "not supported" in result.output
+
+
+def test_worker_once_persists_run_lifecycle_events(
+    tmp_path: Path,
+    cli_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The command wires a live emitter: a worker run lands ``run.*`` events."""
+    import sqlalchemy as sa
+
+    from carve.core.state.models import Event
+
+    project = _project(tmp_path)
+    monkeypatch.chdir(project)
+    queue = _job_queue(cli_env["DATABASE_URL"])
+    queue.enqueue_manual("ping", "dev", trigger="manual")
+
+    result = runner.invoke(app, ["worker", "--once"], env=cli_env)
+    assert result.exit_code == 0, result.output
+
+    with queue._session_factory() as session:
+        kinds = {e.kind for e in session.scalars(sa.select(Event)).all()}
+    # The worker ran with an injected emitter → the run lifecycle persisted.
+    assert "run.started" in kinds
+    assert "run.succeeded" in kinds

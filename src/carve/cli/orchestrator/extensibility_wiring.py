@@ -60,6 +60,7 @@ from carve.core.hooks.runner import HookRunner
 from carve.core.hooks.wiring import (
     LifecycleHook,
     ToolHook,
+    build_on_run_failed_hook,
     build_post_build_hook,
     build_tool_hooks,
 )
@@ -195,6 +196,49 @@ def build_extensibility_post_build_hook(
     return build_post_build_hook(specs, runner)
 
 
+def build_extensibility_on_run_failed_hook(
+    *,
+    project_dir: Path,
+    paths: PathsConfig,
+    mode: PermissionMode = PermissionMode.DEPLOY,
+    approver: Approver | None = None,
+) -> LifecycleHook | None:
+    """Build the ``on_run_failed`` lifecycle hook from ``carve/hooks.toml``.
+
+    The runtime sibling of :func:`build_extensibility_post_build_hook`: load the
+    hooks config once (through the same fail-closed boundary), build a
+    :class:`HookRunner` over a :class:`PermissionGate` for ``build_policy(mode)``,
+    and return :func:`~carve.core.hooks.wiring.build_on_run_failed_hook` over the
+    parsed specs. The runtime worker fires the returned callable at its
+    ``run.failed`` transition, post-event (a raise is logged, the run stays
+    terminal-failed).
+
+    **Mode floor — flagged for the security reviewer.** ``post_build`` gates at
+    ``BUILD`` (the build flow's inherited mode). The runtime is **not** an agent
+    loop, so there is no inherited mode; ``read_only`` is wrong because the
+    archetypal ``on_run_failed`` hook is a **notify** (`notify-slack`, a
+    PagerDuty ping) that must reach the network. Raw ``curl``/``wget`` are in
+    ``_ALWAYS_DENY`` (every mode), so the **only** network-reaching commands the
+    gate ever admits are the deploy-tier prompt set (``gh``/``git push``/``dlt
+    deploy``), reachable **only at ``DEPLOY``** and there only via an approver
+    prompt. So ``DEPLOY`` is the narrowest mode at which a notify hook can reach
+    the network at all — hence the floor here. The CLI passes **no approver**, so
+    a deploy-tier prompt fails closed (denied) until a future slice wires a
+    runtime approver; the metacharacter screen + argv allowlist apply unchanged.
+    The mode is a parameter so the security reviewer can confirm/narrow the floor
+    without touching call sites.
+
+    A **missing file yields no hook** (``None`` — the worker skips the call); a
+    **malformed file is fail-closed** (the :class:`HookConfigError` propagates).
+    """
+    specs = _load_hook_specs_fail_closed(project_dir, paths)
+    if not specs:
+        return None
+    gate = PermissionGate(build_policy(mode))
+    runner = HookRunner(gate=gate, project_dir=project_dir, approver=approver)
+    return build_on_run_failed_hook(specs, runner)
+
+
 def build_skill_pack_tool(
     *,
     project_dir: Path,
@@ -277,6 +321,7 @@ __all__ = [
     "HookFactory",
     "build_extensibility_hook_factory",
     "build_extensibility_hooks",
+    "build_extensibility_on_run_failed_hook",
     "build_extensibility_post_build_hook",
     "build_skill_pack_tool",
     "resolve_agent_or_fallback",

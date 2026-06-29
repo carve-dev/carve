@@ -22,15 +22,16 @@ def test_emitted_events_fire_handlers() -> None:
 
 
 def test_deferred_events_accept_subscriptions_but_do_not_fire() -> None:
-    """The seam: pre_deploy/on_run_failed register without firing.
+    """The seam: pre_deploy registers without firing.
 
-    `post_build` LEFT this set in plan-build Unit 2 — its emitter (the build
-    flow) now exists — so only `pre_deploy`/`on_run_failed` remain deferred.
+    `post_build` LEFT this set in plan-build Unit 2 (the build flow is its
+    emitter); `on_run_failed` LEFT it in the events slice (the runtime worker is
+    its emitter) — so only `pre_deploy` (deploy = Incr 6) remains deferred.
     """
     registry = HookRegistry()
     fired: list[str] = []
-    # The remaining deferred events are exactly pre_deploy + on_run_failed.
-    assert DEFERRED_EMITTER_EVENTS == frozenset({HookEvent.PRE_DEPLOY, HookEvent.ON_RUN_FAILED})
+    # The remaining deferred event is exactly pre_deploy.
+    assert DEFERRED_EMITTER_EVENTS == frozenset({HookEvent.PRE_DEPLOY})
     for event in DEFERRED_EMITTER_EVENTS:
         registry.subscribe(event, lambda _p: fired.append("x"))
         # Subscription is accepted (no error).
@@ -47,6 +48,12 @@ def test_post_build_is_no_longer_deferred() -> None:
     assert HookEvent.POST_BUILD in EMITTED_EVENTS
 
 
+def test_on_run_failed_is_no_longer_deferred() -> None:
+    """on_run_failed left DEFERRED_EMITTER_EVENTS — the runtime worker fires it."""
+    assert HookEvent.ON_RUN_FAILED not in DEFERRED_EMITTER_EVENTS
+    assert HookEvent.ON_RUN_FAILED in EMITTED_EVENTS
+
+
 def test_emitting_post_build_fires_handlers_without_raising() -> None:
     """emit(POST_BUILD, payload) now fires handlers, not DeferredEmitterEvent."""
     registry = HookRegistry()
@@ -55,6 +62,17 @@ def test_emitting_post_build_fires_handlers_without_raising() -> None:
     payload = {"pipeline_name": "stripe", "build_id": "build_x", "target": "dev"}
     # Must NOT raise DeferredEmitterEvent — the emitter is wired (plan-build).
     registry.emit(HookEvent.POST_BUILD, payload)
+    assert seen == [payload]
+
+
+def test_emitting_on_run_failed_fires_handlers_without_raising() -> None:
+    """emit(ON_RUN_FAILED, payload) now fires handlers, not DeferredEmitterEvent."""
+    registry = HookRegistry()
+    seen: list[dict[str, object]] = []
+    registry.subscribe(HookEvent.ON_RUN_FAILED, lambda payload: seen.append(payload))
+    payload = {"pipeline": "stripe", "run_id": "run_x", "target": "dev", "error": "boom"}
+    # Must NOT raise DeferredEmitterEvent — the emitter is wired (runtime worker).
+    registry.emit(HookEvent.ON_RUN_FAILED, payload)
     assert seen == [payload]
 
 
