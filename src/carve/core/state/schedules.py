@@ -33,6 +33,13 @@ from carve.core.state.models import Schedule, ScheduleChange
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    # Typed under TYPE_CHECKING only — same circular-import dodge as
+    # ``_next_tick_after``'s lazy ``carve.runtime.cron`` import below: a runtime
+    # ``from carve.runtime.events import EventSink`` would re-enter the
+    # ``carve.runtime`` package mid-import. ``from __future__ import annotations``
+    # stringizes the annotation, so the state store carries no runtime import.
+    from carve.runtime.events import EventSink
+
 
 def _next_tick_after(cron: str, after: datetime, timezone: str) -> datetime:
     """Lazy bridge to ``carve.runtime.cron.next_tick_after``.
@@ -79,6 +86,14 @@ def _snapshot(schedule: Schedule) -> dict[str, Any]:
     return snap
 
 
+def _cron_tz(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Project a full ``_snapshot`` down to the ``schedule.changed`` event's
+    ``before``/``after`` (cron + timezone only), or ``None`` for a create path."""
+    if snapshot is None:
+        return None
+    return {"cron": snapshot["cron"], "timezone": snapshot["timezone"]}
+
+
 class Schedules:
     """Typed access to the ``schedules``/``schedule_changes`` tables.
 
@@ -87,8 +102,17 @@ class Schedules:
     sync transaction and returns detached ORM objects (or plain values).
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        emitter: EventSink | None = None,
+    ) -> None:
         self._session_factory = session_factory
+        # The injected event sink (the concrete ``EventEmitter`` in production).
+        # ``None`` ⇒ ``_emit`` stays a silent no-op, so every existing
+        # caller/test that constructs ``Schedules(factory)`` is unchanged.
+        self._emitter = emitter
 
     # ------------------------------------------------------------------- Reads
 
@@ -194,7 +218,10 @@ class Schedules:
                 changed_at=now,
             )
             session.commit()
-            self._emit("schedule.seeded", {"pipeline": pipeline, "cron": cron})
+            self._emit(
+                "schedule.seeded",
+                {"pipeline": pipeline, "cron": cron, "source": "seed"},
+            )
             session.refresh(schedule)
             return schedule
 
@@ -339,7 +366,20 @@ class Schedules:
                 changed_at=now,
             )
             session.commit()
-            self._emit("schedule.changed", {"pipeline": pipeline, "cron": cron})
+            # Taxonomy (schedule.changed): pipeline, before (cron/tz), after
+            # (cron/tz), actor_token_id, source, reason. ``before`` is None when
+            # set_cron stood the row up (the UPSERT create path).
+            self._emit(
+                "schedule.changed",
+                {
+                    "pipeline": pipeline,
+                    "before": _cron_tz(before),
+                    "after": _cron_tz(after),
+                    "actor_token_id": actor_token_id,
+                    "source": source,
+                    "reason": reason,
+                },
+            )
             session.refresh(schedule)
             return schedule
 
@@ -394,7 +434,17 @@ class Schedules:
                 changed_at=now,
             )
             session.commit()
-            self._emit(emit_kind, {"pipeline": pipeline, "reason": reason})
+            # Taxonomy (schedule.paused / schedule.resumed): pipeline,
+            # actor_token_id, source, reason.
+            self._emit(
+                emit_kind,
+                {
+                    "pipeline": pipeline,
+                    "actor_token_id": actor_token_id,
+                    "source": source,
+                    "reason": reason,
+                },
+            )
             session.refresh(schedule)
             return schedule
 
@@ -437,14 +487,17 @@ class Schedules:
         )
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
-        """The event-emit seam — a deliberate no-op until the events slice.
+        """The event-emit seam — delegates to the injected :class:`EventSink`.
 
         The scheduler's ``schedule.fired``/``schedule.skipped`` and the mutators'
-        ``schedule.paused``/``resumed``/``changed`` all flow through this single
-        method. Tests patch/spy it to assert the contract (right ``kind`` +
-        ``payload``) without a built-out emitter.
+        ``schedule.paused``/``resumed``/``changed``/``seeded`` all flow through
+        this single method. With **no** emitter injected it is a silent no-op
+        (the back-compat path the existing ``_emit``-spy tests rely on); with one
+        injected it writes a durable ``events`` row (best-effort — the emitter
+        swallows its own failures).
         """
-        # TODO(events slice): persist to the ``events`` table / publish to the bus.
+        if self._emitter is not None:
+            self._emitter.emit(kind, payload)
 
 
 def _apply_pause(schedule: Schedule, reason: str | None) -> None:

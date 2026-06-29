@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
 from carve.core.config.paths import ProjectPaths
 from carve.core.config.schema import (
@@ -40,6 +41,8 @@ from carve.core.state.database import (
     initialize_database,
 )
 from carve.core.state.job_queue import JobQueue
+from carve.core.state.models import Event
+from carve.runtime.events import EventEmitter
 from carve.runtime.step_types.connections import ResolvedConnection
 from carve.runtime.step_types.dlt import DltRunOutcome
 from carve.runtime.step_types.registry import build_step_executor_registry
@@ -341,6 +344,144 @@ async def test_worker_guarded_writes_noop_when_reclaimed_mid_run(
     assert back is not None
     assert back.status == "running"
     assert back.claimed_by == "worker-B"
+
+
+def _events(ctx: WorkerContext, kind: str) -> list[Event]:
+    stmt = sa.select(Event).where(Event.kind == kind).order_by(Event.id.asc())
+    with ctx.job_queue._session_factory() as session:
+        return list(session.scalars(stmt).all())
+
+
+def _emitting_ctx(base: WorkerContext, **overrides: Any) -> WorkerContext:
+    """Clone ``base`` with a live :class:`EventEmitter` injected (+ overrides)."""
+    factory = base.job_queue._session_factory
+    fields: dict[str, Any] = {
+        "repository": base.repository,
+        "job_queue": base.job_queue,
+        "paths": base.paths,
+        "connections": base.connections,
+        "dbt_executable": base.dbt_executable,
+        "worker_id": "test-worker",
+        "registry_factory": base.registry_factory,
+        "emitter": EventEmitter(factory),
+    }
+    fields.update(overrides)
+    return WorkerContext(**fields)
+
+
+async def test_successful_run_persists_run_started_and_succeeded(
+    worker_context: WorkerContext,
+) -> None:
+    """A full worker run persists ``run.started`` then ``run.succeeded``."""
+    ctx = _emitting_ctx(worker_context)
+    job = ctx.job_queue.enqueue_manual("stripe", "dev", trigger="manual")
+
+    assert await run_once(ctx) is True
+
+    started = _events(ctx, "run.started")
+    assert len(started) == 1
+    assert started[0].payload == {
+        "run_id": ctx.job_queue.get_job(job.id).run_id,  # type: ignore[union-attr]
+        "job_id": job.id,
+        "pipeline": "stripe",
+    }
+    succeeded = _events(ctx, "run.succeeded")
+    assert len(succeeded) == 1
+    assert succeeded[0].payload["job_id"] == job.id
+    assert succeeded[0].payload["error_message"] is None
+    assert succeeded[0].payload["duration_ms"] is not None
+    # A success never emits run.failed.
+    assert _events(ctx, "run.failed") == []
+
+
+async def test_failed_run_persists_run_failed_and_fires_hook(
+    worker_context: WorkerContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing run persists ``run.failed`` AND fires the ``on_run_failed`` hook.
+
+    The two mechanisms are distinct and both fire at the same transition: the
+    durable event (observability) and the user hook (a notify). Execution is
+    stubbed to return a failed :class:`RunResult` so the failure is deterministic.
+    """
+    import carve.runtime.worker as worker_mod
+    from carve.runtime.execute_pipeline import RunResult
+
+    fired: list[dict[str, Any]] = []
+
+    def _hook(payload: dict[str, Any]) -> None:
+        fired.append(payload)
+
+    ctx = _emitting_ctx(worker_context, on_run_failed=_hook)
+    job = ctx.job_queue.enqueue_manual("stripe", "dev", trigger="manual")
+
+    async def _fail_execute(
+        c: WorkerContext, *, job_pipeline: str, run_id: str, target: str
+    ) -> Any:
+        return RunResult(
+            status="failed",
+            completed=frozenset(),
+            failed=frozenset({"s"}),
+            skipped=frozenset(),
+        )
+
+    monkeypatch.setattr(worker_mod, "_execute_job", _fail_execute)
+
+    assert await run_once(ctx) is True
+
+    # The durable run.failed event landed.
+    failed = _events(ctx, "run.failed")
+    assert len(failed) == 1
+    assert failed[0].payload["job_id"] == job.id
+    assert failed[0].payload["pipeline"] == "stripe"
+
+    # The user on_run_failed hook fired, with the {pipeline}/{run_id}/{target}/{error} keys.
+    assert len(fired) == 1
+    assert fired[0]["pipeline"] == "stripe"
+    assert fired[0]["target"] == "dev"
+    assert "run_id" in fired[0]
+    assert "error" in fired[0]
+
+    # The job ends terminal failed.
+    finished = ctx.job_queue.get_job(job.id)
+    assert finished is not None
+    assert finished.status == "failed"
+
+
+async def test_raising_on_run_failed_hook_is_surfaced_not_fatal(
+    worker_context: WorkerContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising ``on_run_failed`` hook is logged, not fatal — the run stays failed.
+
+    Post-event semantics (like ``post_build``): the run already failed, so a hook
+    that raises does NOT propagate out of ``run_once`` and does NOT change the
+    terminal state.
+    """
+    import carve.runtime.worker as worker_mod
+    from carve.runtime.execute_pipeline import RunResult
+
+    def _boom(payload: dict[str, Any]) -> None:
+        raise RuntimeError("notify-slack exploded")
+
+    ctx = _emitting_ctx(worker_context, on_run_failed=_boom)
+    job = ctx.job_queue.enqueue_manual("stripe", "dev", trigger="manual")
+
+    async def _fail_execute(
+        c: WorkerContext, *, job_pipeline: str, run_id: str, target: str
+    ) -> Any:
+        return RunResult(
+            status="failed",
+            completed=frozenset(),
+            failed=frozenset({"s"}),
+            skipped=frozenset(),
+        )
+
+    monkeypatch.setattr(worker_mod, "_execute_job", _fail_execute)
+
+    # run_once must NOT raise despite the raising hook.
+    assert await run_once(ctx) is True
+    finished = ctx.job_queue.get_job(job.id)
+    assert finished is not None
+    assert finished.status == "failed"  # the run stays terminal-failed
 
 
 async def test_setup_failure_on_claimed_job_marks_failed_not_orphaned(

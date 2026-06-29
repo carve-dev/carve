@@ -22,6 +22,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from carve.cli.orchestrator.extensibility_wiring import build_extensibility_on_run_failed_hook
 from carve.core.config import ConfigError, load_config
 from carve.core.config.paths import ProjectPaths
 from carve.core.state import Repository
@@ -32,6 +33,7 @@ from carve.core.state.database import (
 )
 from carve.core.state.job_queue import JobQueue
 from carve.core.targets.resolution import resolve_active_target
+from carve.runtime.events import EventEmitter
 from carve.runtime.worker import (
     DEFAULT_POLL_INTERVAL_S,
     WorkerContext,
@@ -90,8 +92,19 @@ def command(
     engine = create_engine_from_config(config, project_dir=project_dir)
     initialize_database(engine)
     session_factory = create_session_factory(engine)
+    emitter = EventEmitter(session_factory)
     repository = Repository(session_factory)
-    job_queue = JobQueue(session_factory)
+    job_queue = JobQueue(session_factory, emitter=emitter)
+
+    # The user ``on_run_failed`` hook (a gated notify command) — fired at the
+    # worker's ``run.failed`` transition, independently of the durable event. A
+    # missing/empty hooks.toml yields ``None`` (no hook); a malformed one is
+    # fail-closed (raises before any work). Gated at DEPLOY (the network floor —
+    # see ``build_extensibility_on_run_failed_hook``).
+    on_run_failed = build_extensibility_on_run_failed_hook(
+        project_dir=project_dir,
+        paths=config.paths,
+    )
 
     ctx = WorkerContext(
         repository=repository,
@@ -100,6 +113,8 @@ def command(
         connections=config.connections,
         dbt_executable=_DEFAULT_DBT_EXECUTABLE,
         worker_id=make_worker_id(),
+        emitter=emitter,
+        on_run_failed=on_run_failed,
     )
 
     try:

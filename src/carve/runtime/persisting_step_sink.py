@@ -15,12 +15,15 @@ blocking the DAG walk), but the state store is **synchronous** SQLAlchemy. So
 every DB call is bridged off the event loop via :func:`asyncio.to_thread` — the
 queue stays sync, the loop never blocks. No async DB engine this slice.
 
-The ``step.*`` event emit stays a no-op seam
---------------------------------------------
-The spec pairs ``step_runs`` persistence with ``step.started``/
-``step.completed``/``step.failed`` events, but the ``events`` table + emitter
-are a later runtime slice. The emit points are marked below so the signature is
-event-ready; persistence is this slice's deliverable.
+The ``step.*`` events ride the queue's emitter
+----------------------------------------------
+Alongside persistence, the sink emits ``step.started`` / ``step.completed`` /
+``step.failed`` through the **queue's** ``_emit`` seam (``self._job_queue._emit``,
+reusing the emitter the queue was injected with — no separate emitter param on
+the sink). With no emitter injected the seam is a silent no-op; with one, each
+step transition writes a durable ``events`` row. Like every other DB-touching
+call here, the (sync) emit is bridged off the event loop via
+:func:`asyncio.to_thread`.
 """
 
 from __future__ import annotations
@@ -67,7 +70,11 @@ class PersistingStepSink:
             attempt=attempt,
         )
         self._open[(step.id, attempt)] = step_run_id
-        # TODO(events slice): emit step.started here once the events table lands.
+        await asyncio.to_thread(
+            self._job_queue._emit,
+            "step.started",
+            {"step_run_id": step_run_id, "run_id": self._run_id, "type": step.type},
+        )
 
     async def step_finished(
         self,
@@ -100,7 +107,30 @@ class PersistingStepSink:
             finished_at=result.finished_at,
             duration_ms=result.duration_ms,
         )
-        # TODO(events slice): emit step.completed / step.failed here.
+        # step.completed on a non-failed terminal (succeeded/skipped, carrying
+        # ``outputs``); step.failed on a failure (carrying ``error_message``).
+        if result.status == "failed":
+            await asyncio.to_thread(
+                self._job_queue._emit,
+                "step.failed",
+                {
+                    "step_run_id": step_run_id,
+                    "run_id": self._run_id,
+                    "type": step.type,
+                    "error_message": result.error_message,
+                },
+            )
+        else:
+            await asyncio.to_thread(
+                self._job_queue._emit,
+                "step.completed",
+                {
+                    "step_run_id": step_run_id,
+                    "run_id": self._run_id,
+                    "type": step.type,
+                    "outputs": result.outputs,
+                },
+            )
 
 
 __all__ = ["PersistingStepSink"]

@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from carve.core.config.schema import Config, ModelsConfig, ProjectConfig, ServerConfig
@@ -27,7 +28,9 @@ from carve.core.state.database import (
     create_session_factory,
     initialize_database,
 )
+from carve.core.state.models import Event
 from carve.core.state.schedules import ScheduleNotFound, Schedules
+from carve.runtime.events import EventEmitter
 
 
 @pytest.fixture
@@ -41,6 +44,21 @@ def schedules(postgres_state_store_url: str) -> Schedules:
     engine = create_engine_from_config(config)
     initialize_database(engine)
     return Schedules(create_session_factory(engine))
+
+
+@pytest.fixture
+def emitting_schedules(postgres_state_store_url: str) -> Schedules:
+    """A ``Schedules`` with a live :class:`EventEmitter` sharing its factory."""
+    config = Config(
+        project=ProjectConfig(name="sched-events-test"),
+        models=ModelsConfig(anthropic_api_key="sk-test"),
+        server=ServerConfig(),
+        state_store=StateStoreConfig(url=postgres_state_store_url),
+    )
+    engine = create_engine_from_config(config)
+    initialize_database(engine)
+    factory = create_session_factory(engine)
+    return Schedules(factory, emitter=EventEmitter(factory))
 
 
 def _utc(*args: int) -> datetime:
@@ -232,6 +250,90 @@ def test_check_accepts_recovery_origin(schedules: Schedules) -> None:
     refreshed = schedules.get("a")
     assert refreshed is not None
     assert refreshed.paused_by == "recovery"
+
+
+# ------------------------------------------------- the live event emit seam
+
+
+def _events(schedules: Schedules, kind: str) -> list[Event]:
+    stmt = sa.select(Event).where(Event.kind == kind).order_by(Event.id.asc())
+    with schedules._session_factory() as session:
+        return list(session.scalars(stmt).all())
+
+
+def test_pause_resume_persist_schedule_events(emitting_schedules: Schedules) -> None:
+    emitting_schedules.seed("a", "*/5 * * * *", "dev")
+    emitting_schedules.pause("a", reason="maintenance")
+    emitting_schedules.resume("a", reason="done")
+
+    paused = _events(emitting_schedules, "schedule.paused")
+    assert len(paused) == 1
+    # Taxonomy: pipeline, actor_token_id, source, reason.
+    assert paused[0].payload == {
+        "pipeline": "a",
+        "actor_token_id": None,
+        "source": "cli",
+        "reason": "maintenance",
+    }
+    resumed = _events(emitting_schedules, "schedule.resumed")
+    assert len(resumed) == 1
+    assert resumed[0].payload["reason"] == "done"
+
+
+def test_set_cron_persists_schedule_changed_with_before_after(
+    emitting_schedules: Schedules,
+) -> None:
+    emitting_schedules.seed("a", "0 0 * * *", "dev")
+    emitting_schedules.set_cron("a", "*/5 * * * *", reason="more often")
+
+    changed = _events(emitting_schedules, "schedule.changed")
+    assert len(changed) == 1
+    payload = changed[0].payload
+    assert payload["pipeline"] == "a"
+    assert payload["before"] == {"cron": "0 0 * * *", "timezone": "UTC"}
+    assert payload["after"] == {"cron": "*/5 * * * *", "timezone": "UTC"}
+    assert payload["source"] == "cli"
+    assert payload["reason"] == "more often"
+
+
+def test_seed_persists_schedule_seeded(emitting_schedules: Schedules) -> None:
+    emitting_schedules.seed("a", "*/5 * * * *", "dev")
+    seeded = _events(emitting_schedules, "schedule.seeded")
+    assert len(seeded) == 1
+    assert seeded[0].payload == {"pipeline": "a", "cron": "*/5 * * * *", "source": "seed"}
+
+
+def test_scheduler_fired_and_skipped_persist(emitting_schedules: Schedules) -> None:
+    """run_due_once's ``schedule.fired``/``schedule.skipped`` ride the live seam."""
+    from carve.core.state.job_queue import JobQueue
+    from carve.runtime.scheduler import run_due_once
+
+    factory = emitting_schedules._session_factory
+    queue = JobQueue(factory)  # no emitter on the queue → only schedule.* land
+    sched = emitting_schedules.seed("a", "*/5 * * * *", "dev")
+    _force_next_fires_at(emitting_schedules, sched.id, _utc(2020, 1, 1, 0, 0))
+    now = _utc(2020, 1, 1, 0, 5)
+
+    run_due_once(emitting_schedules, queue, now)
+    assert len(_events(emitting_schedules, "schedule.fired")) == 1
+
+    # A second pass in the same window: the queued job still exists → the dedup
+    # index rejects the re-enqueue → schedule.skipped.
+    _force_next_fires_at(emitting_schedules, sched.id, _utc(2020, 1, 1, 0, 0))
+    run_due_once(emitting_schedules, queue, now)
+    assert len(_events(emitting_schedules, "schedule.skipped")) == 1
+
+
+def test_no_emitter_persists_no_events(schedules: Schedules) -> None:
+    """Back-compat: the no-emitter fixture still passes the audit assertions and
+    writes no ``events`` rows."""
+    schedules.seed("a", "*/5 * * * *", "dev")
+    schedules.pause("a", reason="x")
+    # The audit trail still lands (unchanged behavior)...
+    assert any(c.change_kind == "pause" for c in schedules.list_changes("a"))
+    # ...but no durable events were written (the seam is a silent no-op).
+    with schedules._session_factory() as session:
+        assert session.scalars(sa.select(Event)).all() == []
 
 
 # ------------------------------------------------------------------ helpers
