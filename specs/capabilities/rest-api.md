@@ -91,6 +91,24 @@ def create_app(state_store, config) -> FastAPI:
     return app
 ```
 
+### Mutating lifecycle endpoints (plan / build / run triggers)
+
+> **Updated during implementation (2026-07-01 — write surface):** the lifecycle routers first shipped **read-only** (plans/builds/runs/memory = `GET` only), a gap the tag-level parity test didn't catch. The mutating REST equivalents the spec always intended (the §Error handling example is literally a `POST /api/v1/builds` response) were then filled in as a gap-fill. This subsection records the write surface + the trigger semantics that landed with it. It is **not** a design change — the endpoints' *existence* was already spec'd (§Goal item 9, §Acceptance "every CLI command has a working REST equivalent"); only their async model and re-run semantics are newly recorded here.
+
+The mutating lifecycle operations are:
+
+- `POST /api/v1/plans` (`plan_create`, **201**) — generate a plan for a goal.
+- `POST /api/v1/builds` (`build_run`, **200**) — build a plan; `ConfigDriftError` → 409, plan-not-found → 404.
+- `POST /api/v1/runs` (`run_pipeline`, **202**) — trigger a pipeline run; returns the **job id**.
+- `POST /api/v1/runs/{run_id}/resume` (`run_resume`, **202**) — re-run a failed run's pipeline.
+- `POST /api/v1/memory/decisions` (`memory_append_decision`, **201**) — append a dated decision; `DecisionAlreadyExists` → 409, empty/multiline title → 400.
+
+**Sync-in-threadpool for the agent-run triggers.** `POST /plans` and `POST /builds` invoke the **synchronous, in-process** `generate_plan` / `build_plan` agent loops (which run for minutes) via **sync `def` handlers**, exactly like every other handler — so Starlette offloads them to the AnyIO threadpool. This mirrors the CLI (`carve plan` / `carve build` call the same functions, blocking) and adds no new surface (an `async def` handler would instead block uvicorn's event loop). A **generic async agent-run job model was deliberately deferred**: the shipped `jobs` table is *pipeline-execution-specific* (`pipeline`/`target`/`trigger`/worker-claim columns), so a generic agent-run queue would be a new design the spec doesn't describe — a spec-first change, backlogged (see §Open questions). *Shared-threadpool occupancy constraint:* each in-flight plan/build holds one threadpool thread for its whole duration, and these sync handlers share the one bounded threadpool with every read handler, so a burst of concurrent triggers can starve ordinary reads (a bounded-concurrency limiter is deferred hosted work). `/healthz` is `async` (see §Health checks) so liveness stays off this threadpool and a build burst can't get a healthy process killed.
+
+**`POST /runs` — async by architecture (202 + job id).** Enqueues onto the durable `jobs` queue via `enqueue_manual` (trigger `"api"`) and returns the **job id** — the `run_…` row does not exist until a worker claims the job (clients poll `GET /jobs/{id}`, then `GET /runs`). The trigger **resolves `required_label` server-side** (reusing `carve serve`'s `resolve_worker_label`) before enqueuing: this is load-bearing, because `enqueue_manual`'s upsert refreshes `required_label`, so omitting it would *unlabel* a queued row this trigger coalesces onto and let it run on the wrong worker. Concurrent identical triggers **coalesce** onto one queued job (`ON CONFLICT (pipeline, tenant_id) WHERE status='queued' DO UPDATE`) and return the same job id — no double-enqueue.
+
+**`run_resume` is a re-run, not a checkpoint resume.** There is no standalone "resume run" entrypoint in the runtime (run-retry is the in-session auto-fix loop), so `POST /runs/{id}/resume` **re-runs the failed run's pipeline from the start** via a fresh `enqueue_manual`, guarded to a terminal `{failed, crashed}` state (else 409). True checkpoint-resume and `parent_run_id` lineage are deferred (see §Open questions).
+
 ### Authentication
 
 `src/carve/api/auth.py`:
@@ -156,6 +174,8 @@ OSS default token (scope `["*"]`) is bootstrapped at first `carve serve` startup
 
 Carve's scattered domain exceptions (`ConfigDriftError`, `ConfigError`, `PipelineAlreadyRunning`, `UnsafeDdlError`, etc.) are each mapped to a `type` URL + recommended HTTP status via that table. Unrecognized exceptions become 500 with `type = "https://carve.dev/errors/internal"` and a logged stack trace (never returned to the client).
 
+> **Updated during implementation (2026-07-01 — write surface):** two mappings were added for the mutating lifecycle endpoints — `carve.cli.orchestrator.planner.PlanGenerationError` → **422** (`POST /plans`) and `carve.core.memory.writer.DecisionAlreadyExists` → **409** (`POST /memory/decisions`). A multiline/empty decision title (the anti-heading-injection guard in `append_decision`) raises `ValueError`, wrapped to `BadRequest` → **400**. (`ConfigDriftError` → 409 for `POST /builds` was already mapped.)
+
 ### Pagination
 
 `src/carve/api/pagination.py`:
@@ -189,6 +209,8 @@ Write endpoints (POST, PUT, DELETE) accept `Idempotency-Key: <uuid>` header. Beh
 5. Otherwise: process the request; cache the response under `(idempotency_key, request_hash)` with TTL 24h
 
 Idempotency keys are scoped to the authenticated `(tenant_id, user_id)` so two users' keys never collide.
+
+> **Updated during implementation (2026-07-01 — write surface):** the agent-run trigger POSTs (`POST /plans`, `POST /builds`, `POST /runs`, `POST /runs/{id}/resume`) **accept** `Idempotency-Key` — they return no secrets, so they are *not* on the secret-exclusion denylist above. But because the middleware caches **on completion**, a client retry that arrives *mid-flight* on the multi-minute `POST /plans` / `POST /builds` finds no cache entry yet and can fire a **second agent run** (unbounded token spend). `POST /runs` / `/resume` are backstopped by domain-level job coalescing; `POST /plans` / `/builds` have **no** backstop. A mid-flight reservation (reserve the key *before* processing) is deferred — see §Open questions.
 
 The `idempotency_keys` table:
 
@@ -352,6 +374,8 @@ The FastAPI app shares the process's connection pool and event loop with the run
 - **Integration (webhook retry):** subscriber returns 503; retries follow the schedule; eventually marked abandoned
 - **Integration (full coverage):** every CLI command from earlier specs has an integration test that exercises its REST equivalent; the test suite fails CI if any CLI command lacks a REST counterpart (this is the parity-test mechanism from PRD §6 intro)
 
+> **Updated during implementation (2026-07-01 — write surface):** the parity test was **strengthened**. It no longer passes when a *mutating* CLI command maps only to a *read-only* router: it now asserts that a mutating command (`plan`, `build`, `el run`, `memory append-decision`, …) has ≥1 **mutating** operation (`POST`/`PUT`/`PATCH`/`DELETE`) on its mapped tag — closing the hole where a `GET`-only lifecycle router satisfied tag-level parity for a mutating command. Deferrals are explicit, grounded (each keyed to a provably-real CLI command, guard-tested against phantom entries), and reviewed: `deploy` / `el deploy` / `el verify` → the [deploy](./deploy.md) capability; `plan --refine` → the [lean-plan-build ADR](../_strategy/2026-06-lean-plan-build.md) (a flag-level deferral, not a command); `target` / `agents` / `mcp-servers` writes → currently read-only over REST.
+
 ## Acceptance
 
 - `carve serve` brings up the FastAPI app on the configured host/port
@@ -373,7 +397,10 @@ The FastAPI app shares the process's connection pool and event loop with the run
 - **Why opaque cursor pagination instead of offset/limit?** Because offset/limit has well-known O(n) cost on large collections and inconsistent results under concurrent inserts. Cursor pagination is O(log n) and stable. The opaque base64 encoding lets us change the cursor format later without breaking clients.
 - **Why a per-webhook HMAC secret rather than a single per-installation secret?** Because rotating one webhook's secret shouldn't invalidate others. Per-webhook secrets are minor extra storage and give users finer control.
 - **Why 6 retry attempts on webhooks (not 3, not 10)?** Six attempts spanning ~5 hours (30s, 1m, 5m, 15m, 1h, 3h) covers most transient outages without flooding subscribers with retries during sustained outages. This is the Stripe / GitHub / standard-webhook-platform convention.
-- **Router coverage vs. the parity test (as shipped).** The parity test enumerates the live Typer CLI surface and asserts each command has a REST counterpart (or a justified exemption). To satisfy it, the shipped router set adds `targets` and `components` routers (CLI-parity for `carve target` / `carve component(s)`) beyond the functional set. The **`deploys` router is command-parity only** — it wraps the existing `carve deploy` surface but ships **no deploy-record list/get endpoints**, because there is no `deploys` table yet (the durable deploy records — the `deploys` table + PR handoff — are owned by the deploy capability; when it lands, extend this router with the record collection). The `asks` router remains deferred to the ask capability (scaffolding seam only in `main.py`).
+- **Router coverage vs. the parity test (as shipped).**
+  > **Updated during implementation (2026-07-01 — write surface):** the `plans` / `builds` / `runs` / `memory` routers now expose their mutating operations (`POST`), and the parity test now enforces mutating-*operation* parity, not just tag presence (see §Tests and §Mutating lifecycle endpoints). The `deploys` router stays command-parity-only.
+
+  The parity test enumerates the live Typer CLI surface and asserts each command has a REST counterpart (or a justified exemption). To satisfy it, the shipped router set adds `targets` and `components` routers (CLI-parity for `carve target` / `carve component(s)`) beyond the functional set. The **`deploys` router is command-parity only** — it wraps the existing `carve deploy` surface but ships **no deploy-record list/get endpoints**, because there is no `deploys` table yet (the durable deploy records — the `deploys` table + PR handoff — are owned by the deploy capability; when it lands, extend this router with the record collection). The `asks` router remains deferred to the ask capability (scaffolding seam only in `main.py`).
 - **Why don't streams require authentication on subsequent messages, only at connection time?** Because the WebSocket/SSE protocols don't have a natural mid-stream re-auth pattern, and once a connection is established, the cost of keeping it open without re-validating is low. Tokens are validated at connection upgrade; subsequent messages on the same connection use the same identity. Token revocation closes existing streams via the same mechanism that rejects new connections.
 
 ## Open questions
@@ -387,3 +414,5 @@ The FastAPI app shares the process's connection pool and event loop with the run
 - **API versioning policy: how do we handle v2?** *Implementation default.* When v2 lands, both `/api/v1/*` and `/api/v2/*` run side-by-side for a deprecation window (12 months minimum). v1 endpoints get a `Deprecation` header with a sunset date. Documented in `docs/api-reference.md` even though we don't have a v2 yet.
 - **Whether to ship a Python SDK for the REST API.** *Strategy-required.* Probably yes eventually; not now (the CLI itself acts as a reference client). A separate `carve-client` Python package could ship later if there's demand. Defer.
 - **Telemetry headers.** *Strategy-required.* Should the server return any anonymous telemetry headers (`X-Carve-Version`, response timing) that opt-in clients can use? Coordinate with the broader telemetry question from spec 05.
+- **Agent-run concurrency + cost controls.** *Deferred (hosted).* The agent-run trigger POSTs (`POST /plans` / `/builds`) are the first REST operations that spend tokens and hold a threadpool thread for a multi-minute agent loop. A `CapacityLimiter` / per-agent-run concurrency cap, a **mid-flight `Idempotency-Key` reservation** (reserve before processing so a retry can't fire a second run — see §Idempotency), and per-tenant cost/concurrency limits are all **hosted rate-limiting** work (OSS has no rate limiting by design — §Out of scope). The current gaps are authenticated-only and self-inflicted in single-user OSS; they become load-bearing before multi-tenant hosted. Tracked.
+- **Mutating-lifecycle deferrals.** *Tracked.* `POST /api/v1/deploys` is deferred to the [deploy](./deploy.md) capability (which owns the `deploys` table + non-interactive PR handoff; `carve deploy` is an interactive multi-phase flow, not a simple POST). `POST /api/v1/plans/{id}/refine` is deferred by the [lean-plan-build ADR](../_strategy/2026-06-lean-plan-build.md) (refine chains backlogged; `--refine` is a flag, not a command). True **checkpoint resume + `parent_run_id` lineage** for `POST /runs/{id}/resume` is a small worker-side follow-up — `enqueue_manual` → `create_run` takes no `parent_run_id` from a job today, so the endpoint ships as "re-run the pipeline of the failed run".

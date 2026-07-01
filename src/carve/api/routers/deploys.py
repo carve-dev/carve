@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+# NOTE(rest-api): no POST here by design — the deploy write-surface is deferred to
+# Increment 6 (the deploys table + non-interactive PR handoff). The parity test's
+# WRITE_PARITY_EXEMPT records `deploy`/`el deploy`/`el verify` as the explicit,
+# reviewed exemption so this deferral can't become a silent gap.
 router = APIRouter(prefix="/deploys", tags=["deploys"])
 
 

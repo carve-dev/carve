@@ -24,8 +24,15 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz")
-def healthz() -> dict[str, str]:
-    """Liveness: always 200 while the process is up (no DB touch)."""
+async def healthz() -> dict[str, str]:
+    """Liveness: always 200 while the process is up (no DB touch).
+
+    ``async def`` on purpose: it does no I/O, so running it on the event loop keeps
+    liveness probes off the bounded AnyIO threadpool that the sync plan/build
+    agent-run handlers occupy — a burst of concurrent builds must not starve
+    ``/healthz`` and get a healthy process killed. ``/readyz`` stays sync (it does
+    real Postgres/migration I/O and belongs in the threadpool).
+    """
     return {"status": "ok"}
 
 

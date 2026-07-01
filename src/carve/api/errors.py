@@ -154,6 +154,12 @@ _ERROR_MAP: dict[str, _ErrorSpec] = {
     "carve.cli.orchestrator.builder.BuildError": _ErrorSpec(
         "build-failed", 400, "Build could not proceed"
     ),
+    "carve.cli.orchestrator.planner.PlanGenerationError": _ErrorSpec(
+        "plan-generation", 422, "Plan generation failed"
+    ),
+    "carve.core.memory.writer.DecisionAlreadyExists": _ErrorSpec(
+        "decision-exists", 409, "Decision already exists"
+    ),
     "carve.core.config.exceptions.ConfigError": _ErrorSpec(
         "config-invalid", 400, "Configuration error"
     ),
