@@ -91,6 +91,63 @@ EXEMPTIONS: dict[str, str] = {
     "auth login": "interactive browser OAuth via `claude setup-token`",
 }
 
+# --- Write-parity: a *mutating* CLI command needs a *mutating* REST operation --
+#
+# The tag-level mapping above let a read-only lifecycle router (plans/builds/runs
+# = GET only) pass parity while the REST surface couldn't drive plan→build→run.
+# These sets close that hole: a mutating command must have ≥1 POST/PUT/PATCH/
+# DELETE on its mapped tag, unless it is an explicit, reviewed write-exemption.
+MUTATING_COMMANDS: set[str] = {
+    "plan",
+    "build",
+    "plan-and-build",
+    "deploy",
+    "el run",
+    "el deploy",
+    "el verify",
+    "memory append-decision",
+    "memory edit",
+    "schedule pause",
+    "schedule resume",
+    "schedule set-cron",
+    "auth rotate",
+    "target create",
+    "target rename",
+    "target delete",
+    "agents create",
+    "mcp-servers add",
+    "mcp-servers remove",
+}
+
+# Every key here is a provably-real CLI command (asserted by
+# test_write_parity_exempt_entries_are_grounded) — so the exempt set can't drift
+# into phantom entries or silently hide a real mutating command.
+WRITE_PARITY_EXEMPT: dict[str, str] = {
+    # Deploy write-surface deferred to Increment 6 (deploys table + non-interactive
+    # PR handoff); `carve deploy` is a six-phase interactive flow, not a simple POST.
+    "deploy": "deploy write-surface deferred to Increment 6 (deploys table + PR handoff)",
+    "el deploy": "deploy write-surface deferred to Increment 6 (deploys table + PR handoff)",
+    "el verify": "deploy write-surface deferred to Increment 6 (deploys table + PR handoff)",
+    # These CLI writes map to read-only REST routers today; their REST write
+    # surfaces are out of scope for the plan/build/run/memory gap-fill (tracked).
+    "target create": "targets REST write-surface not yet exposed (read-only router); tracked",
+    "target rename": "targets REST write-surface not yet exposed (read-only router); tracked",
+    "target delete": "targets REST write-surface not yet exposed (read-only router); tracked",
+    "agents create": "agents REST write-surface not yet exposed (read-only router); tracked",
+    "mcp-servers add": "mcp-servers REST write-surface not exposed (read-only router); tracked",
+    "mcp-servers remove": "mcp-servers REST write-surface not exposed (read-only router); tracked",
+}
+
+# Deferrals that are FLAGS, not distinct CLI commands — they don't independently
+# trip command parity, so they don't belong in the command-keyed WRITE_PARITY_EXEMPT.
+# Recorded here (keyed by the flag invocation) so the deferral is explicit, and
+# asserted to NOT shadow a real command by test_flag_level_deferrals_are_not_commands.
+FLAG_LEVEL_DEFERRALS: dict[str, str] = {
+    "plan --refine": "refine chains backlogged by the lean-plan-build ADR (a flag, not a command)",
+}
+
+_MUTATING_METHODS = {"post", "put", "patch", "delete"}
+
 
 def _enumerate_commands(typer_app: object, prefix: str = "") -> list[str]:
     """Walk a Typer app into ``["cmd", "group sub", ...]`` invocation names."""
@@ -103,19 +160,26 @@ def _enumerate_commands(typer_app: object, prefix: str = "") -> list[str]:
     return names
 
 
-def _app_tags() -> set[str]:
-    """Every tag actually served, read from the generated OpenAPI schema."""
+def _tag_methods() -> dict[str, set[str]]:
+    """Map each served tag → the set of HTTP methods across its operations."""
     config = Config(
         project=ProjectConfig(name="parity"),
         models=ModelsConfig(anthropic_api_key="sk-test"),
     )
     schema = create_app(MagicMock(), config).openapi()
-    tags: set[str] = set()
+    tag_methods: dict[str, set[str]] = {}
     for operations in schema["paths"].values():
-        for operation in operations.values():
-            if isinstance(operation, dict):
-                tags.update(operation.get("tags", []))
-    return tags
+        for method, operation in operations.items():
+            if not isinstance(operation, dict):
+                continue
+            for tag in operation.get("tags", []):
+                tag_methods.setdefault(tag, set()).add(method.lower())
+    return tag_methods
+
+
+def _app_tags() -> set[str]:
+    """Every tag actually served, read from the generated OpenAPI schema."""
+    return set(_tag_methods())
 
 
 def test_every_cli_command_is_mapped_or_exempt() -> None:
@@ -142,3 +206,65 @@ def test_exemptions_do_not_overlap_mappings() -> None:
     """An exemption and a mapping for the same command would be a review error."""
     overlap = set(COMMAND_TO_TAG) & set(EXEMPTIONS)
     assert not overlap, f"commands both mapped and exempted: {sorted(overlap)}"
+
+
+def test_mutating_commands_have_a_mutating_rest_operation() -> None:
+    """A mutating CLI command must expose ≥1 write op on its tag (or be write-exempt).
+
+    This is the anti-regression: after the write-surface gap-fill, a read-only
+    lifecycle router for a mutating command fails CI here.
+    """
+    tag_methods = _tag_methods()
+    gaps: list[str] = []
+    for command in sorted(MUTATING_COMMANDS):
+        if command in WRITE_PARITY_EXEMPT:
+            continue
+        tag = COMMAND_TO_TAG.get(command)
+        assert tag is not None, f"mutating command {command!r} is not in COMMAND_TO_TAG"
+        if not (tag_methods.get(tag, set()) & _MUTATING_METHODS):
+            gaps.append(f"{command} → tag {tag!r} (methods {sorted(tag_methods.get(tag, set()))})")
+    assert not gaps, (
+        "mutating CLI commands whose REST tag exposes no write operation: "
+        f"{gaps}. Add the POST/PUT/PATCH/DELETE, or a justified WRITE_PARITY_EXEMPT entry."
+    )
+
+
+def test_mutating_command_set_is_grounded() -> None:
+    """Every MUTATING_COMMANDS entry is a real CLI command with a tag mapping."""
+    real = set(_enumerate_commands(cli_app))
+    assert MUTATING_COMMANDS <= real, (
+        f"MUTATING_COMMANDS references non-existent CLI commands: "
+        f"{sorted(MUTATING_COMMANDS - real)}"
+    )
+    unmapped = {c for c in MUTATING_COMMANDS if c not in COMMAND_TO_TAG}
+    assert not unmapped, f"mutating commands missing a COMMAND_TO_TAG entry: {sorted(unmapped)}"
+
+
+def test_write_parity_exempt_entries_are_grounded() -> None:
+    """Every WRITE_PARITY_EXEMPT key is a real CLI command with a tag mapping."""
+    real = set(_enumerate_commands(cli_app))
+    unknown = {c for c in WRITE_PARITY_EXEMPT if c not in real}
+    assert not unknown, (
+        f"WRITE_PARITY_EXEMPT references non-existent CLI commands: {sorted(unknown)} "
+        "(flag-level deferrals belong in FLAG_LEVEL_DEFERRALS, not here)."
+    )
+    unmapped = {c for c in WRITE_PARITY_EXEMPT if c not in COMMAND_TO_TAG}
+    assert not unmapped, f"exempt commands missing a COMMAND_TO_TAG entry: {sorted(unmapped)}"
+
+
+def test_flag_level_deferrals_are_not_commands() -> None:
+    """A flag-level deferral must not shadow a real command (else it hides a gap)."""
+    real = set(_enumerate_commands(cli_app))
+    shadowing = {f for f in FLAG_LEVEL_DEFERRALS if f in real}
+    assert not shadowing, (
+        f"FLAG_LEVEL_DEFERRALS entries that are actually real commands: {sorted(shadowing)}"
+    )
+
+
+def test_plan_build_run_have_post_after_gap_fill() -> None:
+    """Explicit guard: the gap-fill's three lifecycle writes exist; deploy is exempt."""
+    tag_methods = _tag_methods()
+    assert "post" in tag_methods.get("plans", set())
+    assert "post" in tag_methods.get("builds", set())
+    assert "post" in tag_methods.get("runs", set())
+    assert "deploy" in WRITE_PARITY_EXEMPT
