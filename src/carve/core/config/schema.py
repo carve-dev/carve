@@ -259,6 +259,43 @@ class ServerConfig(BaseModel):
     auth_mode: str = "single_user"
 
 
+class CorsConfig(BaseModel):
+    """`[api.cors]` — cross-origin policy for the FastAPI app.
+
+    OSS default allows any **loopback** origin — ``127.0.0.1``/``localhost`` on any
+    port — via ``allow_origin_regex`` (the static UI dev server runs on
+    ``:5173``/``:8080``/etc., so a fixed portless origin wouldn't match).
+    ``allowed_origins`` is an additional explicit allow-list (OR'd with the
+    regex) production users set for their own front-ends. Hosted deployments
+    enforce stricter CORS in the control plane.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_origins: list[str] = Field(default_factory=list)
+    allow_origin_regex: str | None = r"^http://(127\.0\.0\.1|localhost)(:\d+)?$"
+    allow_credentials: bool = True
+
+
+class ApiConfig(BaseModel):
+    """`[api]` — the FastAPI REST server `carve serve` brings up.
+
+    A **new** section, distinct from the legacy M1 :class:`ServerConfig`
+    (``:8787``) which is left untouched. Defaults to the rest-api spec's
+    ``127.0.0.1:8765``. ``allow_private_webhook_ips`` is the SSRF opt-out: with
+    it ``False`` (the default) the webhook publisher refuses to POST to loopback
+    / link-local / private / cloud-metadata addresses.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = "127.0.0.1"
+    port: int = 8765
+    cors: CorsConfig = Field(default_factory=CorsConfig)
+    # SSRF guard opt-out: allow webhook delivery to private/loopback IPs.
+    allow_private_webhook_ips: bool = False
+
+
 class ComponentType(StrEnum):
     """The kind of component a `[components.<name>]` block references.
 
@@ -598,6 +635,7 @@ class Config(BaseModel):
     models: ModelsConfig
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     state_store: StateStoreConfig = Field(default_factory=StateStoreConfig)
     # `[components.<name>]` blocks keyed by component name. An empty dict

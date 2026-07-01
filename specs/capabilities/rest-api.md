@@ -38,6 +38,8 @@ After this spec lands, every CLI command from earlier specs has its REST counter
 
 ### Application skeleton
 
+> **Updated during implementation (2026-07-01):** three deltas from the sketch below, all tracking the shipped `create_app`. (1) **`state_store` is a `StateStore` facade** — a thin `core/state/store.py` bundling the existing repos (`Repository`/`JobQueue`/`Schedules`/…) plus the new `tokens`/`webhooks`/`webhook_deliveries`/`idempotency_keys`/`events` repos, all from one `session_factory` — so the middleware's `state_store.tokens` / `.webhook_deliveries` attribute access resolves without re-plumbing existing call sites. (2) **CORS middleware is added first (outermost)** from `config.api.cors` (loopback default — see §Server lifecycle). (3) **Error handlers install via `install_error_handlers(app)`** which registers three handlers (request-validation → 422, Starlette `HTTPException`, and the catch-all `ProblemJsonExceptionHandler`), not a single `add_exception_handler`. The router set also includes `tokens`, `components`, and `targets` (the latter two added for CLI parity — see §Design notes), and `health` at the root.
+
 ```python
 # src/carve/api/main.py
 from fastapi import FastAPI
@@ -93,26 +95,32 @@ def create_app(state_store, config) -> FastAPI:
 
 `src/carve/api/auth.py`:
 
+> **Updated during implementation (2026-07-01):** the original sketch (`token_hash = argon2_verify_hash(token_plain)` → `find_by_hash(token_hash)`) is cryptographically unworkable — argon2id hashes are *salted*, so a stored hash can never be an equality-lookup key. The shipped design keeps every intended security property (hash-only storage, plaintext shown once, immediate revocation) but resolves the token with a **non-secret indexed lookup handle** so authentication stays O(1) per request. `Identity` and the argon2 hashing / generation helpers live in `core/state/tokens.py` (the state layer owns token *material*) and are re-exported by `api/auth.py`; `Identity.token_id` is a `str` (`"tok_<uuid.hex>"`), not a `UUID`. Blocking argon2/DB calls are offloaded via `run_in_threadpool` so they never freeze uvicorn's shared event loop.
+
+**Token wire format.** A plaintext token is `carve_pat_<lookup>.<secret>` — `<lookup>` is a non-secret handle, `<secret>` is a 256-bit credential (`secrets.token_urlsafe`). Only the salted argon2id hash of the whole string is stored (`tokens.token_hash`), alongside the non-secret `<lookup>` in a **unique, indexed** `lookup_id` column. `find_by_token(plaintext)` parses `<lookup>`, does one indexed `WHERE lookup_id = :lookup AND revoked_at IS NULL` fetch, then a **single** argon2 verify — O(1) per request regardless of how many tokens exist (never an O(N) hash scan). A malformed token, an unknown/revoked lookup, or a verify mismatch all reject.
+
 ```python
 @dataclass(frozen=True)
-class Identity:
+class Identity:                 # defined in core/state/tokens.py, re-exported by api/auth.py
     user_id: int                # always 1 in OSS single-user mode
     tenant_id: int              # always 1 in OSS
-    token_id: UUID
+    token_id: str               # "tok_<uuid.hex>"
     scopes: list[str]           # ["*"] in OSS; more granular in hosted
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        if not request.url.path.startswith("/api/v1"):
+            return await call_next(request)   # health / openapi / docs are unauthenticated plumbing
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
-            return problem(401, "missing_bearer_token")
-        token_plain = auth_header[7:]
-        token_hash = argon2_verify_hash(token_plain)
-        identity = await self.state_store.tokens.find_by_hash(token_hash)
+            return problem(401, "missing-bearer-token", ...)
+        token_plain = auth_header[len("Bearer "):].strip()
+        identity = await run_in_threadpool(self.state_store.tokens.find_by_token, token_plain)
         if identity is None:
-            return problem(401, "invalid_token")
+            return problem(401, "invalid-token", ...)
         request.state.identity = identity
-        await self.state_store.tokens.touch_last_used(identity.token_id)
+        # Best-effort last-used stamp; a write hiccup must not fail the request.
+        await run_in_threadpool(self.state_store.tokens.touch_last_used, identity.token_id)
         return await call_next(request)
 ```
 
@@ -121,7 +129,9 @@ Token rotation:
 - `DELETE /api/v1/tokens/{id}` — revoke a token; immediate effect
 - `carve auth rotate` (CLI) — mints a new token, writes to `.carve/token`, prints the plaintext for the user
 
-OSS default token (bootstrapped at `carve init`) has scope `["*"]`. In hosted, tokens carry tenant/RBAC claims.
+> **Updated during implementation (2026-07-01):** minting the default token requires the `tokens` table (migrations at head), and `carve init` may run before Postgres is up. `ensure_default_token` is therefore idempotent (a partial-unique `is_default` index guarantees at most one) and is invoked at first `carve serve` startup after migrations — best-effort at `carve init` when the DB is reachable — writing the plaintext to `.carve/token` (0600).
+
+OSS default token (scope `["*"]`) is bootstrapped at first `carve serve` startup (best-effort at `carve init`). In hosted, tokens carry tenant/RBAC claims.
 
 ### Error handling
 
@@ -142,7 +152,9 @@ OSS default token (bootstrapped at `carve init`) has scope `["*"]`. In hosted, t
 }
 ```
 
-Carve defines a structured exception hierarchy (`CarveError` → `ConfigDriftError`, `GuardrailViolationError`, `PipelineAlreadyRunningError`, etc.); the exception handler maps each to a `type` URL + recommended HTTP status. Unrecognized exceptions become 500 with `type = "https://carve.dev/errors/internal"` and a logged stack trace (never returned to the client).
+> **Updated during implementation (2026-07-01):** there is **no** unified `CarveError` base in the codebase — the domain exceptions are scattered across modules (`ConfigDriftError`, `ConfigError`, `PipelineError`, `SnowflakeError`, `TargetResolutionError`, `AgentError`, `HookExecutionError`, `UnsafeDdlError`, `PipelineAlreadyRunning`, …). Rather than retrofit a base class across the whole tree, `errors.py` keys an **explicit mapping table** of `exception → (type-slug, status, title)` by the exception's fully-qualified class name, matched by **walking the MRO** (so a subclass resolves at its nearest registered ancestor). The table is import-free — it matches by name and reads structured fields (`plan_id`, `field`, `hint`, …) via `getattr` — so the error module pulls in none of the heavy orchestrator/agent modules. A new API-local exception family also landed: `ApiError` → `Unauthorized` (401) / `ResourceNotFound` (404) / `BadRequest` (400) / `Conflict` (409), carrying their own status/type; `get_identity` raises `Unauthorized` → 401.
+
+Carve's scattered domain exceptions (`ConfigDriftError`, `ConfigError`, `PipelineAlreadyRunning`, `UnsafeDdlError`, etc.) are each mapped to a `type` URL + recommended HTTP status via that table. Unrecognized exceptions become 500 with `type = "https://carve.dev/errors/internal"` and a logged stack trace (never returned to the client).
 
 ### Pagination
 
@@ -165,8 +177,11 @@ Cursors are opaque base64 of `{"last_id": "...", "created_at": "..."}`; servers 
 
 `src/carve/api/idempotency.py`:
 
+> **Updated during implementation (2026-07-01):** the middleware **excludes secret-returning writes** from caching/replay entirely — `POST /api/v1/tokens`, `POST /api/v1/webhooks`, and `POST /api/v1/webhooks/{id}/rotate-secret`. Caching those would persist a live plaintext bearer token / HMAC secret at rest in `idempotency_keys` for 24h (and a replay would serve a stale one). The middleware short-circuits these routes before any lookup/store, so each such POST always mints a fresh, distinct secret. (This was a MAJOR the security review caught mid-build. The exclusion is a **path-string denylist**, matched exactly against the mounted routes — see §Open questions for the maintenance obligation this creates.)
+
 Write endpoints (POST, PUT, DELETE) accept `Idempotency-Key: <uuid>` header. Behavior:
 
+0. If the route is a secret-returning write (see the callout above), skip idempotency entirely — never cache, never replay.
 1. Compute `request_hash = sha256(method + path + body)`
 2. Look up `(idempotency_key, request_hash)` in the `idempotency_keys` table
 3. If found within 24h: return the cached response
@@ -214,6 +229,7 @@ Both deliver the same JSON event stream:
 ```
 
 Subscription mechanics:
+- **Connection auth:** WebSocket upgrades bypass `BaseHTTPMiddleware` entirely (Starlette only runs it for `http` scopes), so the stream handler authenticates at connection time — resolving a bearer token from the `Authorization` header (primary) or, for browsers that can't set WS headers, a `?token=` query parameter (fallback). The `?token=` fallback is a tracked hardening item (see §Open questions).
 - Internal event bus (in-process for OSS, Redis pub/sub in hosted) feeds the stream
 - Initial replay: when a client connects, the server first sends a backfill of events for the run since `started_at` (so the client doesn't miss anything that fired before the connection)
 - Heartbeat: every 30s, the server sends `{"event": "_keepalive"}` to detect dropped connections
@@ -223,7 +239,9 @@ Subscription mechanics:
 
 `src/carve/api/webhooks.py`:
 
-Webhooks are user-declared subscribers stored in the `webhooks` table (from spec 07's migration; this spec adds the publisher).
+> **Updated during implementation (2026-07-01):** the `tokens`, `webhooks`, and `webhook_deliveries` tables were **never shipped by the runtime capability** — this spec assumed they existed. rest-api creates all three (plus the `idempotency_keys` table it defines) in its **own migration `0014_rest_api_tables`**. None is owned by a prior capability, so absorbing them here is in-scope, not a spec-first change.
+
+Webhooks are user-declared subscribers stored in the `webhooks` table (created by rest-api's own migration `0014_rest_api_tables`; this spec ships both the tables and the publisher).
 
 ```sql
 CREATE TABLE webhooks (
@@ -262,6 +280,7 @@ async def webhook_publisher_loop(state_store, *, interval_s=10.0):
 ```
 
 Delivery semantics:
+- **SSRF guard** (`webhook.url` is user-controlled and the server makes the outbound POST): before *every* attempt the host is resolved and each resolved IP is checked against loopback / link-local / private / cloud-metadata / reserved / multicast ranges (DNS-rebinding-aware — the literal name is not trusted), and delivery to a blocked address is refused (→ `abandoned`) unless `[api] allow_private_webhook_ips` opts in. The blocking resolve is offloaded off the event loop; redirects are disabled. (A TOCTOU residual — the httpx connect re-resolves — is tracked; see §Open questions.)
 - POST to `webhook.url` with JSON body of the event
 - Header `X-Carve-Signature: sha256=<hmac>` where `hmac = HMAC-SHA256(webhook.hmac_secret, body)`
 - Header `X-Carve-Event: <event_kind>`, `X-Carve-Delivery-Id: <delivery_id>`
@@ -298,13 +317,13 @@ No auth required for either — they're plumbing.
 
 ### Server lifecycle (integration with spec 07)
 
-`carve serve` (from spec 07) starts the FastAPI app alongside the scheduler/workers/reaper/archiver:
+> **Updated during implementation (2026-07-01):** a new `[api]` config section (`ApiConfig`) supplies `host`/`port` (default `127.0.0.1:8765`) + `allow_private_webhook_ips`, and a nested `[api.cors]` (`CorsConfig`) supplies the CORS defaults. So `create_app` reads `config.api.host` / `config.api.port` — **not** the legacy M1 `ServerConfig` (`:8787`), which is left untouched. The hourly `idempotency_keys` GC and the `webhook_publisher_loop` run as sibling tasks in `carve serve`'s existing `asyncio.TaskGroup` under the one shared shutdown `Event`; uvicorn runs with its own signal handlers disabled and a `should_exit`-driven shutdown.
 
 ```python
 async def serve_main(config):
-    # ... (spec 07's startup sequence)
-    api_app = create_app(state_store, config)
-    api_server = uvicorn.Server(uvicorn.Config(api_app, host=config.host, port=config.port))
+    # ... (the runtime capability's startup sequence)
+    api_app = create_app(state_store, config)   # state_store is the StateStore facade
+    api_server = uvicorn.Server(uvicorn.Config(api_app, host=config.api.host, port=config.api.port))
     tasks = [
         asyncio.create_task(api_server.serve()),
         asyncio.create_task(scheduler_loop(state_store)),
@@ -322,7 +341,7 @@ The FastAPI app shares the process's connection pool and event loop with the run
 ## Tests
 
 - **Unit (auth):** valid bearer token → authenticated; missing/invalid → 401 with problem+json
-- **Unit (errors):** representative `CarveError` subclasses serialize to the expected problem+json shape with stable `type` URLs
+- **Unit (errors):** representative exceptions from the mapped exception set (`ConfigDriftError`→409, `ConfigError`→400, `PipelineAlreadyRunning`→409, `UnsafeDdlError`→400, the API-local `ResourceNotFound`→404 / `BadRequest`→400, and an unmapped exception→500 with no internal leak) serialize to the expected problem+json shape with stable `type` URLs
 - **Unit (pagination):** cursor encode/decode is stable; `has_more` detection via LIMIT+1 trick works
 - **Unit (idempotency):** same key + same body → cached response; same key + different body → 409; expired key → fresh execution
 - **Unit (openapi):** generated schema includes all endpoints; the generated schema validates against the OpenAPI 3.1 spec
@@ -354,11 +373,16 @@ The FastAPI app shares the process's connection pool and event loop with the run
 - **Why opaque cursor pagination instead of offset/limit?** Because offset/limit has well-known O(n) cost on large collections and inconsistent results under concurrent inserts. Cursor pagination is O(log n) and stable. The opaque base64 encoding lets us change the cursor format later without breaking clients.
 - **Why a per-webhook HMAC secret rather than a single per-installation secret?** Because rotating one webhook's secret shouldn't invalidate others. Per-webhook secrets are minor extra storage and give users finer control.
 - **Why 6 retry attempts on webhooks (not 3, not 10)?** Six attempts spanning ~5 hours (30s, 1m, 5m, 15m, 1h, 3h) covers most transient outages without flooding subscribers with retries during sustained outages. This is the Stripe / GitHub / standard-webhook-platform convention.
+- **Router coverage vs. the parity test (as shipped).** The parity test enumerates the live Typer CLI surface and asserts each command has a REST counterpart (or a justified exemption). To satisfy it, the shipped router set adds `targets` and `components` routers (CLI-parity for `carve target` / `carve component(s)`) beyond the functional set. The **`deploys` router is command-parity only** — it wraps the existing `carve deploy` surface but ships **no deploy-record list/get endpoints**, because there is no `deploys` table yet (the durable deploy records — the `deploys` table + PR handoff — are owned by the deploy capability; when it lands, extend this router with the record collection). The `asks` router remains deferred to the ask capability (scaffolding seam only in `main.py`).
 - **Why don't streams require authentication on subsequent messages, only at connection time?** Because the WebSocket/SSE protocols don't have a natural mid-stream re-auth pattern, and once a connection is established, the cost of keeping it open without re-validating is low. Tokens are validated at connection upgrade; subsequent messages on the same connection use the same identity. Token revocation closes existing streams via the same mechanism that rejects new connections.
 
 ## Open questions
 
-- **CORS configuration defaults.** *Implementation default.* OSS default: allow `http://127.0.0.1:*` (loopback) for the static UI. Production users override via `[api.cors] allowed_origins = [...]` in `runtime.toml`. Hosted has stricter CORS managed by the control plane.
+- **CORS configuration defaults.** *Resolved (2026-07-01).* The OSS default allows any **loopback** origin via an `allow_origin_regex` of `^http://(127\.0\.0\.1|localhost)(:\d+)?$` — `127.0.0.1`/`localhost` on **any** port (the static-UI dev server runs on `:5173`/`:8080`/etc., so a fixed portless origin wouldn't match). `allow_credentials=True` is CORS-spec-compliant because the value is a specific-origin regex, not a wildcard (Starlette echoes the matched origin). Production users add explicit origins via `[api.cors] allowed_origins = [...]`; hosted has stricter CORS managed by the control plane.
+- **SSRF TOCTOU on webhook delivery.** *Tracked hardening (in-code `NOTE` at `webhooks.attempt_delivery`).* The SSRF guard resolves the host and httpx re-resolves for the connect, leaving a DNS-rebinding window. Mitigations in place: redirects are disabled and the guard re-runs before every attempt. The durable fix is to pin the vetted IP into the httpx connect; deferred.
+- **WebSocket `?token=` query-parameter auth.** *Tracked hardening (in-code `NOTE` at `streams._authenticate_ws`).* The header path is primary; the `?token=` fallback (for browsers that can't set WS headers) should become a single-use, short-lived **stream ticket** rather than a long-lived bearer token in a URL. Deferred.
+- **Idempotency secret-exclusion maintenance.** *Tracked.* The secret-returning-write exclusion (§Idempotency) is a **path-string denylist** matched against the mounted routes, so any future secret-returning route (or disabling FastAPI's `redirect_slashes`) must update the denylist in lockstep. A response-side "non-cacheable" tag (set by the route, read by the middleware) would be more robust long-term; considered but not yet built.
+- **Hosted-forward authorization.** *Tracked hardening (in-code `NOTE` at `dependencies.get_identity`).* Per-tenant authorization, scope (`scopes`) enforcement, and domain-exception-detail hygiene belong at the identity boundary; fine for single-tenant OSS (full-scope), needed before multi-tenant hosted.
 - **OpenAPI 3.0 vs 3.1.** *Implementation default.* Use 3.1 (FastAPI 0.100+ default); broader tooling supports both. Revisit if a key downstream tool only supports 3.0.
 - **API versioning policy: how do we handle v2?** *Implementation default.* When v2 lands, both `/api/v1/*` and `/api/v2/*` run side-by-side for a deprecation window (12 months minimum). v1 endpoints get a `Deprecation` header with a sunset date. Documented in `docs/api-reference.md` even though we don't have a v2 yet.
 - **Whether to ship a Python SDK for the REST API.** *Strategy-required.* Probably yes eventually; not now (the CLI itself acts as a reference client). A separate `carve-client` Python package could ship later if there's demand. Defer.

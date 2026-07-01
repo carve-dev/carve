@@ -139,7 +139,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0013_runtime_worker_placement"
+        assert head_rev == "0014_rest_api_tables"
     finally:
         engine.dispose()
 

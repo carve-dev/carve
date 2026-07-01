@@ -578,6 +578,25 @@ class JobQueue:
         with self._session_factory() as session:
             return session.get(Job, job_id)
 
+    def list_jobs(
+        self,
+        *,
+        status: str | None = None,
+        tenant_id: int = 1,
+        limit: int = 50,
+    ) -> list[Job]:
+        """List jobs newest-first (the read-only ``/api/v1/jobs`` surface)."""
+        stmt = (
+            sa.select(Job)
+            .where(Job.tenant_id == tenant_id)
+            .order_by(Job.created_at.desc())
+            .limit(limit)
+        )
+        if status is not None:
+            stmt = stmt.where(Job.status == status)
+        with self._session_factory() as session:
+            return list(session.scalars(stmt).all())
+
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
         """The event-emit seam — delegates to the injected :class:`EventSink`.
 
@@ -650,6 +669,16 @@ class JobQueue:
         """Fetch a worker row by id, or ``None``."""
         with self._session_factory() as session:
             return session.get(Worker, worker_id)
+
+    def list_workers(self, *, tenant_id: int = 1) -> list[Worker]:
+        """List workers, most-recently-started first (the ``/api/v1/workers`` surface)."""
+        stmt = (
+            sa.select(Worker)
+            .where(Worker.tenant_id == tenant_id)
+            .order_by(Worker.started_at.desc())
+        )
+        with self._session_factory() as session:
+            return list(session.scalars(stmt).all())
 
     # --------------------------------------------------------------- Step runs
 

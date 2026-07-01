@@ -26,12 +26,14 @@ from carve.core.config.pipeline_schema import (
     load_pipeline,
 )
 from carve.core.config.schema import (
+    ApiConfig,
     ArchiveConfig,
     ComponentConfig,
     ComponentMode,
     ComponentType,
     Config,
     ConnectionsConfig,
+    CorsConfig,
     ModelsConfig,
     PathsConfig,
     ProjectConfig,
@@ -45,6 +47,7 @@ from carve.core.config.state_store import DEFAULT_STATE_STORE_URL, StateStoreCon
 
 __all__ = [
     "DEFAULT_STATE_STORE_URL",
+    "ApiConfig",
     "ArchiveConfig",
     "ComponentConfig",
     "ComponentMode",
@@ -52,6 +55,7 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConnectionsConfig",
+    "CorsConfig",
     "DbtStepConfig",
     "DltStepConfig",
     "FailureMode",

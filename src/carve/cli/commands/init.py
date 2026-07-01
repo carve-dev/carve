@@ -243,6 +243,7 @@ def _initialize_state_store(project_root: Path, *, database_url: str | None) -> 
             )
             engine = create_engine_from_config(config, project_dir=project_root)
         initialize_database(engine)
+        _bootstrap_default_token(engine, project_root)
         engine.dispose()
     except (OperationalError, ProgrammingError) as exc:
         if database_url is not None:
@@ -259,6 +260,31 @@ def _initialize_state_store(project_root: Path, *, database_url: str | None) -> 
         )
         return
     console.print("[green]+[/green] state store schema initialized (postgres)")
+
+
+def _bootstrap_default_token(engine: object, project_root: Path) -> None:
+    """Mint the OSS default API token when the state store is reachable (best-effort).
+
+    Runs only after ``initialize_database`` has confirmed the schema is at head
+    (the ``tokens`` table exists). Any failure is swallowed with a hint — the
+    reliable bootstrap is ``carve serve`` startup, which always mints it if
+    missing. Idempotent: a no-op once a default token exists.
+    """
+    try:
+        from carve.api.auth import ensure_default_token
+        from carve.core.config.paths import ProjectPaths
+        from carve.core.state.database import create_session_factory
+        from carve.core.state.store import StateStore
+
+        state_store = StateStore(create_session_factory(engine))  # type: ignore[arg-type]
+        token_path = ProjectPaths.from_root(project_root).scratch_dir / "token"
+        if ensure_default_token(state_store, token_path) is not None:
+            console.print("[green]+[/green] bootstrapped the default API token → .carve/token")
+    except Exception:
+        # Never fail init on token bootstrap — `carve serve` mints it reliably.
+        console.print(
+            "[yellow]![/yellow] API token not bootstrapped yet — `carve serve` will mint it."
+        )
 
 
 def _first_error_line(exc: Exception) -> str:

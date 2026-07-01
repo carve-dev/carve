@@ -4,7 +4,9 @@ The M1 baseline tables — `runs`, `logs`, `plans`, `pipelines`, `builds`,
 and `workspaces` — plus the Increment-4 runtime tables (`jobs`, `workers`,
 `step_runs`, `schedules`, `schedule_changes`, `events`) and the
 observability agent-telemetry tables (`agents`, `agent_invocations`,
-`skill_calls`). The schema is managed by Alembic — see ``migrations/`` —
+`skill_calls`), and the Increment-5 REST-API tables (`tokens`,
+`idempotency_keys`, `webhooks`, `webhook_deliveries`). The schema is
+managed by Alembic — see ``migrations/`` —
 but the ORM models are still the canonical Python representation that
 repository methods return.
 
@@ -685,12 +687,148 @@ class SkillCall(Base):
     finished_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
 
 
+# ---------------------------------------------------------------------------
+# REST API: tokens, idempotency_keys, webhooks, webhook_deliveries (Increment 5)
+# ---------------------------------------------------------------------------
+#
+# The rest-api slice wires a FastAPI surface over the shipped services. Four
+# tables carry the cross-cutting middleware + webhook publisher. Ids are
+# app-generated ``String`` (prefixed uuid hex — mirrors ``run_``/``build_``/
+# ``sched_``), NOT native UUID, so the ORM stays consistent with the rest of the
+# entity tables; the capability spec's UUID DDL sketch is honored in spirit.
+
+
+class Token(Base):
+    """An API bearer token — the credential the auth middleware validates.
+
+    Only the argon2 ``token_hash`` is stored (the plaintext is returned once at
+    mint). argon2 is salted, so ``token_hash`` is not an equality-lookup key:
+    instead the plaintext carries a non-secret ``lookup_id`` (indexed, unique) that
+    narrows to the one candidate row, and the :class:`~carve.core.state.tokens.Tokens`
+    repo runs a single argon2 verify against it. ``scopes`` is ``["*"]`` for the
+    OSS default token.
+    ``is_default`` marks the bootstrapped default token; the partial unique
+    ``ix_tokens_one_default`` keeps at most one live default so
+    ``ensure_default_token`` is idempotent across restarts.
+    """
+
+    __tablename__ = "tokens"
+    __table_args__ = (
+        Index("ix_tokens_token_hash", "token_hash"),
+        Index("ix_tokens_lookup_id", "lookup_id", unique=True),
+        Index(
+            "ix_tokens_one_default",
+            "is_default",
+            unique=True,
+            postgresql_where=sa.text("is_default AND revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    token_hash: Mapped[str]
+    # The non-secret ``<lookup>`` segment of the plaintext token — the indexed
+    # narrower that bounds auth to one argon2 verify.
+    lookup_id: Mapped[str]
+    scopes: Mapped[list[str]] = mapped_column(JSONB)
+    tenant_id: Mapped[int] = mapped_column(sa.BigInteger, default=1)
+    user_id: Mapped[int] = mapped_column(sa.BigInteger, default=1)
+    is_default: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+
+
+class IdempotencyKey(Base):
+    """A cached write-endpoint response, keyed by the client's ``Idempotency-Key``.
+
+    PK is ``(tenant_id, user_id, key)`` so two authenticated principals' keys
+    never collide. ``request_hash`` = ``sha256(method+path+body)``: a replay with
+    the same key + same hash returns the cached ``response_*``; the same key with
+    a different hash is a 409. ``expires_at`` gives a 24h TTL; the hourly GC
+    (``ix_idempotency_keys_expires_at``) deletes aged rows.
+    """
+
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        Index("ix_idempotency_keys_expires_at", "expires_at"),
+    )
+
+    tenant_id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True)
+    key: Mapped[str] = mapped_column(primary_key=True)
+    request_hash: Mapped[str]
+    response_status: Mapped[int]
+    response_body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    response_headers: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ)
+
+
+class Webhook(Base):
+    """A user-declared webhook subscriber (the publisher's target).
+
+    ``event_filters`` is the list of event kinds this subscriber wants
+    (``["run.failed", "step.failed", ...]``); an empty list means "all events".
+    ``hmac_secret`` is a per-webhook base64-url random secret used to sign the
+    delivery body (``X-Carve-Signature``); it is returned once at create /
+    rotate-secret and never again.
+    """
+
+    __tablename__ = "webhooks"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    url: Mapped[str]
+    event_filters: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    hmac_secret: Mapped[str]
+    active: Mapped[bool] = mapped_column(default=True)
+    tenant_id: Mapped[int] = mapped_column(sa.BigInteger, default=1)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
+class WebhookDelivery(Base):
+    """One delivery attempt-set for a single (event x matching webhook) pair.
+
+    The publisher fans an unprocessed ``events`` row out into one row per active
+    matching webhook (``status='pending'``), then drains due rows: POST the event
+    JSON, and on a non-2xx / timeout reschedule ``next_retry_at`` on the
+    30s/1m/5m/15m/1h/3h schedule, marking ``abandoned`` after 6 attempts.
+    ``webhook_id`` / ``event_id`` are enforced FKs (both parents always exist
+    first).
+    """
+
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index(
+            "ix_webhook_deliveries_due",
+            "next_retry_at",
+            postgresql_where=sa.text("status = 'pending'"),
+        ),
+        Index("ix_webhook_deliveries_webhook_id", "webhook_id"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    webhook_id: Mapped[str] = mapped_column(
+        ForeignKey("webhooks.id", name="fk_webhook_deliveries_webhook_id"),
+    )
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", name="fk_webhook_deliveries_event_id"),
+    )
+    attempted_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    response_status: Mapped[int | None] = mapped_column(default=None)
+    response_body: Mapped[str | None] = mapped_column(default=None)
+    retry_count: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(default="pending")
+    next_retry_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
 __all__: list[Any] = [
     "Agent",
     "AgentInvocation",
     "Base",
     "Build",
     "Event",
+    "IdempotencyKey",
     "Job",
     "Log",
     "Pipeline",
@@ -700,6 +838,9 @@ __all__: list[Any] = [
     "ScheduleChange",
     "SkillCall",
     "StepRun",
+    "Token",
+    "Webhook",
+    "WebhookDelivery",
     "Worker",
     "Workspace",
 ]
