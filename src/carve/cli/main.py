@@ -28,6 +28,7 @@ from carve.cli.commands.component import component as component_cmd
 from carve.cli.commands.component import components_app
 from carve.cli.commands.el import app as el_app
 from carve.cli.commands.memory import app as memory_app
+from carve.cli.commands.metrics import app as metrics_app
 from carve.cli.commands.schedule import app as schedule_app
 from carve.cli.commands.skills import app as skills_app
 from carve.cli.commands.target import app as target_app
@@ -105,6 +106,7 @@ app.add_typer(pipelines.app, name="pipelines")
 app.command(name="component")(component_cmd)
 app.add_typer(components_app, name="components")
 app.add_typer(schedule_app, name="schedule")
+app.add_typer(metrics_app, name="metrics")
 app.add_typer(memory_app, name="memory")
 app.add_typer(agents_app, name="agents")
 app.add_typer(skills_app, name="skills")

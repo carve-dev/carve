@@ -1,7 +1,10 @@
 """SQLAlchemy 2.0 declarative models for the Carve state store.
 
-Six tables: `runs`, `logs`, `plans`, `pipelines`, `builds`, and
-`workspaces`. The schema is managed by Alembic — see ``migrations/`` —
+The M1 baseline tables — `runs`, `logs`, `plans`, `pipelines`, `builds`,
+and `workspaces` — plus the Increment-4 runtime tables (`jobs`, `workers`,
+`step_runs`, `schedules`, `schedule_changes`, `events`) and the
+observability agent-telemetry tables (`agents`, `agent_invocations`,
+`skill_calls`). The schema is managed by Alembic — see ``migrations/`` —
 but the ORM models are still the canonical Python representation that
 repository methods return.
 
@@ -555,7 +558,129 @@ class ScheduleChange(Base):
     changed_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Observability: agents, agent_invocations, skill_calls (Increment 4 — telemetry)
+# ---------------------------------------------------------------------------
+#
+# The agent-telemetry tables the observability capability owns. A delegated
+# subagent run persists one ``agent_invocations`` row (tokens/cost/duration/
+# status) + one ``skill_calls`` row per tool call, correlated to the run/plan/
+# build that triggered it; ``carve metrics`` rolls those up. The write surface
+# is ``carve.core.state.telemetry.TelemetryRepo`` (the single writer); the read
+# aggregation is ``carve.core.observability.rollups.MetricsRollups``.
+
+
+class Agent(Base):
+    """The registry projection of a discovered agent (name is the natural PK).
+
+    Extensibility discovers agents; observability *records* them. The recording
+    path upserts a minimal row (name + a best-effort model/source hint) so the
+    ``agent_invocations`` FK parent always exists; the richer JSONB projection
+    (``allowed_skills``/``guardrails``/``specialization``) is filled by the
+    discovery side and is nullable here.
+    """
+
+    __tablename__ = "agents"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    model: Mapped[str | None] = mapped_column(default=None)
+    system_prompt_path: Mapped[str | None] = mapped_column(default=None)
+    allowed_skills: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
+    guardrails: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    specialization: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    source: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_TIMESTAMPTZ, default=_utcnow)
+
+
+class AgentInvocation(Base):
+    """One subagent invocation — the row the harness writes as it delegates.
+
+    ``id`` is an **app-generated String** minted at ``open_invocation`` (mirrors
+    ``runs``/``step_runs``) so ``skill_calls`` reference it without a
+    mid-recording flush. All four **external** correlation ids —
+    ``run_id``/``plan_id``/``build_id``/``ask_id`` — are **nullable plain columns
+    with NO FK**: they are orphaned telemetry pointers, recorded by value. The
+    reasons are uniform (see migration 0012): ``run_id`` — archiver-safety (an FK
+    would block the archiver's aged-out ``runs`` DELETE); ``plan_id``/``build_id``
+    — record-before-parent ordering (``generate_plan`` records invocations before
+    the ``plans`` row is inserted, and the ``builds`` row only lands after review,
+    so an FK would raise ``IntegrityError`` at open-time and drop the telemetry);
+    ``ask_id`` — the ``asks`` table does not exist until Increment 5. Only the two
+    internal parents are enforced FKs (they always exist first): ``agent_name →
+    agents.name`` here and ``skill_calls.agent_invocation_id → agent_invocations.id``.
+    The row is opened ``status='running'`` with zero tokens and is finalized
+    (tokens/cost/duration/status) at ``end_invocation``.
+
+    [DEFERRED — telemetry-table archival/retention]: ``agent_invocations`` /
+    ``skill_calls`` are themselves unarchived and grow unbounded; a future
+    archiver-extension slice adds ``*_archive`` clones + retention windows,
+    archiving these children before the ``runs`` pass.
+    """
+
+    __tablename__ = "agent_invocations"
+    __table_args__ = (
+        Index(
+            "ix_agent_invocations_agent_name_started_at",
+            "agent_name",
+            sa.text("started_at DESC"),
+        ),
+        Index("ix_agent_invocations_run_id", "run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    agent_name: Mapped[str] = mapped_column(
+        ForeignKey("agents.name", name="fk_agent_invocations_agent_name"),
+    )
+    # All four external correlation ids are nullable NO-FK recording pointers
+    # (see migration 0012 + the class docstring): run_id → archiver-safety;
+    # plan_id/build_id → record-before-parent ordering (an FK would raise
+    # IntegrityError at open-time and drop plan/build-path telemetry); ask_id →
+    # the ``asks`` table is unshipped. Values kept for later correlation. The
+    # ix_agent_invocations_run_id index (above) stays for the per-run drill-down.
+    run_id: Mapped[str | None] = mapped_column(default=None)
+    plan_id: Mapped[str | None] = mapped_column(default=None)
+    build_id: Mapped[str | None] = mapped_column(default=None)
+    ask_id: Mapped[str | None] = mapped_column(default=None)
+    tokens_input: Mapped[int] = mapped_column(default=0)
+    tokens_output: Mapped[int] = mapped_column(default=0)
+    cost_usd: Mapped[float] = mapped_column(default=0.0)
+    duration_ms: Mapped[int | None] = mapped_column(default=None)
+    status: Mapped[str] = mapped_column(default="running")
+    started_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+
+
+class SkillCall(Base):
+    """One skill/tool call recorded against its parent ``agent_invocations`` row.
+
+    ``id`` is ``BIGSERIAL`` (append-only child, no descendants — mirrors
+    ``Event``/``Log``/``ScheduleChange``, not the app-generated String entity
+    ids). Written by the ``RecordingObserver.on_tool_result`` callback against
+    the currently-open invocation. Carries the §6.4 bounded-result signals
+    (``result_too_large``/``pages_walked``/``output_size``).
+    """
+
+    __tablename__ = "skill_calls"
+    __table_args__ = (Index("ix_skill_calls_agent_invocation_id", "agent_invocation_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    agent_invocation_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_invocations.id", name="fk_skill_calls_agent_invocation_id"),
+    )
+    skill_name: Mapped[str]
+    input_hash: Mapped[str | None] = mapped_column(default=None)
+    output_size: Mapped[int | None] = mapped_column(default=None)
+    result_too_large: Mapped[bool] = mapped_column(default=False)
+    pages_walked: Mapped[int | None] = mapped_column(default=None)
+    duration_ms: Mapped[int | None] = mapped_column(default=None)
+    started_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
+
+
 __all__: list[Any] = [
+    "Agent",
+    "AgentInvocation",
     "Base",
     "Build",
     "Event",
@@ -566,6 +691,7 @@ __all__: list[Any] = [
     "Run",
     "Schedule",
     "ScheduleChange",
+    "SkillCall",
     "StepRun",
     "Worker",
     "Workspace",

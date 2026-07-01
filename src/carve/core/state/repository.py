@@ -76,6 +76,17 @@ class Repository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    @property
+    def session_factory(self) -> sessionmaker[Session]:
+        """The sessionmaker this repository was constructed with.
+
+        Exposed so telemetry (``RecordingObserver`` / ``TelemetryRepo``) can
+        share the same factory without re-deriving the engine/session wiring —
+        the accessor the orchestration call-sites use to wire best-effort
+        recording onto a delegated run.
+        """
+        return self._session_factory
+
     # ------------------------------------------------------------------ Runs
 
     def create_run(

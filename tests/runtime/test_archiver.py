@@ -36,6 +36,7 @@ from carve.core.state.database import (
     initialize_database,
 )
 from carve.core.state.models import Job, Log, Run, StepRun
+from carve.core.state.telemetry import TelemetryRepo
 from carve.runtime import archiver
 from carve.runtime.archiver import (
     ArchiveVerificationFailed,
@@ -291,6 +292,52 @@ def test_runs_predicate_uses_completed_at_and_real_terminal_vocabulary(
     assert moved == 2
     assert _ids(session_factory, "runs_archive") == ["r_old_crashed", "r_old_success"]
     assert _ids(session_factory, "runs") == ["r_fresh_success", "r_null", "r_old_running"]
+
+
+def test_runs_archive_with_agent_invocations_child_no_fk_footgun(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An ``agent_invocations`` child of an archivable ``runs`` row must NOT block it.
+
+    Regression for the archiver footgun: ``agent_invocations.run_id`` is a
+    nullable NO-FK column (migration 0012). If it carried an FK to ``runs.id``,
+    the archiver's ``DELETE FROM runs`` would raise ``IntegrityError``, roll the
+    whole batch back, and ``runs`` would stop archiving forever. This seeds an
+    aged terminal run with a live ``agent_invocations`` child referencing it and
+    asserts the run still archives — and the surviving invocation keeps its
+    ``run_id`` value (correlation into ``runs_archive`` preserved).
+    """
+    old = NOW - timedelta(days=40)  # > runs_window (30d)
+    run_id = "r_archivable"
+    _seed_run(session_factory, run_id=run_id, status="success", completed_at=old)
+    # A live telemetry child pointing at the aged run (open_invocation also
+    # ensures the ``agents`` FK parent in the same transaction).
+    inv_id = TelemetryRepo(session_factory).open_invocation(
+        agent_name="python-engineer", run_id=run_id
+    )
+
+    moved = archive_table_safely(
+        session_factory,
+        "runs",
+        cutoff=NOW - timedelta(days=30),
+        status_filter=_RUNS_TERMINAL,
+        finished_col="completed_at",
+        tenant_scoped=False,  # runs predates multi-tenancy — no tenant_id column
+    )
+
+    # The DELETE succeeded despite the child (with the old FK it raised
+    # IntegrityError and rolled back): the run moved to runs_archive.
+    assert moved == 1
+    assert _ids(session_factory, "runs_archive") == [run_id]
+    assert _ids(session_factory, "runs") == []
+
+    # The invocation survives and still carries the archived run's id, so
+    # correlation into runs_archive (same id) still resolves.
+    with session_factory() as session:
+        surviving_run_id = session.execute(
+            sa.text("SELECT run_id FROM agent_invocations WHERE id = :id"), {"id": inv_id}
+        ).scalar_one()
+    assert surviving_run_id == run_id
 
 
 def test_logs_predicate_is_age_only(session_factory: sessionmaker[Session]) -> None:

@@ -36,9 +36,10 @@ runs an already-decomposed sequence, keeping "decide what" and "run it" apart.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from carve.cli.orchestrator.extensibility_wiring import (
     HookFactory,
@@ -49,12 +50,18 @@ from carve.cli.orchestrator.goal_classifier import classify_goal
 from carve.cli.orchestrator.goal_decomposer import SubGoal
 from carve.core.agents.delegation import DelegationResult, SubagentRunner, delegate
 from carve.core.agents.discovery import AgentDiscovery
+from carve.core.agents.observer import AgentObserver
 from carve.core.agents.permissions.gate import Approver
 from carve.core.agents.permissions.modes import PermissionMode
 from carve.core.agents.routing import select_agent
 from carve.core.agents.subagent_registry import SubagentRegistry
 from carve.core.config import Config
 from carve.core.config.paths import ProjectPaths
+from carve.core.observability.recording import RecordingObserver
+from carve.core.state.telemetry import TelemetryRepo
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +90,11 @@ def run_single_engine(
     approver: Approver | None = None,
     parent_mode: PermissionMode = PermissionMode.PLAN,
     max_turns: int = 30,
+    session_factory: sessionmaker[Session] | None = None,
+    run_id: str | None = None,
+    plan_id: str | None = None,
+    build_id: str | None = None,
+    ask_id: str | None = None,
 ) -> DelegationResult:
     """Classify ``goal``, route it to one engineer, and delegate (sync).
 
@@ -106,6 +118,12 @@ def run_single_engine(
         parent_mode: The mode to delegate at; the child clamps to
             ``min(parent_mode, capability)``. Defaults to ``PLAN`` (design-only).
         max_turns: Cap on the child loop's turns.
+        session_factory: When present, a :class:`RecordingObserver` is wired onto
+            the runner so the invocation + its skill calls are persisted (best-
+            effort telemetry). ``None`` keeps today's behaviour (``NullObserver``).
+        run_id, plan_id, build_id, ask_id: Correlation ids stamped on the recorded
+            ``agent_invocations`` row (all optional; ``ask_id`` is a nullable
+            no-FK column until the ``asks`` table ships).
 
     Returns:
         The single :class:`DelegationResult` the routed engineer produced.
@@ -118,6 +136,18 @@ def run_single_engine(
     """
     if registry is None:
         registry = build_registry(project_dir, config)
+
+    # Best-effort recording observer (None session-factory ⇒ NullObserver on the
+    # runner ⇒ today's behaviour, unchanged). Built once, threaded across the
+    # runner and the call-site lifecycle.
+    observer = _make_recording_observer(
+        session_factory,
+        run_id=run_id,
+        plan_id=plan_id,
+        build_id=build_id,
+        ask_id=ask_id,
+        model=model,
+    )
 
     # Build the extensibility hook factory FIRST (only when we'll construct the
     # runner ourselves): it parses carve/hooks.toml eagerly, so a malformed file
@@ -145,6 +175,7 @@ def run_single_engine(
             parent_mode=parent_mode,
             max_turns=max_turns,
             hook_factory=hook_factory,
+            observer=observer,
         )
 
     # The single-engine route is the N=1 case: one classified slice run through
@@ -154,6 +185,7 @@ def run_single_engine(
         registry=registry,
         runner=runner,
         parent_mode=parent_mode,
+        observer=observer,
     )
 
 
@@ -170,6 +202,11 @@ def run_engines(
     approver: Approver | None = None,
     parent_mode: PermissionMode = PermissionMode.PLAN,
     max_turns: int = 30,
+    session_factory: sessionmaker[Session] | None = None,
+    run_id: str | None = None,
+    plan_id: str | None = None,
+    build_id: str | None = None,
+    ask_id: str | None = None,
 ) -> list[DelegationResult]:
     """Route + delegate each already-decomposed ``SubGoal`` in order (sync).
 
@@ -212,6 +249,14 @@ def run_engines(
         parent_mode: The mode to delegate at; each child clamps to
             ``min(parent_mode, capability)``. Defaults to ``PLAN`` (design-only).
         max_turns: Cap on each child loop's turns.
+        session_factory: When present, a :class:`RecordingObserver` is wired onto
+            the runner so each invocation + its skill calls are persisted (best-
+            effort). ``None`` keeps today's behaviour (``NullObserver``). The one
+            observer is threaded across every sub-goal — correct because delegation
+            is sync/sequential (its "current open invocation" cursor never sees two
+            open loops at once).
+        run_id, plan_id, build_id, ask_id: Correlation ids stamped on every
+            recorded ``agent_invocations`` row for this delegation session.
 
     Returns:
         The N :class:`DelegationResult`s, in the sub-goals' order.
@@ -225,6 +270,17 @@ def run_engines(
 
     if registry is None:
         registry = build_registry(project_dir, config)
+
+    # Best-effort recording observer, built once and threaded across every
+    # sub-goal (safe under the sync/sequential invariant). None ⇒ NullObserver.
+    observer = _make_recording_observer(
+        session_factory,
+        run_id=run_id,
+        plan_id=plan_id,
+        build_id=build_id,
+        ask_id=ask_id,
+        model=model,
+    )
 
     # Build the extensibility hook factory FIRST (only when we'll construct the
     # runner ourselves): it parses carve/hooks.toml eagerly, so a malformed file
@@ -250,6 +306,7 @@ def run_engines(
             parent_mode=parent_mode,
             max_turns=max_turns,
             hook_factory=hook_factory,
+            observer=observer,
         )
 
     # Sequential — the harness invariant (`SubagentRunner.run` blocks). One
@@ -262,9 +319,42 @@ def run_engines(
                 registry=registry,
                 runner=runner,
                 parent_mode=parent_mode,
+                observer=observer,
             )
         )
     return results
+
+
+def _make_recording_observer(
+    session_factory: sessionmaker[Session] | None,
+    *,
+    run_id: str | None,
+    plan_id: str | None,
+    build_id: str | None,
+    ask_id: str | None,
+    model: str | None,
+) -> RecordingObserver | None:
+    """Build the best-effort :class:`RecordingObserver`, or ``None`` when disabled.
+
+    ``None`` session-factory ⇒ ``None`` observer ⇒ the runner keeps its
+    ``NullObserver`` default and the delegated run behaves exactly as before this
+    wiring landed — recording is telemetry, never a blocker.
+    """
+    if session_factory is None:
+        return None
+    return RecordingObserver(
+        TelemetryRepo(session_factory),
+        run_id=run_id,
+        plan_id=plan_id,
+        build_id=build_id,
+        ask_id=ask_id,
+        model=model,
+    )
+
+
+def _elapsed_ms(start: float) -> int:
+    """Milliseconds elapsed since a ``time.perf_counter()`` reading."""
+    return int((time.perf_counter() - start) * 1000)
 
 
 def _capacity_for(parent_mode: PermissionMode) -> str:
@@ -295,6 +385,7 @@ def _delegate_engine(
     registry: SubagentRegistry,
     runner: SubagentRunner,
     parent_mode: PermissionMode,
+    observer: RecordingObserver | None = None,
 ) -> DelegationResult:
     """Route one ``SubGoal`` to its engineer and delegate (sync, mode-derived capacity).
 
@@ -303,6 +394,15 @@ def _delegate_engine(
     to an agent name, the typed context is assembled, and the goal slice is
     delegated SYNC at ``parent_mode``. Extracting it keeps the single-engine and
     multi-engine paths one implementation — ``run_single_engine`` is the N=1 case.
+
+    When ``observer`` is present it brackets the ``delegate()`` call:
+    ``begin_invocation`` opens the ``agent_invocations`` row (and sets the
+    "current open invocation" cursor the runner's ``on_tool_result`` writes skill
+    calls against), the call is timed with ``time.perf_counter`` (the call-site is
+    where per-invocation ``duration_ms`` lives — ``DelegationResult`` carries no
+    duration field), and ``end_invocation`` finalizes the row from the result +
+    that duration. The observer contains its own failures, so recording never
+    blocks or fails the delegated run.
     """
     agent_name = select_agent(registry, classification=sub_goal.classification)
     logger.debug(
@@ -326,13 +426,28 @@ def _delegate_engine(
         "classification": sub_goal.classification,
         "capacity": _capacity_for(parent_mode),
     }
-    return delegate(
-        agent_name,
-        sub_goal.sub_goal,
-        context=context,
-        parent_mode=parent_mode,
-        runner=runner,
-    )
+
+    invocation_id: str | None = None
+    if observer is not None:
+        invocation_id = observer.begin_invocation(agent_name=agent_name)
+    start = time.perf_counter()
+    try:
+        result = delegate(
+            agent_name,
+            sub_goal.sub_goal,
+            context=context,
+            parent_mode=parent_mode,
+            runner=runner,
+        )
+    except BaseException:
+        # Finalize the opened row as failed (guarded — never re-raises), then let
+        # the original error propagate; recording must not mask a real failure.
+        if observer is not None:
+            observer.end_invocation(invocation_id, None, _elapsed_ms(start))
+        raise
+    if observer is not None:
+        observer.end_invocation(invocation_id, result, _elapsed_ms(start))
+    return result
 
 
 def _truncate(text: str, limit: int = 120) -> str:
@@ -351,6 +466,7 @@ def _build_runner(
     parent_mode: PermissionMode,
     max_turns: int,
     hook_factory: HookFactory | None,
+    observer: AgentObserver | None = None,
 ) -> SubagentRunner:
     """Construct the live :class:`SubagentRunner` for the routed delegation.
 
@@ -380,6 +496,7 @@ def _build_runner(
         client=client,
         model=model,
         model_tiers=config.models.tiers,
+        observer=observer,
         approver=approver,
         max_turns=max_turns,
         hook_factory=hook_factory,
