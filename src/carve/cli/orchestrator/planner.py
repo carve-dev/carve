@@ -36,7 +36,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from carve.cli.orchestrator.cost_rollup import compose_runtime_estimate, roll_up_cost
 from carve.cli.orchestrator.delegation_run import build_registry, run_engines
@@ -82,6 +82,9 @@ from carve.core.targets.names import (
     validate_artifact_name,
 )
 from carve.version import __version__ as CARVE_VERSION
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +249,7 @@ def generate_plan(
             user_destination=_resolve_user_destination(
                 goal=goal, destination_hint=destination_hint
             ),
+            session_factory=repository.session_factory,
         )
         if routed is not None:
             routed.file_path = _persist_artifact(routed, project_dir, repository)
@@ -842,6 +846,7 @@ def _try_routed_plan(
     plan_id: str,
     max_turns: int,
     user_destination: dict[str, str],
+    session_factory: sessionmaker[Session] | None = None,
 ) -> PlanArtifact | None:
     """Decompose the goal, run each engine, and merge — or ``None`` to fall back.
 
@@ -905,6 +910,12 @@ def _try_routed_plan(
             hook_factory=hook_factory,
             parent_mode=PermissionMode.PLAN,
             max_turns=max_turns,
+            # Best-effort telemetry: record each design-capacity engineer
+            # invocation + its skill calls against this plan. The plan path
+            # creates no ``runs`` row, so only ``plan_id`` correlates (no
+            # run_id / build_id). ``None`` factory ⇒ NullObserver, unchanged.
+            session_factory=session_factory,
+            plan_id=plan_id,
         )
     except NoAgentMatch as exc:
         # A sub-goal's classification matched no registered agent: a clean

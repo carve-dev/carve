@@ -676,6 +676,14 @@ def _build_multi_engine(
             hook_factory=hook_factory,
             parent_mode=PermissionMode.BUILD,
             max_turns=max_turns,
+            # Best-effort telemetry: record each engineer's invocation +
+            # skill calls against this build's run/plan. ``build_id`` stays
+            # None — the ``Build`` row is only written after the review fan-out
+            # passes, so it does not exist yet while the engineers run;
+            # correlation for a build rides run_id + plan_id.
+            session_factory=repository.session_factory,
+            run_id=run_id,
+            plan_id=plan_id,
         )
     except Exception as exc:
         repository.update_run_status(run_id, "failed", error=str(exc))

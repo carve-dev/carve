@@ -74,7 +74,8 @@ def test_alembic_upgrade_head_on_empty_postgres(
 
         # The five M1-shape tables, the workspaces table, the runtime queue
         # tables (0008), the scheduler tables (0009), the events table (0010),
-        # the archive tables (0011), plus alembic's bookkeeping table.
+        # the archive tables (0011), the agent-telemetry tables (0012), plus
+        # alembic's bookkeeping table.
         assert {
             "runs",
             "logs",
@@ -92,6 +93,9 @@ def test_alembic_upgrade_head_on_empty_postgres(
             "runs_archive",
             "logs_archive",
             "step_runs_archive",
+            "agents",
+            "agent_invocations",
+            "skill_calls",
         }.issubset(tables)
         assert "alembic_version" in tables
 
@@ -131,7 +135,7 @@ def test_alembic_upgrade_head_on_empty_postgres(
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0011_runtime_archive"
+        assert head_rev == "0012_observability_telemetry"
     finally:
         engine.dispose()
 
@@ -1034,5 +1038,73 @@ def test_0011_downgrade_drops_archive_tables(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0010_runtime_events"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0012_observability_telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_0012_creates_agent_telemetry_tables_with_fks(
+    postgres_state_store_url: str,
+) -> None:
+    """0012 lands agents/agent_invocations/skill_calls; only agent_name is an FK."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        assert {"agents", "agent_invocations", "skill_calls"}.issubset(tables)
+
+        # All four external correlation ids (run_id/plan_id/build_id/ask_id) are
+        # nullable NO-FK recording pointers; ``agent_name`` is the ONLY enforced
+        # FK on this table. Pin the full set so an accidental FK re-add fails loud.
+        constrained = {
+            tuple(fk["constrained_columns"])
+            for fk in inspector.get_foreign_keys("agent_invocations")
+        }
+        assert constrained == {("agent_name",)}
+
+        inv_cols = {c["name"]: c for c in inspector.get_columns("agent_invocations")}
+        for col in ("run_id", "plan_id", "build_id", "ask_id"):
+            assert inv_cols[col]["nullable"] is True
+
+        skill_indexes = {ix["name"] for ix in inspector.get_indexes("skill_calls")}
+        assert "ix_skill_calls_agent_invocation_id" in skill_indexes
+    finally:
+        engine.dispose()
+
+
+def test_0012_downgrade_drops_agent_telemetry_tables(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0012 -> 0011 drops the three tables, restoring 0011's schema."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert {"agents", "agent_invocations", "skill_calls"}.issubset(
+            set(inspect(engine).get_table_names())
+        )
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0011_runtime_archive")
+
+        remaining = set(inspect(engine).get_table_names())
+        for table in ("agents", "agent_invocations", "skill_calls"):
+            assert table not in remaining
+        # 0011's schema is intact.
+        assert {"jobs_archive", "runs_archive", "logs_archive", "step_runs_archive"}.issubset(
+            remaining
+        )
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0011_runtime_archive"
     finally:
         engine.dispose()
