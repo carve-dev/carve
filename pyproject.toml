@@ -36,6 +36,10 @@ dependencies = [
     "watchdog>=4.0",
     "croniter>=2.0",
     "jinja2>=3.1",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "argon2-cffi>=23.1",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +52,7 @@ dev = [
     "pre-commit>=3.7",
     "sqlparse>=0.5",
     "testcontainers[postgres]>=4.0",
+    "openapi-spec-validator>=0.7",
 ]
 # Heavier adapter stack for the OPTIONAL real-dbt-against-DuckDB integration test
 # (tests/core/dbt_execution/test_local_backend_real_dbt.py). Deliberately NOT in
@@ -89,6 +94,11 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 "src/carve/cli/commands/**/*.py" = ["B008"]
 # Same rationale for the top-level callback in main.py.
 "src/carve/cli/main.py" = ["B008"]
+# FastAPI's idiomatic pattern is `param: T = Depends(...)` / `= Query(...)` in the
+# path-operation signature. B008 flags the call-in-default; we accept it in the
+# REST routers + dependency helpers where FastAPI drives the signature.
+"src/carve/api/routers/*.py" = ["B008"]
+"src/carve/api/dependencies.py" = ["B008"]
 
 [tool.mypy]
 strict = true

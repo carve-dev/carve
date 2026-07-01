@@ -39,6 +39,9 @@ _SUB_FILES: dict[str, str] = {
     "models": "models.toml",
     "runner": "runner.toml",
     "server": "server.toml",
+    # `[api]` (host/port + `[api.cors]`) — the FastAPI REST server's config,
+    # in its own file like `server.toml`. Optional: absent → ApiConfig defaults.
+    "api": "api.toml",
     # `runtime.toml` carries the `[runtime]` section (its in-file tables are
     # `[archive]` etc., so the full dotted path is `runtime.archive`), mirroring
     # how `connections.toml` carries `[snowflake.<name>]`.

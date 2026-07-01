@@ -6,8 +6,8 @@ Claude-subscription OAuth bearer; precedence is resolved in one place
 active mode (``status``) and mint a subscription OAuth token (``login``, a
 thin wrapper over Claude Code's ``claude setup-token``).
 
-This is *model-provider* auth — distinct from the REST/MCP API token
-(``carve auth token …`` belongs to the rest-api capability).
+This is *model-provider* auth — distinct from the REST/MCP API bearer token,
+which ``carve auth rotate`` mints (writing the plaintext to ``.carve/token``).
 """
 
 from __future__ import annotations
@@ -89,3 +89,45 @@ def login() -> None:
         "[bold]ANTHROPIC_AUTH_TOKEN[/bold] (or CLAUDE_CODE_OAUTH_TOKEN). Leave "
         'auth_mode unset in carve/models.toml to auto-resolve, or set it to "oauth".'
     )
+
+
+@app.command(name="rotate")
+def rotate(
+    project_dir: Path = typer.Option(
+        Path("."),
+        "--project-dir",
+        help="Project root (directory containing carve.toml).",
+    ),
+) -> None:
+    """Mint a fresh REST/MCP API bearer token and write it to ``.carve/token``.
+
+    Prints the plaintext token once — save it. Prior tokens are left valid (revoke
+    them explicitly via ``DELETE /api/v1/tokens/{id}`` if you want them gone).
+    """
+    from carve.api.auth import rotate_token
+    from carve.core.config.paths import ProjectPaths
+    from carve.core.state.database import (
+        create_engine_from_config,
+        create_session_factory,
+        initialize_database,
+    )
+    from carve.core.state.store import StateStore
+
+    root = project_dir.resolve()
+    try:
+        config = load_config(root)
+    except ConfigError as exc:
+        console.print(f"[red]Error:[/red] {exc.message}")
+        raise typer.Exit(code=2) from exc
+
+    engine = create_engine_from_config(config, project_dir=root)
+    try:
+        initialize_database(engine)
+        state_store = StateStore(create_session_factory(engine))
+        token_path = ProjectPaths.from_root(root).scratch_dir / "token"
+        plaintext = rotate_token(state_store, token_path)
+    finally:
+        engine.dispose()
+
+    console.print("[green]✓[/green] Minted a new API token → [bold].carve/token[/bold].")
+    console.print(f"  Token (shown once): [bold]{plaintext}[/bold]")

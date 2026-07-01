@@ -12,8 +12,11 @@ package:
 
 See the init capability spec. This lean first pass covers detection, the
 control-plane `carve.toml` scaffold (simple-mode + separate-component blocks),
-and non-interactive resolution; convention inference, interactive prompts,
-`--migrate-from-targets`, and auth-token bootstrap are deferred (see DELIVERY).
+and non-interactive resolution; convention inference, interactive prompts, and
+`--migrate-from-targets` are deferred (see DELIVERY). The OSS default API-token
+bootstrap is closed by the rest-api capability: `carve init` mints it
+best-effort when the state store is reachable, and `carve serve` mints it
+reliably on startup.
 """
 
 from carve.init.detect import Detection, detect
