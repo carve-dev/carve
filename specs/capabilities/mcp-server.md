@@ -1,6 +1,8 @@
-# MCP server: auto-generated adapter over REST; stdio + WebSocket transports
+# MCP server: auto-generated adapter over REST; stdio + Streamable HTTP transports
 
 > Ships Carve's MCP server as a thin adapter over the REST API from spec 09. Per [PRD §6.13 interfaces](../PRD.md), and [ARCHITECTURE §8.3 MCP server](../ARCHITECTURE.md). Implements the consumer side of [positioning #13 headless by default](../_strategy/2026-05-positioning.md) — every CLI action is reachable from Claude Desktop, Cursor, Claude Code, or any other MCP client.
+
+> **Updated during implementation (2026-07-01):** Built on the **official `mcp` Python SDK** (`mcp>=1.28,<2`; the SDK owns JSON-RPC 2.0 framing, the `initialize`/capability handshake, and the transports via the low-level `mcp.server.lowlevel.Server`). Carve writes only the two logic modules the design always intended — `tool_generator.py` (OpenAPI→tools) and `adapter.py` (tool call→REST); the design's core bet (auto-generated translation, adapter is the only REST-talking code) is fully honored. The remote transport is **Streamable HTTP** (`--transport http`), not raw WebSocket — MCP deprecated HTTP+SSE for Streamable HTTP (2025-03-26) and never adopted WebSocket, and the SDK ships no WebSocket server; `--transport ws` is kept as a **deprecated alias → `http`** so the originally-documented flag doesn't hard-break. See §Transports.
 
 ## Status
 
@@ -36,12 +38,16 @@ After this spec lands, a user who installs Carve and runs `claude` (or opens Cla
 
 Carve implements the standard Anthropic MCP (Model Context Protocol) over JSON-RPC 2.0. The messages exchanged are:
 
+> **Updated during implementation (2026-07-01):** These messages are **owned by the `mcp` SDK**, not hand-rolled — Carve registers two async handlers on `mcp.server.lowlevel.Server` (`@server.list_tools()` → the generator, `@server.call_tool()` → the adapter) and the SDK drives `initialize`, capability negotiation, and JSON-RPC framing. The **protocol version is SDK-negotiated** (`mcp.types.LATEST_PROTOCOL_VERSION`; the shipped SDK 1.28.x implements `2025-11-25`) — see §Open questions. `call_tool` returns an SDK `CallToolResult`: `content=[TextContent(json)]` plus `structuredContent` when the REST payload is a JSON object; a REST 4xx/5xx (or an unreachable API) becomes `isError=True` (a recoverable tool error the model can act on), not a protocol fault.
+
 - **`initialize`** (client → server): client announces protocol version + capabilities; server responds with its protocol version + capabilities (we declare `tools` capability; not `resources`, `prompts`, or `sampling` initially)
 - **`tools/list`** (client → server): client asks for the tool catalog; server returns the auto-generated list (one entry per REST endpoint)
 - **`tools/call`** (client → server): client invokes a tool; server adapts to REST; response is the tool result
-- **`notifications/*`** (server → client, optional): server-pushed events for long-running operations; Carve doesn't use these for tool calls (responses are synchronous), but the WebSocket transport keeps the channel open for future use
+- **`notifications/*`** (server → client, optional): server-pushed events for long-running operations; Carve doesn't use these for tool calls (responses are synchronous), but the Streamable HTTP transport keeps the channel open for future use
 
 ### Tool generation
+
+> **Updated during implementation (2026-07-01):** The generator emits SDK **`mcp.types.Tool(name=, description=, inputSchema=)`** (not a Carve `MCPTool` type — `MCPTool` is re-exported from `__init__.py` as an alias of `mcp.types.Tool` for convenience). Internally it resolves each path/method into a shared frozen `Operation` (name + param locations + merged input schema) via `iter_operations()`, which **both** the tool list and the adapter's routing table build from — so the catalog and the dispatch table can never drift. Tools are generated from the **live** `/api/openapi.json`, so the naming table below is **aspirational**: `plan_refine`, `ask`, and `deploy_pipeline` have no REST route yet and simply produce no tool (graceful skew) until those routes land. Today 51 tools generate.
 
 `src/carve/mcp/tool_generator.py`:
 
@@ -90,6 +96,8 @@ Input schema derivation:
 
 ### Adapter
 
+> **Updated during implementation (2026-07-01):** Shipped as sketched (the only REST-talking code; pure translation). Two refinements: (1) it also maps httpx transport failures (connection refused / DNS / timeout — e.g. `carve serve` not running) to a structured `transport-error` `MCPToolError` rather than an unhandled exception; (2) the `MCPToolError` → MCP result shaping (`CallToolResult(isError=True, structuredContent=problem+json)`) happens in `server.py`'s `call_tool` handler, not by raising into the SDK. Errors are converted from RFC 9457 problem+json (`type`→code, `detail`/`title`→message, full body→`structuredContent`).
+
 `src/carve/mcp/adapter.py`:
 
 ```python
@@ -126,6 +134,8 @@ The adapter is the *only* place that talks to the REST API. All other MCP server
 
 When the MCP server starts (via `carve mcp-serve`), it needs a bearer token. Resolution order:
 
+> **Updated during implementation (2026-07-01):** Resolution order shipped exactly as below (`resolve_token(cli_token, *, token_path)`; the file path resolves to `ProjectPaths.from_root(cwd).scratch_dir / "token"`, i.e. `.carve/token`). The friendly error wording is: "No Carve API token found. Set CARVE_API_TOKEN, pass --token, or run `carve auth login` / `carve auth rotate` to mint one (written to .carve/token)." The token value is never logged.
+
 1. `--token <token>` CLI flag (highest priority)
 2. `CARVE_API_TOKEN` env var
 3. `.carve/token` file (the default OSS token from spec 05)
@@ -149,40 +159,43 @@ For Claude Desktop / Cursor / Claude Code integration, the user's MCP server con
 
 ### Transports
 
+> **Updated during implementation (2026-07-01):** Both transports come from the SDK — there is **no `src/carve/mcp/transports/` package** and no hand-rolled framing. The remote transport is **Streamable HTTP**, not raw WebSocket (MCP deprecated HTTP+SSE for Streamable HTTP on 2025-03-26 and never adopted WebSocket; the SDK ships no WebSocket server). `--transport ws` is a deprecated alias → `http`. The `server.py` entrypoints are `run_stdio(server)` and `run_http(server, host, port, *, token, log_level)`.
+
 #### stdio (default)
 
-`src/carve/mcp/transports/stdio.py`:
+The SDK's `mcp.server.stdio.stdio_server()` context manager yields the `(read_stream, write_stream)` pair passed to `server.run(...)`:
 
-- Read JSON-RPC messages from stdin (one per line, or framed per MCP convention — TBD by MCP spec)
-- Write responses to stdout
-- All logging goes to stderr (so it doesn't corrupt the JSON-RPC stream)
+- Framing is handled entirely by the SDK
+- All logging goes to stderr (so it doesn't corrupt the JSON-RPC stream) — `carve mcp-serve` calls `logging.basicConfig(stream=sys.stderr, force=True)` and routes every human/diagnostic write to stderr; a stdio e2e test asserts stdout carried only JSON-RPC
 
 The stdio transport is what Claude Desktop spawns: it runs `carve mcp-serve` as a subprocess and communicates over the pipes. This is the default because it's the most common deployment shape.
 
-#### WebSocket
+#### Streamable HTTP (`--transport http`)
 
-`src/carve/mcp/transports/websocket.py`:
+The SDK's `StreamableHTTPSessionManager` mounted on a Starlette/uvicorn ASGI app at path `/mcp`:
 
-- `carve mcp-serve --transport ws --port 8766`
-- Listens for WebSocket connections; each connection is one MCP session
+- `carve mcp-serve --transport http --port 8766` serves at `http://<host>:<port>/mcp`
 - Useful for remote agents (a server-side Carve install that an external agent talks to) or for local testing where stdio is awkward
 - Default bind: `127.0.0.1:8766` with a warning on `0.0.0.0`
+- **Auth model (this endpoint is authenticated).** Unlike stdio — an OS-pipe subprocess spawned by the trusted client — the http transport is a network endpoint, so it adds two controls a security review required: **(a) DNS-rebinding / Host+Origin protection** (SDK `TransportSecuritySettings`, on by default, allow-listing the bound host + loopback names — a rebinding browser page presents an off-list `Host`/`Origin` and is rejected); **(b) a bearer requirement on `/mcp`** — a `_BearerAuthMiddleware` requires `Authorization: Bearer <token>` equal to the configured token, compared in constant time (`hmac.compare_digest`), so the http proxy is no weaker than the REST API it fronts. The token is never logged or echoed. `--transport ws` maps here after a one-line stderr deprecation notice.
 
 ### `carve mcp-serve` CLI
+
+> **Updated during implementation (2026-07-01):** `--transport` choices are `{stdio, http}` (default `stdio`); `ws` is accepted as a deprecated alias → `http` (one-line stderr notice). `--port`/`--host` apply to the http transport (ignored for stdio). The command name is `mcp-serve` (singular) and must not collide with the shipped `carve mcp-servers` (plural) consume-side group.
 
 ```
 carve mcp-serve [OPTIONS]
 
 OPTIONS:
-  --transport [stdio|ws]   Transport (default: stdio)
-  --port INTEGER           Port for WebSocket (default: 8766; ignored for stdio)
-  --host TEXT              Host for WebSocket (default: 127.0.0.1)
+  --transport [stdio|http] Transport (default: stdio; 'ws' is a deprecated alias for 'http')
+  --port INTEGER           Port for the http transport (default: 8766; ignored for stdio)
+  --host TEXT              Host for the http transport (default: 127.0.0.1; warns on 0.0.0.0)
   --server-url TEXT        Carve REST API base URL (default: http://127.0.0.1:8765)
   --token TEXT             Override token (default: discovered per auth.py)
   --log-level TEXT         Log level (default: WARNING; INFO/DEBUG useful for setup debugging)
 ```
 
-For stdio mode, the command runs until stdin closes (the subprocess parent exited). For WebSocket mode, it runs until SIGTERM.
+For stdio mode, the command runs until stdin closes (the subprocess parent exited). For http mode, it runs until SIGTERM.
 
 ### Tool listing on first connect
 
@@ -196,11 +209,15 @@ Schema fetch is cached for the lifetime of the MCP session — the OpenAPI schem
 
 ### Coverage
 
+> **Updated during implementation (2026-07-01):** The generator is driven by the **live** `app.openapi()` — one tool per non-streaming operation (**51 today**). A REST endpoint absent from the live schema simply produces no tool (graceful skew, correct by construction). The coverage test extends rest-api's parity mechanism to the MCP surface by rendering the app offline (`create_app(MagicMock(), Config(...))`, no Postgres) and asserting the tool count equals the non-streaming operation count.
+
 Every non-streaming REST endpoint becomes an MCP tool. Streaming endpoints (`GET /api/v1/runs/{id}/stream`) are excluded because MCP `tool_use`/`tool_result` is synchronous. Clients that want live streaming connect to the WebSocket/SSE endpoint directly via the REST API, not through MCP.
 
 The CLI-REST parity test from spec 09 is extended here: every REST endpoint also has a corresponding MCP tool. The full-coverage integration test fails CI if a REST endpoint exists without a generated MCP tool.
 
 ### Hosted alternative
+
+> **Updated during implementation (2026-07-01):** OSS ships **stdio + Streamable HTTP** here (not WebSocket). The hosted managed endpoint remains a hosted-side concern and reuses the adapter + tool generator unmodified.
 
 Per ARCHITECTURE §8.3, the hosted product offers a managed MCP endpoint at `wss://<tenant>.carve.dev/mcp` so agents don't need to spawn a local subprocess. That's a hosted-side concern; the OSS spec just ships the stdio + WebSocket transports here. Hosted reuses the adapter and tool generator without modification.
 
@@ -225,12 +242,14 @@ Per ARCHITECTURE §8.3, the hosted product offers a managed MCP endpoint at `wss
 
 ## Tests
 
+> **Updated during implementation (2026-07-01):** Protocol conformance round-trips against the SDK's own in-memory session (not a hand-rolled JSON-RPC parser). The "WebSocket e2e" bullet is realized as a **Streamable-HTTP e2e** (`--transport http`) via the SDK's `streamable_http_client` — stdio carries the thorough coverage; http gets one happy path plus a bearer-required (missing/wrong → 401) assertion.
+
 - **Unit (tool generation):** representative OpenAPI fragments produce expected MCP tool definitions; naming convention matches the table above
 - **Unit (adapter):** `tool_use` with path params + query params + body produces the right HTTP request
 - **Unit (adapter errors):** REST `problem+json` 4xx/5xx convert to structured MCP tool errors
-- **Unit (protocol conformance):** `initialize`/`tools/list`/`tools/call` messages parse and round-trip per the MCP spec
-- **Integration (stdio e2e):** spawn `carve mcp-serve` as a subprocess in a fixture; send `initialize` over stdin; receive expected response on stdout; send `tools/call` for `plans_list`; receive expected JSON-RPC response; close stdin; verify subprocess exits cleanly
-- **Integration (WebSocket e2e):** start `carve mcp-serve --transport ws --port <random>`; connect via `websockets`; exercise the same flow as stdio
+- **Unit (protocol conformance):** `initialize`/`tools/list`/`tools/call` messages parse and round-trip per the MCP spec (via the SDK's in-memory session objects)
+- **Integration (stdio e2e):** spawn `carve mcp-serve` as a subprocess in a fixture; send `initialize` over stdin; receive expected response on stdout; send `tools/call` for `plans_list`; receive expected JSON-RPC response; close stdin; verify subprocess exits cleanly (asserting stdout carried only JSON-RPC)
+- **Integration (Streamable-HTTP e2e):** start `carve mcp-serve --transport http --port <random>`; connect via the SDK's Streamable HTTP client; exercise the same `initialize`/`tools/list`/`tools/call` flow as stdio; a companion assertion covers the bearer requirement on `/mcp` (missing/wrong token → 401)
 - **Integration (full coverage):** every endpoint in `/api/openapi.json` appears as an MCP tool (modulo streaming endpoints); test fails CI if a new REST endpoint is added without MCP coverage
 - **Integration (auth):** missing `CARVE_API_TOKEN` → server exits with clear error message; invalid token → REST 401 surfaces as a structured MCP tool error
 - **Integration (registration walkthrough):** the Claude Desktop / Cursor / Claude Code config snippets in the docs actually work against a freshly-installed Carve
@@ -241,6 +260,7 @@ Per ARCHITECTURE §8.3, the hosted product offers a managed MCP endpoint at `wss
 - Every non-streaming REST endpoint is callable as an MCP tool
 - Tool schemas mirror the corresponding REST request schemas
 - An external agent driving Carve over MCP can complete the full plan → build → run → deploy loop without ever touching the CLI
+  > **Updated during implementation (2026-07-01):** The `plan → build → run` (+`resume`) legs are reachable now (the REST write surface shipped, PR #68, so their tools auto-generate). The **`deploy` leg is gated**, not a defect: there is no `POST /api/v1/deploys` until the [deploy](./deploy.md) capability ships, so no `deploy_pipeline` tool generates. It will auto-generate the moment that route lands.
 - The adapter never has business logic — all Carve behavior happens via REST; the MCP layer is purely translation
 - Token discovery follows the documented resolution order; failures produce friendly error messages
 - The full-coverage parity test passes (every REST endpoint has an MCP tool; CI catches regressions)
@@ -252,12 +272,15 @@ Per ARCHITECTURE §8.3, the hosted product offers a managed MCP endpoint at `wss
 - **Why is the MCP server a separate process (`carve mcp-serve`) rather than baked into `carve serve`?** Because stdio MCP servers are spawned by their client (Claude Desktop, Cursor) on demand — they're not long-running services. The user's chat tool starts the process when they open a chat session and kills it when they close it. WebSocket mode is the long-running variant for users who want a persistent endpoint.
 - **Why stdio as the default transport?** Because the dominant MCP clients (Claude Desktop, Cursor, Claude Code) spawn MCP servers as subprocesses by default. WebSocket is for advanced cases (remote MCP servers, programmatic clients). Defaulting to the common case keeps the docs simple.
 - **Why doesn't the MCP server have its own auth/identity model?** Because identity is already established by the bearer token. The MCP server is conceptually a client of the REST API on behalf of whichever user owns the token. RBAC, scopes, audit log — all happen on the REST side. The MCP server adds nothing.
+  > **Updated during implementation (2026-07-01):** This holds for **stdio** — an OS-pipe subprocess spawned by the trusted local client. The **http** transport is a network endpoint, so it is not left unauthenticated: it adds DNS-rebinding/Host+Origin protection (on by default) **and** requires the configured bearer on `/mcp` (constant-time compare), so the http proxy is no weaker than the REST API it fronts. Identity/RBAC still live on the REST side; these two controls only stop the http endpoint from being an open, weaker door. (A security review flagged the original "adds nothing" as the initial http build shipped an unauthenticated proxy — the MAJOR fix in the one review iteration.)
 - **Why exclude streaming endpoints from the MCP tool surface rather than build a streaming-tool abstraction?** Because MCP `tool_use` is synchronous request/response. Streaming over MCP requires the `notifications/*` channel, which most clients don't yet expose well. Users who want streaming connect directly to the REST WebSocket — this is rare in practice for agent-driven workflows (agents typically poll status rather than subscribe to streams).
 - **Why per-session schema cache rather than per-call?** Because the OpenAPI schema changes only between Carve releases; refetching it on every tool call would be wasteful. Per-session cache is the right granularity — a long-running WebSocket session might span hours, but a Carve release in the middle of it is rare enough that "restart the MCP session after upgrading Carve" is acceptable.
 
 ## Open questions
 
-- **MCP protocol version pinning.** *Implementation default.* Pin to the latest stable MCP spec version at the time of `/build-spec` execution; declare it in the `initialize` response. Upgrade when the MCP spec releases a new version with non-breaking improvements.
+- **MCP protocol version pinning.** *Implementation default.* ~~Pin to the latest stable MCP spec version at the time of `/build-spec` execution; declare it in the `initialize` response. Upgrade when the MCP spec releases a new version with non-breaking improvements.~~
+  > **Resolved during implementation (2026-07-01):** Do **not** hard-code the version string. The SDK owns negotiation — it declares the revision it implements via `mcp.types.LATEST_PROTOCOL_VERSION` and negotiates down for older clients. The shipped SDK (1.28.x) implements `2025-11-25`. An SDK bump tracks the spec automatically.
 - **Tool description quality.** *Implementation default.* The auto-generator uses the OpenAPI `description` field as the MCP tool description. The REST routers in spec 09 should write clear endpoint descriptions in their FastAPI route definitions; spec 09's reviewers should pay attention to description quality since it becomes LLM-visible context here.
 - **Handling Carve version skew between MCP server and REST server.** *Implementation default.* MCP server fetches OpenAPI from REST; if schemas reflect different endpoints, the tool catalog reflects the REST side. If the MCP server is older than the REST API, new endpoints simply won't have tools — graceful degradation. If the MCP server is newer than REST, the test for "every REST endpoint has a tool" still passes because we're driven by what's in the REST OpenAPI. Both directions degrade safely.
+  > **Resolved during implementation (2026-07-01):** As designed — the generator and the coverage test are both driven by the same live `app.openapi()`, so skew degrades gracefully by construction (a missing REST route simply yields no tool; the parity test never fails on a correctly-absent endpoint like `deploy`/`refine`/`ask`).
 - **Whether to support MCP `resources` capability for read-only resources like `pipelines/<name>.toml` contents.** *Implementation default.* No for now; `tools/call` to `pipeline_show` returns the same content. Resources are a slightly different abstraction (LLM-discoverable, statically addressable) and aren't load-bearing for the initial use cases. Revisit if a client's UX would meaningfully improve with `resources` exposure.

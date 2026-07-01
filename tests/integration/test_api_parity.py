@@ -84,6 +84,7 @@ COMMAND_TO_TAG: dict[str, str] = {
 EXEMPTIONS: dict[str, str] = {
     "init": "local project scaffolding; runs before the server/DB exist",
     "serve": "the process that launches this API server itself",
+    "mcp-serve": "MCP server process; an auto-generated adapter *over* this REST API",
     "worker": "process launcher; live worker state is exposed via /api/v1/workers",
     "version": "build metadata; exposed via the OpenAPI info.version field",
     "connect": "local execution-engine install + connection validation (interactive setup)",

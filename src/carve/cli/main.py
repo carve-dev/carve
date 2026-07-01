@@ -13,6 +13,7 @@ from carve.cli.commands import (
     deploy,
     init,
     logs,
+    mcp_serve,
     mcp_servers,
     pipelines,
     plan,
@@ -97,6 +98,7 @@ app.command(name="deploy")(deploy.command)
 app.command(name="runs")(runs.command)
 app.command(name="logs")(logs.command)
 app.command(name="serve")(serve.command)
+app.command(name="mcp-serve")(mcp_serve.command)
 app.command(name="worker")(worker.command)
 app.command(name="version")(version.command)
 app.add_typer(auth_app, name="auth")

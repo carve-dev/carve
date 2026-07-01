@@ -81,25 +81,23 @@ def plan_create(
     config: Config = Depends(get_config),
     paths: ProjectPaths = Depends(get_project_paths),
 ) -> PlanCreatedOut:
-    """Generate a plan for ``goal`` (``carve plan``), synchronously.
+    """Generate a plan for ``goal`` (``carve plan``).
 
-    A **sync** handler (like every read handler) so Starlette offloads it to the
-    anyio threadpool — ``generate_plan`` runs an agent loop (``max_turns=30``) and
-    can take minutes. **Threadpool-occupancy constraint:** each in-flight plan
-    holds one worker thread for the agent-run's duration; concurrency is bounded
-    by the threadpool (fine for single-user OSS; a hosted throughput concern would
-    be the spec-first generic agent-run job queue, deliberately not built here).
-    Because these sync agent-run handlers share the one bounded AnyIO threadpool
-    with **every** other sync handler, a burst of concurrent plan/builds can starve
-    ordinary read handlers; a bounded-concurrency limiter is deferred hosted work.
-    (``/healthz`` is ``async`` so liveness stays off this threadpool.)
-    Not domain-idempotent — every call mints a plan and spends tokens; an
-    ``Idempotency-Key`` is the only client-retry dedup. **Known bounded gap:**
-    ``IdempotencyMiddleware`` caches on *completion*, so a retry that arrives
-    mid-flight (before the first plan finishes) finds no cache entry and can fire a
-    second agent run — inherent to cache-on-completion over long sync ops; a true
-    mid-flight reservation is out of scope here.
+    Runs synchronously and can take minutes (it drives an agent loop), returning
+    the created plan. Not idempotent — every call mints a new plan and spends
+    model tokens; pass an ``Idempotency-Key`` header to dedupe client retries.
     """
+    # Implementation notes (kept out of the OpenAPI/MCP-visible docstring above):
+    #  * A *sync* handler (like every read handler) so Starlette offloads it to the
+    #    anyio threadpool — ``generate_plan`` runs an agent loop (``max_turns=30``).
+    #    Each in-flight plan holds one worker thread for the run's duration;
+    #    concurrency is bounded by the shared AnyIO threadpool (fine for single-user
+    #    OSS). A burst of concurrent plan/builds can starve ordinary read handlers;
+    #    a bounded-concurrency limiter / generic agent-run job queue is deferred
+    #    hosted work. (``/healthz`` is ``async`` so liveness stays off this pool.)
+    #  * Idempotency gap: ``IdempotencyMiddleware`` caches on *completion*, so a
+    #    retry arriving mid-flight finds no cache entry and can fire a second agent
+    #    run — inherent to cache-on-completion over long sync ops.
     # Local import: keep the heavy orchestrator/agent stack off the module-import
     # path (imported per request, like serve.py's create_app import).
     from carve.cli.orchestrator.planner import generate_plan

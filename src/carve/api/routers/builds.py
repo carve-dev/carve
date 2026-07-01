@@ -71,21 +71,23 @@ def build_run(
     config: Config = Depends(get_config),
     paths: ProjectPaths = Depends(get_project_paths),
 ) -> BuildResultOut:
-    """Build the pipeline described by ``plan_id`` (``carve build``), synchronously.
+    """Build the pipeline described by ``plan_id`` (``carve build``).
 
-    A **sync** handler so Starlette offloads it to the anyio threadpool —
-    ``build_plan`` runs an agent loop and can take minutes. **Threadpool-occupancy
-    constraint:** each in-flight build holds one worker thread for the run's
-    duration, and these sync agent-run handlers share the one bounded AnyIO
-    threadpool with all other sync handlers — a burst of concurrent plan/builds can
-    starve ordinary read handlers (a bounded-concurrency limiter is deferred hosted
-    work; ``/healthz`` is ``async`` so liveness stays off this threadpool).
-    ``ConfigDriftError`` → 409 (the plan drifted from current config;
-    ``force`` cannot bypass it). Domain-idempotent for an already-built plan
-    against unchanged config (returns the existing build, no agent run). **Known
-    bounded gap:** ``IdempotencyMiddleware`` caches on completion, so a client
-    retry mid-build (before the first commits) can fire a second agent run.
+    Runs synchronously and can take minutes (it drives an agent loop), returning
+    the build result. Returns 409 if the plan has drifted from current config
+    (``force`` cannot bypass drift), 404 if the plan is unknown. Idempotent for an
+    already-built plan against unchanged config (returns the existing build without
+    a new agent run); pass an ``Idempotency-Key`` header to dedupe client retries.
     """
+    # Implementation notes (kept out of the OpenAPI/MCP-visible docstring above):
+    #  * A *sync* handler so Starlette offloads it to the anyio threadpool —
+    #    ``build_plan`` runs an agent loop. Each in-flight build holds one worker
+    #    thread for the run's duration, sharing the one bounded AnyIO threadpool
+    #    with all other sync handlers; a burst of concurrent plan/builds can starve
+    #    ordinary read handlers (a bounded-concurrency limiter is deferred hosted
+    #    work; ``/healthz`` is ``async`` so liveness stays off this pool).
+    #  * Idempotency gap: ``IdempotencyMiddleware`` caches on completion, so a
+    #    client retry mid-build (before the first commits) can fire a second run.
     # Plan-not-found → 404 pre-check (build_plan raises BuildError → 400 for both
     # missing-plan and wrong-phase; narrow the missing-plan case here).
     if state_store.repository.get_plan(body.plan_id) is None:
