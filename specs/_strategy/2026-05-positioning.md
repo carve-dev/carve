@@ -148,6 +148,7 @@ The runtime moves up because it's the paid wedge — we can't ship the hosted pr
 - **Migration from M1's existing SQLite state store.** The walking skeleton (already shipped) uses SQLite. New direction is Postgres. Cleanest path is probably "wipe and start over with Postgres" since nothing is released yet, but worth confirming.
 - **Static-HTML UI implementation detail**: pure file regeneration, or a tiny read-only HTTP server that reads from the state store? Probably pure file regen for simplicity (`carve docs serve` to view), but a 50-line FastAPI app reading SQLite isn't much harder. Decide at implementation time.
 - **How the worker interacts with `carve run <pipeline>` invoked manually while the scheduler is also running.** Does the manual invocation jump the queue, queue normally, or run out-of-band of the worker entirely? Probably "queue normally and surface running state in CLI" is right, but worth confirming.
+- **Hosted UX *through* the AI client (live MCP App).** Whether the hosted product's operational UX is delivered primarily as a live, resumable MCP App rendered inside Claude/ChatGPT (extending #13), rather than a standalone cloud UI. Parked option with research + a decision-gating spike — revisit when hosted-product work begins. See [`2026-06-hosted-ui-in-ai-client.md`](./2026-06-hosted-ui-in-ai-client.md).
 
 ## Next step
 
