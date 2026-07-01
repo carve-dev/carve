@@ -132,10 +132,14 @@ def test_alembic_upgrade_head_on_empty_postgres(
         build_indexes = {ix["name"] for ix in inspector.get_indexes("builds")}
         assert "ix_builds_pipeline_target_created_at" in build_indexes
 
+        # The 0013 worker-placement column landed on jobs.
+        job_cols = {c["name"] for c in inspector.get_columns("jobs")}
+        assert "required_label" in job_cols
+
         # Alembic version row stamps at head.
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head_rev == "0012_observability_telemetry"
+        assert head_rev == "0013_runtime_worker_placement"
     finally:
         engine.dispose()
 
@@ -1106,5 +1110,72 @@ def test_0012_downgrade_drops_agent_telemetry_tables(
         with engine.connect() as conn:
             head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert head_rev == "0011_runtime_archive"
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 0013_runtime_worker_placement
+# ---------------------------------------------------------------------------
+
+
+def test_0013_adds_jobs_required_label_column(
+    postgres_state_store_url: str,
+) -> None:
+    """After head: ``jobs`` + ``jobs_archive`` carry ``required_label``, no new index."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+
+        inspector = inspect(engine)
+        job_cols = {c["name"]: c for c in inspector.get_columns("jobs")}
+        assert "required_label" in job_cols
+        assert job_cols["required_label"]["nullable"] is True
+
+        # The archive clone MUST carry the same column — the archiver does
+        # ``INSERT INTO jobs_archive SELECT * FROM jobs``, so a column added to
+        # ``jobs`` alone would break every jobs archive batch. This asserts the
+        # archive-parity invariant loudly (a future column add that forgets the
+        # clone fails here, not silently at archive time).
+        archive_cols = {c["name"] for c in inspector.get_columns("jobs_archive")}
+        assert "required_label" in archive_cols
+
+        # Deliberately NO new index — the existing partial claim index bounds the
+        # scan. Assert the column did not silently acquire one.
+        job_indexes = {ix["name"] for ix in inspector.get_indexes("jobs")}
+        assert not any("required_label" in name for name in job_indexes)
+    finally:
+        engine.dispose()
+
+
+def test_0013_downgrade_drops_required_label(
+    postgres_state_store_url: str,
+) -> None:
+    """Downgrading 0013 -> 0012 drops ``jobs.required_label``, restoring 0012's schema."""
+    config = _make_config(postgres_state_store_url)
+    engine = create_engine_from_config(config)
+    try:
+        initialize_database(engine)
+        assert "required_label" in {c["name"] for c in inspect(engine).get_columns("jobs")}
+
+        cfg = _alembic_config(engine)
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            alembic_command.downgrade(cfg, "0012_observability_telemetry")
+
+        # The column is dropped from BOTH the active table and its archive clone.
+        assert "required_label" not in {c["name"] for c in inspect(engine).get_columns("jobs")}
+        assert "required_label" not in {
+            c["name"] for c in inspect(engine).get_columns("jobs_archive")
+        }
+        # The rest of the jobs table (and 0012's tables) are intact.
+        assert {"jobs", "workers", "step_runs", "agents"}.issubset(
+            set(inspect(engine).get_table_names())
+        )
+
+        with engine.connect() as conn:
+            head_rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert head_rev == "0012_observability_telemetry"
     finally:
         engine.dispose()

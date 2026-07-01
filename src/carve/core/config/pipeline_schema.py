@@ -78,6 +78,18 @@ class PipelineError(Exception):
         return self._render()
 
 
+class ConflictingWorkerLabelsError(PipelineError):
+    """Raised when a pipeline's steps require ≥2 distinct worker labels.
+
+    One job = one whole-DAG run on **one** worker, so a pipeline whose
+    referenced components carry different ``worker_label``s cannot be
+    placed on any single worker. A subclass of :class:`PipelineError` so
+    :func:`load_pipeline` rejects it at author time with the loader's
+    consistent error shape, and so the scheduler's enqueue resolver can
+    catch the specific type without matching every pipeline failure.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Metadata / schedule seed / failure mode
 # ---------------------------------------------------------------------------
@@ -253,8 +265,69 @@ def load_pipeline(
     _validate_no_cycles(pipeline, path)
     _validate_cron(pipeline, path)
     _validate_components_resolve(pipeline, path, components=components, paths=paths)
+    _validate_worker_labels(pipeline, path, components=components)
 
     return pipeline
+
+
+def resolve_required_label(
+    pipeline: Pipeline,
+    components: dict[str, ComponentConfig],
+) -> str | None:
+    """Reduce a pipeline's referenced components' ``worker_label``s to one label.
+
+    Placement is **per-pipeline-run**: a job is one whole-DAG run on one
+    worker, so a job's ``required_label`` is the *single* label its steps'
+    components all agree on. This pure helper is the single source of that
+    reduction — called from both :func:`load_pipeline` (author-time reject)
+    and the scheduler's enqueue resolver (stamp-time read), so the two can
+    never disagree.
+
+    The reduction over the non-``None`` labels of every dlt/dbt step that
+    names a component:
+
+    * **0** labeled components → ``None`` (runs anywhere — the flat pool).
+    * **exactly 1** distinct label → that label.
+    * **≥ 2** distinct labels → :class:`ConflictingWorkerLabelsError` (the
+      pipeline can't be placed on one worker).
+
+    ``worker_label`` lives only on :class:`ComponentConfig` today, so the
+    mechanism is **general** (it serves ``dlt``/``dbt``/``sql`` alike — a
+    label on *any* referenced component counts) even though the config
+    source is component-scoped. Fenced follow-ups (deliberately not read
+    here): a step-level ``worker_label`` (the ``extra="forbid"`` step
+    models), a label on a ``sql`` step (it references no component), and a
+    label on a dlt/sql component config (the field is on the shared
+    ``ComponentConfig`` only). A component-less dbt step (single detected
+    project, no ``ComponentConfig`` entry) contributes no label.
+    """
+    labels: set[str] = set()
+    for step in pipeline.steps:
+        if isinstance(step, SqlStepConfig):
+            # A sql step references no component — no label to source (fenced).
+            continue
+        # dlt (component required) / dbt (component optional).
+        component_name = step.component
+        if component_name is None:
+            continue
+        component = components.get(component_name)
+        if component is None or component.worker_label is None:
+            # Convention-resolved component (no ``ComponentConfig`` entry) or an
+            # unlabeled one contributes no label — general to dlt/dbt/sql.
+            continue
+        labels.add(component.worker_label)
+
+    if not labels:
+        return None
+    if len(labels) == 1:
+        return next(iter(labels))
+    raise ConflictingWorkerLabelsError(
+        f"Pipeline {pipeline.name!r} steps require different worker labels "
+        f"{sorted(labels)}; a pipeline runs on one worker, so it cannot be placed.",
+        field="steps.*.component.worker_label",
+        hint="Give the conflicting components a single shared `worker_label`, or "
+        "split the pipeline so each label's steps run in their own pipeline.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +552,30 @@ def _validate_components_resolve(
             )
 
 
+def _validate_worker_labels(
+    pipeline: Pipeline,
+    path: Path,
+    *,
+    components: dict[str, ComponentConfig],
+) -> None:
+    """Reject a pipeline whose components require ≥2 distinct worker labels.
+
+    Delegates the reduction to :func:`resolve_required_label` (the same helper
+    the scheduler's enqueue resolver calls, so author-time and stamp-time never
+    disagree) and re-raises its typed :class:`ConflictingWorkerLabelsError` with
+    the file attached — an actionable author-time error, the same shape
+    :func:`_validate_components_resolve` produces.
+    """
+    try:
+        resolve_required_label(pipeline, components)
+    except ConflictingWorkerLabelsError as exc:
+        raise ConflictingWorkerLabelsError(
+            exc.message, file=path, field=exc.field, hint=exc.hint
+        ) from exc
+
+
 __all__ = [
+    "ConflictingWorkerLabelsError",
     "DbtStepConfig",
     "DltStepConfig",
     "FailureMode",
@@ -490,4 +586,5 @@ __all__ = [
     "SeedSchedule",
     "SqlStepConfig",
     "load_pipeline",
+    "resolve_required_label",
 ]

@@ -71,6 +71,12 @@ def command(
         "--poll-interval",
         help="Seconds to wait between polls when the queue is empty (loop mode).",
     ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Advertise a worker-placement label. This worker then claims matching "
+        "labeled jobs plus unlabeled ones; unset, it claims only unlabeled jobs.",
+    ),
 ) -> None:
     """Run a worker (or a pool of workers) that drains the job queue."""
     if workers < 1:
@@ -115,6 +121,7 @@ def command(
         connections=config.connections,
         dbt_executable=_DEFAULT_DBT_EXECUTABLE,
         worker_id=make_worker_id(),
+        label=label,
         emitter=emitter,
         on_run_failed=on_run_failed,
     )

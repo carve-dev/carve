@@ -100,6 +100,8 @@ async def run_worker_pool(
     tasks: list[asyncio.Task[None]] = [
         asyncio.create_task(
             worker_loop(
+                # ``replace`` copies every other field, so each task inherits the
+                # pool's placement ``label`` (and emitter/hook) unchanged.
                 replace(ctx, worker_id=f"{base}:task{i}"),
                 poll_interval_s=poll_interval_s,
                 shutdown=shutdown,

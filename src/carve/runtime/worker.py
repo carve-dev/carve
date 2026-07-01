@@ -98,6 +98,12 @@ class WorkerContext:
     dbt_executable: str
     components: dict[str, ComponentConfig] | None = None
     worker_id: str = ""
+    # The worker-placement label this worker advertises (``carve worker
+    # --label``). Threaded into ``claim_next(worker_label=...)`` — a labeled
+    # worker claims matching + unlabeled jobs; an unlabeled worker (``None``, the
+    # default) claims only unlabeled jobs — and into ``register_worker(label=...)``
+    # so the ``workers`` row records it. ``None`` = the flat any-worker pool.
+    label: str | None = None
     # Injectable for tests: a registry wired with fake dlt/dbt/sql seams so the
     # worker runs end-to-end creds-free. ``None`` -> the real builder.
     registry_factory: RegistryFactory | None = None
@@ -150,7 +156,7 @@ async def run_once(ctx: WorkerContext) -> bool:
     deferred to a later slice, so an orphan would block the pipeline forever.
     """
     worker_id = ctx.worker_id or make_worker_id()
-    job = await asyncio.to_thread(ctx.job_queue.claim_next, worker_id)
+    job = await asyncio.to_thread(ctx.job_queue.claim_next, worker_id, worker_label=ctx.label)
     if job is None:
         return False
 
@@ -460,6 +466,7 @@ async def worker_loop(
         worker_id,
         host=socket.gethostname(),
         pid=os.getpid(),
+        label=ctx.label,
     )
     try:
         while not shutdown.is_set():
@@ -493,6 +500,9 @@ def _with_worker_id(ctx: WorkerContext, worker_id: str) -> WorkerContext:
         dbt_executable=ctx.dbt_executable,
         components=ctx.components,
         worker_id=worker_id,
+        # Load-bearing: this manual field-by-field rebuild must copy ``label`` or
+        # the loop's id-rebind silently drops the worker's placement label.
+        label=ctx.label,
         registry_factory=ctx.registry_factory,
         clock=ctx.clock,
         emitter=ctx.emitter,
