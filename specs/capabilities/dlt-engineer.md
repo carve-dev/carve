@@ -168,6 +168,8 @@ For all four strategies the agent writes:
 - `.dlt/config.toml.template` — additive merge with new entries for this pipeline's destination + source config
 - `.dlt/secrets.toml.template` — additive merge with new entries for credential references
 
+**The `__init__.py` MUST be runnable — it runs a load when executed, it does not merely define sources.** The pipeline executor ([spec 08](./pipelines.md)) runs the component as `python <entrypoint>` and derives the verdict from the on-disk dlt **load package**; a module that only defines `@dlt.source`/`@dlt.resource` with no run-on-exec **exits without loading** (its module body runs under `python <entrypoint>`, but nothing calls `.run()`), writes **no** load package, and is scored **`failed`** ("exited 0 but ran no load"), never a false success. So the agent authors a module-level `run()` that builds `dlt.pipeline(...)` and calls `.run(...)`, invoked under an `if __name__ == "__main__": run()` guard — the runnable shape the reference source packs already ship and the curated-library copy path preserves. This runnable-entrypoint contract is what makes the agent's verify-by-execution real: the run must actually load, not define-and-return.
+
 For curated library strategy, additionally:
 
 - The provenance header records `library_name`, `library_commit`, and the destination customization

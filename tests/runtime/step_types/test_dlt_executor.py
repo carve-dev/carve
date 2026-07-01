@@ -243,9 +243,14 @@ async def test_nonzero_exit_is_failed_with_error_tail(paths: ProjectPaths) -> No
     assert result.error_message == "PipelineStepFailed: boom"
 
 
-async def test_exit_zero_without_any_data_dir_trusts_exit_code(paths: ProjectPaths) -> None:
-    # No .dlt/pipelines dir is created at all (the run wrote nowhere we pinned),
-    # so there is nothing to introspect — trust the clean exit code.
+async def test_exit_zero_with_no_load_package_is_failed_not_false_green(
+    paths: ProjectPaths,
+) -> None:
+    # #41: a clean exit that created NO .dlt/pipelines dir means the component ran
+    # no load (import-and-exit). Carve PINS DLT_DATA_DIR, so a real load always
+    # creates the dir — its absence is a `failed` ("ran no load"), never the
+    # historical false-green that trusted the exit code. (This is the very first
+    # run in a project, before any pipelines dir exists — the #41 window.)
     _component(paths, "stripe")
     run_fn = _RecordingRun()  # exit 0, writes no package
 
@@ -253,8 +258,8 @@ async def test_exit_zero_without_any_data_dir_trusts_exit_code(paths: ProjectPat
         step=_dlt_step(), run=PipelineRun(pipeline="p"), paths=paths
     )
 
-    assert result.status == "succeeded"
-    assert result.outputs == {"tables": [], "schema_changes": [], "failed_jobs": []}
+    assert result.status == "failed"
+    assert "ran no load" in (result.error_message or "")
 
 
 # --- FIX-D2: pipeline_name discovery + false-green guard --------------------
@@ -561,3 +566,87 @@ async def test_default_run_mechanism_runs_the_reference_convention_end_to_end(
     assert result.status == "succeeded", result.error_message
     assert "stories" in result.outputs["tables"]
     assert "stories" in result.outputs["schema_changes"]
+
+
+# The #41 defect shape: a BARE SOURCE — module-level @dlt.source/@dlt.resource
+# only, with NO ``if __name__ == "__main__": run()`` guard. ``python
+# <entrypoint>`` on this IMPORTS the module (defining the source objects) and
+# EXITS without running any load, so it writes no load package. The reference
+# convention above adds the run()+__main__ guard precisely to avoid this; here we
+# author the guardless shape to prove the executor scores it ``failed``.
+_BARE_SOURCE_ENTRYPOINT = """\
+import dlt
+
+
+@dlt.resource(name="stories", write_disposition="replace")
+def stories():
+    yield {"id": 1, "title": "a"}
+    yield {"id": 2, "title": "b"}
+
+
+@dlt.source(name="news")
+def news():
+    return [stories]
+"""
+
+
+async def test_bare_source_import_and_exit_is_failed_not_false_green(
+    paths: ProjectPaths,
+) -> None:
+    # #41 regression (offline, deterministic — the actual scenario shape). A BARE
+    # SOURCE component authored as el/<name>/__init__.py — only DEFINES
+    # @dlt.source/@dlt.resource with no `if __name__ == "__main__": run()` guard —
+    # is `python <entrypoint>`-imported and EXITS without running a load, writing
+    # no package. The default run mechanism would do exactly this; the fake run_fn
+    # mirrors it (rc=0, writes nothing). The executor must score it `failed` ("ran
+    # no load"), NOT the historical false-green. Pairs with the conforming
+    # test_default_run_mechanism_runs_the_reference_convention_end_to_end (green).
+    comp = paths.el_dir / "news"
+    comp.mkdir(parents=True)
+    (comp / "__init__.py").write_text(_BARE_SOURCE_ENTRYPOINT, encoding="utf-8")
+    run_fn = _RecordingRun()  # rc=0, writes no load package (import-and-exit)
+
+    result = await DltStepExecutor(run_fn=run_fn).execute(
+        step=_dlt_step(component="news"), run=PipelineRun(pipeline="p"), paths=paths
+    )
+
+    assert result.status == "failed"
+    assert "ran no load" in (result.error_message or "")
+    # It DID resolve + attempt the bare __init__.py entrypoint — the failure is the
+    # missing load, not a resolution error.
+    assert len(run_fn.calls) == 1
+    assert run_fn.calls[0]["entrypoint"] == comp / "__init__.py"
+
+
+async def test_default_mechanism_bare_source_runs_no_load_is_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #41 regression (real dlt, DEFAULT mechanism — the true end-to-end scenario).
+    # The direct pair to test_default_run_mechanism_runs_the_reference_convention_
+    # end_to_end: a bare source authored as el/<name>/__init__.py with NO __main__
+    # guard is actually `python __init__.py`-executed by _default_run_component. It
+    # imports the module (defining the source objects), runs NO load, and exits 0
+    # writing no package under the pinned DLT_DATA_DIR — so the pipelines dir is
+    # never created. The executor scores it `failed` ("ran no load"), closing the
+    # false-green through the genuine default path (no run_fn injection).
+    pytest.importorskip("dlt")
+
+    (tmp_path / "el").mkdir()
+    (tmp_path / "pipelines").mkdir()
+    paths = ProjectPaths.from_root(tmp_path)
+    comp = paths.el_dir / "news"
+    comp.mkdir()
+    (comp / "__init__.py").write_text(_BARE_SOURCE_ENTRYPOINT, encoding="utf-8")
+
+    # Keep dlt's default duckdb file out of the repo working dir.
+    monkeypatch.chdir(tmp_path)
+
+    # No run_fn → the real _default_run_component runs `python __init__.py`.
+    result = await DltStepExecutor().execute(
+        step=DltStepConfig(id="ingest", component="news"),
+        run=PipelineRun(pipeline="p"),
+        paths=paths,
+    )
+
+    assert result.status == "failed", result.outputs
+    assert "ran no load" in (result.error_message or "")

@@ -20,8 +20,12 @@ apply. If you find yourself here, double-check the higher strategies first.
 ## Files this strategy produces
 
 - `el/<component_name>/__init__.py` — a thin wrapper invoking the Singer tap via
-  dlt (`dlt.sources.singer_pipeline.singer_source(...)` or equivalent). Carries
-  the provenance header.
+  dlt (`dlt.sources.singer_pipeline.singer_source(...)` or equivalent). **Must run
+  a load on exec**: build `dlt.pipeline(...).run(...)` in a module-level `run()`
+  under an `if __name__ == "__main__": run()` guard — not just define the wrapper.
+  The executor runs `python <entrypoint>`; a module that only defines the source
+  imports-and-exits, writes no load package, and is scored `failed` ("ran no
+  load"). Carries the provenance header.
 - `el/<component_name>/requirements.txt` — pinned deps, **including** the tap as
   `tap-<name>==X.Y.Z` alongside dlt and its destination extra.
 - additive entries in `.dlt/config.toml.template` / `.dlt/secrets.toml.template`
