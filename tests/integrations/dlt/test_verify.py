@@ -78,6 +78,18 @@ def test_exit_zero_without_pipelines_dir_trusts_exit_code() -> None:
     assert "exited 0" in res.summary
 
 
+def test_exit_zero_with_pinned_dir_but_no_package_is_failed(tmp_path: Path) -> None:
+    # #41: a clean exit with a pinned pipelines_dir that holds NO load package
+    # means the run did no load — the import-and-exit case (a bare source that
+    # only defines @dlt.source/@dlt.resource with no run-on-exec). Verify-by-
+    # execution must observe an ACTUAL load, so passed=False, never a false green
+    # even on exit 0. Mirrors the executor's DLT_DATA_DIR backstop.
+    res = parse_dlt_run(_proc(returncode=0), pipelines_dir=tmp_path, pipeline_name="nope")
+    assert res.passed is False
+    assert "no load package" in res.summary
+    assert res.details["returncode"] == 0
+
+
 # --- on-disk load package --------------------------------------------------
 
 

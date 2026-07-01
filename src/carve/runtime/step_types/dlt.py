@@ -246,11 +246,15 @@ def _outcome_to_step_result(
     package **from this run** is discovered (:func:`_discover_pipeline_name`)
     rather than assumed to be the component name.
 
-    FIX-D2 — false-green guard: if ``pipelines_dir`` exists but **no** subdir
-    holds a load package, the run produced nothing to verify → ``failed``
-    ("produced no load package"), never succeeded-with-empty. ``pipelines_dir``
-    absent entirely is the distinct "nothing pinned here, trust the exit code"
-    case (a component that writes its package elsewhere).
+    FIX-D2 / #41 — false-green guard: a clean exit that produced **no**
+    verifiable load package FROM THIS RUN is ``failed``, never
+    succeeded-with-empty. Two shapes, each with its own message: (a)
+    ``pipelines_dir`` **absent entirely** — the component ran **no** load (the
+    #41 import-and-exit case: a bare ``@dlt.source``/``@dlt.resource`` module with
+    no run-on-exec), because Carve pins ``DLT_DATA_DIR`` so a real load always
+    creates the dir; its absence means no load ran. (b) ``pipelines_dir`` exists
+    but no subdir holds a package from this run — only stale packages from prior
+    runs. Both fail loud.
 
     FIX-D2 residual — cross-run staleness: ``DLT_DATA_DIR`` is **persistent**
     (nothing wipes it per run), so a re-run that exits 0 but writes no new
@@ -273,11 +277,26 @@ def _outcome_to_step_result(
     pipeline_name = _discover_pipeline_name(pipelines_dir, fallback_name, min_load_id)
     if pipeline_name is None:
         if not pipelines_dir.is_dir():
-            # No data dir pinned here at all — nothing to introspect, trust the
-            # exit code (a component that wrote its package outside DLT_DATA_DIR).
+            # #41: DLT_DATA_DIR/pipelines was never created, so the component ran
+            # NO load — the import-and-exit case (a bare @dlt.source/@dlt.resource
+            # module with no `if __name__ == "__main__": run()` guard is
+            # `python <entrypoint>`-imported and exits without loading). This is
+            # also the first run in a project, before any pipelines dir exists.
+            # Carve PINS DLT_DATA_DIR (_build_dlt_env), so a real load always
+            # lands here; its absence on a clean exit means no load ran → failed.
+            #
+            # TRADEOFF: a component that overrides DLT_DATA_DIR by passing its own
+            # `pipelines_dir=` to dlt.pipeline() would also land here and be scored
+            # failed — acceptable, since Carve pins DLT_DATA_DIR precisely to
+            # verify the load, and a package written outside it is unverifiable.
             return StepResult(
-                status="succeeded",
-                outputs={"tables": [], "schema_changes": [], "failed_jobs": []},
+                status="failed",
+                error_message=(
+                    "dlt run exited 0 but wrote no load package under DLT_DATA_DIR "
+                    "— the component ran no load (ensure the entrypoint runs a "
+                    'load, e.g. under `if __name__ == "__main__":`), or it wrote '
+                    "its package outside the pinned DLT_DATA_DIR (unverifiable)."
+                ),
                 log_lines=log_lines,
                 duration_ms=outcome.duration_ms,
             )
@@ -442,15 +461,18 @@ def _default_run_component(
       run — only the ``DLT_DATA_DIR`` env from ``_build_dlt_env`` reaches the
       child. Fine for DuckDB (no creds); a real warehouse needs the live wiring.
 
-    DEFERRED (reconcile with the dlt-engineer): the component-run **entrypoint
-    convention**. The candidate order is
-    ``scripts/__init__.py`` → ``pipeline.py`` → ``__init__.py`` → ``main.py``,
-    which works for the reference HN pack (its ``scripts/__init__.py`` has a
-    ``__main__`` guard that calls ``run()``). But a carve-authored
-    ``el/<name>/__init__.py`` written as a *source module* with no ``__main__``
-    guard would be ``python __init__.py``-imported and exit **without running a
-    load** — a false success. The bare-source convention and venv pooling
-    (``SnowflakePool``) are live-wiring/runtime concerns.
+    RECONCILED (#41) — the component-run **entrypoint convention**. The candidate
+    order is ``scripts/__init__.py`` → ``pipeline.py`` → ``__init__.py`` →
+    ``main.py``, which works for the reference HN pack (its ``scripts/__init__.py``
+    has a ``__main__`` guard that calls ``run()``). A carve-authored
+    ``el/<name>/__init__.py`` written as a bare *source module* with no
+    ``__main__`` guard is ``python __init__.py``-imported and exits **without
+    running a load**, writing no package — which :func:`_outcome_to_step_result`
+    now scores ``failed`` ("ran no load"), **not** a false success. The
+    runnable-entrypoint contract (see the dlt-engineer capability) requires a
+    run-on-exec ``run()`` under an ``if __name__ == "__main__": run()`` guard;
+    this executor's ``DLT_DATA_DIR`` backstop enforces it. Venv pooling
+    (``SnowflakePool``) remains a live-wiring/runtime concern.
     """
     import sys
 

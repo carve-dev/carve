@@ -25,7 +25,12 @@ cursor-based (e.g. `SystemModstamp`). Do not attempt SaaS CDC here.
 
 - `el/<component_name>/__init__.py` — Python with `@dlt.source` + `@dlt.resource`
   decorators; pagination loops, auth, and incremental cursors
-  (`dlt.sources.incremental`) handled in code. Carries the provenance header.
+  (`dlt.sources.incremental`) handled in code. **Must run a load on exec**: add a
+  module-level `run()` that builds `dlt.pipeline(...).run(...)` under an
+  `if __name__ == "__main__": run()` guard — not just source/resource definitions.
+  The executor runs `python <entrypoint>`; a bare source that only defines
+  resources imports-and-exits, writes no load package, and is scored `failed`
+  ("ran no load"). Carries the provenance header.
 - `el/<component_name>/requirements.txt` — pinned deps (dlt + destination extra,
   plus any source-specific library, e.g. a GraphQL or DB driver).
 - additive entries in `.dlt/config.toml.template` / `.dlt/secrets.toml.template`

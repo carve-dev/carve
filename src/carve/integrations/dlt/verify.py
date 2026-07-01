@@ -116,7 +116,13 @@ def parse_dlt_run(
 
     A non-zero exit is a failure (the agent reads the error tail). On a clean
     exit, the on-disk load package is the source of truth: the run passed only
-    if its newest package reached ``loaded`` with no failed jobs.
+    if its newest package reached ``loaded`` with no failed jobs. When a
+    ``pipelines_dir`` + ``pipeline_name`` are pinned but hold **no** package, the
+    run did no load — ``passed=False``, never a false green (the #41
+    import-and-exit case: a bare ``@dlt.source``/``@dlt.resource`` module with no
+    run-on-exec; verify-by-execution must observe an actual load, mirroring the
+    executor's ``DLT_DATA_DIR`` backstop). Only when no ``pipelines_dir`` is
+    pinned at all is a clean exit trusted on its exit code.
     """
     if proc.returncode != 0:
         # `run_check` routes all captured output to stdout (stderr is ""), so
@@ -129,12 +135,26 @@ def parse_dlt_run(
             details={"returncode": proc.returncode, "output_tail": _tail(output)},
         )
 
-    report = None
     if pipelines_dir is not None and pipeline_name is not None:
         report = read_latest_load_package(pipelines_dir, pipeline_name)
-    if report is None:
-        # Exit 0 but nothing to introspect (no pipelines_dir, or no package
-        # written) — trust the exit code, and say so plainly.
+        if report is None:
+            # #41: exit 0 but the pinned pipelines_dir holds NO load package — the
+            # run did no load (a bare source that only defines resources
+            # imports-and-exits). Verify-by-execution must observe an ACTUAL load,
+            # so a clean exit that wrote nothing is `failed`, never a false green.
+            # Mirrors the executor's DLT_DATA_DIR backstop.
+            return CheckResult(
+                passed=False,
+                summary=(
+                    "dlt run exited 0 but wrote no load package — the run loaded "
+                    "nothing (ensure the entrypoint runs a load, e.g. under `if "
+                    '__name__ == "__main__":`).'
+                ),
+                details={"returncode": 0},
+            )
+    else:
+        # No pipelines_dir pinned at all — nothing to introspect; trust the exit
+        # code, and say so plainly.
         return CheckResult(passed=True, summary="dlt run exited 0.", details={"returncode": 0})
 
     passed = report.completed and not report.failed_jobs

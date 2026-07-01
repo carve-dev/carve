@@ -151,6 +151,16 @@ schema.
 
 ## Code requirements
 
+- **The `el/<name>/__init__.py` MUST run a load on exec — not merely define
+  sources.** The runtime runs your component as `python <entrypoint>` and derives
+  its verdict from the on-disk **load package**: a module that only defines
+  `@dlt.source` / `@dlt.resource` with no run-on-exec is imported-and-exits,
+  writes **no** package, and is scored `failed` ("ran no load") — a bare source is
+  never a green run. So author a module-level `run()` that builds
+  `dlt.pipeline(...)` and calls `.run(...)`, invoked under an
+  `if __name__ == "__main__": run()` guard — the runnable shape the reference
+  packs ship and the curated-library copy preserves. This is what makes your
+  verify-by-execution real: the run must actually load, not import-and-return.
 - **Provenance header** on every generated file (the `code_emitter` substrate
   stamps it; curated copies carry `library_name` + `library_commit`). Never edit
   the header; user edits go below it.

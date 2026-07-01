@@ -23,7 +23,12 @@ capped) and read its docs with `web_fetch` before settling the config shape.
 ## Files this strategy produces
 
 - `el/<component_name>/__init__.py` — a thin module: loads the config and calls
-  `dlt.sources.rest_api.rest_api_source(...)`. Carries the provenance header.
+  `dlt.sources.rest_api.rest_api_source(...)`. **Must run a load on exec**: wrap
+  the `dlt.pipeline(...).run(...)` in a module-level `run()` under an
+  `if __name__ == "__main__": run()` guard — not just build the source. The
+  executor runs `python <entrypoint>`; a module that only builds the source
+  imports-and-exits, writes no load package, and is scored `failed` ("ran no
+  load"). Carries the provenance header.
 - `el/<component_name>/rest_api_config.toml` — the config (endpoints +
   pagination + auth), **or** inline in `__init__.py` for a simple API. Pick
   based on complexity; a multi-endpoint API reads better as a separate TOML.
