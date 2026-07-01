@@ -336,9 +336,13 @@ class ComponentConfig(BaseModel):
     * ``dbt_path`` / ``profiles_dir`` — only meaningful when
       ``dbt_env == "external"``: the external dbt executable and the dbt
       profiles dir to pass through.
-    * ``worker_label`` — **accept + store only** in this slice; the
-      runtime routing that honors it is deferred. Stored now so configs
-      that set it stay forward-compatible.
+    * ``worker_label`` — **live-read** worker-placement label: the runtime
+      reduces the labels of a pipeline's referenced components to a job's
+      ``required_label`` at enqueue, and the claim query filters on it so a
+      labeled job runs only on a worker started with a matching
+      ``carve worker --label``. The field is general (a ``dlt`` or ``dbt``
+      component may set it); only the *config source* is component-scoped
+      (no step-level label yet).
     """
 
     model_config = ConfigDict(extra="forbid")

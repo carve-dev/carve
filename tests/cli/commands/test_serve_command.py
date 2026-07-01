@@ -18,11 +18,12 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 from typer.testing import CliRunner
 
-from carve.cli.commands.serve import _serve
+from carve.cli.commands.serve import _serve, resolve_worker_label
 from carve.cli.main import app
 from carve.core.config.paths import ProjectPaths
 from carve.core.config.schema import (
     ArchiveConfig,
+    ComponentConfig,
     Config,
     ConnectionsConfig,
     ModelsConfig,
@@ -88,6 +89,78 @@ def _seed_archivable_job(factory: sessionmaker[Session], job_id: str) -> None:
 def _archive_count(factory: sessionmaker[Session]) -> int:
     with factory() as session:
         return int(session.execute(sa.text("SELECT count(*) FROM jobs_archive")).scalar_one())
+
+
+# ---------------------------------------------------------------------------
+# resolve_worker_label — the scheduler resolver (path-confinement + reduction)
+# ---------------------------------------------------------------------------
+
+
+def _project_with_pipelines(tmp_path: Path) -> ProjectPaths:
+    (tmp_path / "pipelines").mkdir()
+    return ProjectPaths.from_root(tmp_path)
+
+
+def test_resolve_worker_label_traversal_name_returns_none_without_opening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``../`` ``schedule.pipeline`` is refused (None) and never opens an outside file.
+
+    ``schedule.pipeline`` is an unvalidated DB string (settable via ``carve schedule
+    set-cron``); the containment guard must reject a traversal BEFORE any file open.
+    We plant a valid, labeled ``secret.toml`` OUTSIDE ``pipelines/`` (which WOULD
+    resolve to a label if parsed) and monkeypatch ``load_pipeline`` to blow up if
+    ever called — so the assertion proves the file is never opened.
+    """
+    import carve.cli.commands.serve as serve_mod
+
+    paths = _project_with_pipelines(tmp_path)
+    # A parseable, labeled pipeline one level ABOVE pipelines/ — the traversal target.
+    (tmp_path / "secret.toml").write_text(
+        '[[steps]]\nid = "x"\ntype = "dlt"\ncomponent = "c"\n', encoding="utf-8"
+    )
+    components = {"c": ComponentConfig(type="dlt", mode="same-repo", worker_label="onprem-dbt")}
+
+    def _must_not_open(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("load_pipeline was called on a traversal path — guard bypassed")
+
+    monkeypatch.setattr(serve_mod, "load_pipeline", _must_not_open)
+
+    result = resolve_worker_label("../secret", project_paths=paths, components=components)
+    assert result is None
+
+
+def test_resolve_worker_label_absolute_path_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absolute ``schedule.pipeline`` is refused (None), never opening the file."""
+    import carve.cli.commands.serve as serve_mod
+
+    paths = _project_with_pipelines(tmp_path)
+
+    def _must_not_open(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("load_pipeline was called on an absolute path — guard bypassed")
+
+    monkeypatch.setattr(serve_mod, "load_pipeline", _must_not_open)
+
+    result = resolve_worker_label("/etc/passwd", project_paths=paths, components={})
+    assert result is None
+
+
+def test_resolve_worker_label_valid_pipeline_reduces_the_label(tmp_path: Path) -> None:
+    """The happy path still works: a pipelines/<name>.toml reduces to its component label."""
+    paths = _project_with_pipelines(tmp_path)
+    (paths.pipelines_dir / "sales.toml").write_text(
+        '[[steps]]\nid = "ingest"\ntype = "dlt"\ncomponent = "c"\n', encoding="utf-8"
+    )
+    components = {"c": ComponentConfig(type="dlt", mode="same-repo", worker_label="onprem-dbt")}
+    assert resolve_worker_label("sales", project_paths=paths, components=components) == "onprem-dbt"
+
+
+def test_resolve_worker_label_missing_pipeline_returns_none(tmp_path: Path) -> None:
+    """A missing (but in-tree) pipeline file logs + returns None, never raising."""
+    paths = _project_with_pipelines(tmp_path)
+    assert resolve_worker_label("nope", project_paths=paths, components={}) is None
 
 
 async def test_serve_runs_scheduler_reaper_and_archiver_and_stops_on_shutdown(
@@ -276,6 +349,58 @@ async def test_serve_runs_worker_pool_alongside_loops_and_stops_on_shutdown(
         assert worker.status == "stopped", f"task{i} was not drained/unregistered on shutdown"
 
 
+async def test_serve_scheduler_stamps_required_label_via_resolver(
+    postgres_state_store_url: str,
+) -> None:
+    """``_serve(..., resolve_label=…)`` stamps a scheduled fire with its placement label.
+
+    A due schedule fires under ``_serve``; the threaded ``resolve_label`` callback
+    (what ``carve serve`` builds from ``config.components``) supplies the label, so
+    the enqueued (still-queued, no worker running) job carries it. Bounded by a
+    watchdog + 5s timeout so a wiring regression fails loudly.
+    """
+    from carve.core.state.models import Schedule
+
+    schedules, job_queue, repository, factory = _handles(postgres_state_store_url)
+    sched = schedules.seed("sales", "*/5 * * * *", "dev")
+    with schedules._session_factory() as session:
+        row = session.get(Schedule, sched.id)
+        assert row is not None
+        row.next_fires_at = datetime(2020, 1, 1, tzinfo=UTC)
+        session.commit()
+
+    serve_task = asyncio.create_task(
+        _serve(
+            schedules,
+            job_queue,
+            repository,
+            interval_s=0.05,
+            reaper_interval_s=0.05,
+            run_archiver=False,
+            resolve_label=lambda _name: "onprem-dbt",
+        )
+    )
+
+    def _queued_sales() -> Job | None:
+        with factory() as session:
+            return session.scalars(
+                sa.select(Job).where(Job.pipeline == "sales", Job.status == "queued")
+            ).one_or_none()
+
+    stamped: str | None = None
+    for _ in range(400):
+        job = _queued_sales()
+        if job is not None:
+            stamped = job.required_label
+            break
+        await asyncio.sleep(0.02)
+    serve_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(serve_task, timeout=5.0)
+
+    assert stamped == "onprem-dbt", "the scheduler did not stamp the resolver's label"
+
+
 def test_serve_command_help_describes_all_loops_and_the_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -291,6 +416,7 @@ def test_serve_command_help_describes_all_loops_and_the_pool(
     assert "--no-archiver" in result.output
     assert "--workers" in result.output
     assert "--drain-timeout" in result.output
+    assert "--label" in result.output
 
 
 def test_serve_command_bad_config_exits_two(

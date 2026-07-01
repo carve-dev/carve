@@ -185,3 +185,73 @@ def test_worker_once_persists_run_lifecycle_events(
     # The worker ran with an injected emitter → the run lifecycle persisted.
     assert "run.started" in kinds
     assert "run.succeeded" in kinds
+
+
+def test_worker_label_flag_sets_worker_context_label(
+    tmp_path: Path,
+    cli_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--label X`` threads into ``WorkerContext.label`` (which reaches claim/register)."""
+    import carve.cli.commands.worker as worker_cmd
+
+    project = _project(tmp_path)
+    monkeypatch.chdir(project)
+
+    captured: dict[str, str | None] = {}
+
+    async def _capture(ctx: object) -> bool:
+        captured["label"] = ctx.label  # type: ignore[attr-defined]
+        return False
+
+    monkeypatch.setattr(worker_cmd, "run_once", _capture)
+
+    result = runner.invoke(app, ["worker", "--once", "--label", "onprem-dbt"], env=cli_env)
+    assert result.exit_code == 0, result.output
+    assert captured["label"] == "onprem-dbt"
+
+
+def test_worker_once_labeled_worker_claims_matching_labeled_job(
+    tmp_path: Path,
+    cli_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``carve worker --once --label X`` claims + runs a job stamped ``required_label=X``.
+
+    End-to-end proof the flag reaches ``claim_next(worker_label=X)``: the labeled
+    job is claimable only because the worker advertises the matching label.
+    """
+    project = _project(tmp_path)
+    monkeypatch.chdir(project)
+
+    queue = _job_queue(cli_env["DATABASE_URL"])
+    job = queue.enqueue_manual("ping", "dev", trigger="manual", required_label="onprem-dbt")
+
+    result = runner.invoke(app, ["worker", "--once", "--label", "onprem-dbt"], env=cli_env)
+    assert result.exit_code == 0, result.output
+    assert "ran one job" in result.output
+
+    finished = queue.get_job(job.id)
+    assert finished is not None
+    assert finished.status == "succeeded"
+
+
+def test_worker_once_unlabeled_worker_skips_a_labeled_job(
+    tmp_path: Path,
+    cli_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unlabeled ``carve worker --once`` cannot claim a labeled job — it stays queued."""
+    project = _project(tmp_path)
+    monkeypatch.chdir(project)
+
+    queue = _job_queue(cli_env["DATABASE_URL"])
+    job = queue.enqueue_manual("ping", "dev", trigger="manual", required_label="onprem-dbt")
+
+    result = runner.invoke(app, ["worker", "--once"], env=cli_env)
+    assert result.exit_code == 0, result.output
+    assert "queue empty" in result.output
+
+    still = queue.get_job(job.id)
+    assert still is not None
+    assert still.status == "queued"

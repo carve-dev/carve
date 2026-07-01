@@ -17,6 +17,7 @@ import pytest
 
 from carve.core.config.paths import ProjectPaths
 from carve.core.config.pipeline_schema import (
+    ConflictingWorkerLabelsError,
     DbtStepConfig,
     DltStepConfig,
     PipelineError,
@@ -445,3 +446,68 @@ component = "stripe_charges"
     )
     pipeline = load_pipeline(path, components={"stripe_charges": block}, paths=project)
     assert pipeline.steps[0].component == "stripe_charges"  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Worker-placement labels: author-time conflict reject
+# ---------------------------------------------------------------------------
+
+
+def _labeled_dlt(label: str) -> ComponentConfig:
+    # A same-repo dlt block resolves without an on-disk dir (el_dir/<name>), so it
+    # is the lightest way to attach a worker_label that also passes resolution.
+    return ComponentConfig(type="dlt", mode="same-repo", worker_label=label)
+
+
+def test_conflicting_worker_labels_rejected_at_load(project: ProjectPaths) -> None:
+    """Two steps whose components require different labels fail to load (author-time).
+
+    One job = one whole-DAG run on one worker, so a mis-labeled pipeline can't be
+    placed — ``load_pipeline`` rejects it up front with the typed
+    ``ConflictingWorkerLabelsError`` (a ``PipelineError``), never enqueuing it.
+    """
+    path = _write_pipeline(
+        project,
+        "conflict",
+        """
+[[steps]]
+id = "ingest"
+type = "dlt"
+component = "near"
+
+[[steps]]
+id = "load"
+type = "dlt"
+component = "onprem"
+""",
+    )
+    components = {"near": _labeled_dlt("near-source"), "onprem": _labeled_dlt("onprem-dbt")}
+    with pytest.raises(ConflictingWorkerLabelsError) as exc:
+        load_pipeline(path, components=components, paths=project)
+    # It is a PipelineError with the file attached and both labels named.
+    assert isinstance(exc.value, PipelineError)
+    assert exc.value.file == path
+    assert "near-source" in str(exc.value)
+    assert "onprem-dbt" in str(exc.value)
+
+
+def test_single_worker_label_pipeline_loads_cleanly(project: ProjectPaths) -> None:
+    """A pipeline whose components agree on one label loads without error."""
+    path = _write_pipeline(
+        project,
+        "agree",
+        """
+[[steps]]
+id = "ingest"
+type = "dlt"
+component = "near"
+
+[[steps]]
+id = "load"
+type = "dlt"
+component = "also_near"
+""",
+    )
+    components = {"near": _labeled_dlt("onprem"), "also_near": _labeled_dlt("onprem")}
+    pipeline = load_pipeline(path, components=components, paths=project)
+    assert [s.id for s in pipeline.steps] == ["ingest", "load"]

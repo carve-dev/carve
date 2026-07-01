@@ -98,6 +98,7 @@ class JobQueue:
         target: str,
         *,
         scheduled_for: datetime | None = None,
+        required_label: str | None = None,
         tenant_id: int = 1,
     ) -> Job:
         """Enqueue a scheduled job, deduped by the one-queued partial index.
@@ -108,6 +109,11 @@ class JobQueue:
         for this pipeline already exists and we raise
         :class:`QueuedJobAlreadyExists`. **Never** check-then-insert: that
         races and double-queues under concurrency.
+
+        ``required_label`` is the worker-placement label the scheduler derived
+        from the pipeline's referenced components (``None`` = any worker); it is
+        stamped onto the row so ``claim_next`` can filter on it. Default ``None``
+        keeps this back-compatible with every existing caller.
         """
         job_id = "job_" + uuid.uuid4().hex
         now = _utcnow()
@@ -115,10 +121,10 @@ class JobQueue:
             """
             INSERT INTO jobs
                 (id, pipeline, target, status, trigger, scheduled_for,
-                 tenant_id, created_at)
+                 required_label, tenant_id, created_at)
             VALUES
                 (:id, :pipeline, :target, 'queued', 'scheduled', :scheduled_for,
-                 :tenant_id, :created_at)
+                 :required_label, :tenant_id, :created_at)
             ON CONFLICT (pipeline, tenant_id) WHERE status = 'queued'
             DO NOTHING
             RETURNING id
@@ -132,6 +138,7 @@ class JobQueue:
                     "pipeline": pipeline,
                     "target": target,
                     "scheduled_for": scheduled_for,
+                    "required_label": required_label,
                     "tenant_id": tenant_id,
                     "created_at": now,
                 },
@@ -162,6 +169,7 @@ class JobQueue:
         target: str,
         *,
         trigger: str = "manual",
+        required_label: str | None = None,
         tenant_id: int = 1,
     ) -> Job:
         """Enqueue a manual/api job, upserting onto the existing queued row.
@@ -171,6 +179,21 @@ class JobQueue:
         the existing queued row's ``trigger``/``target`` and returns the **same**
         ``id``, so a user mashing "run now" coalesces onto one queued job rather
         than erroring. ``scheduled_for`` is cleared (a manual job runs ASAP).
+
+        ``required_label`` is the worker-placement label (``None`` = any worker);
+        the upsert also refreshes it via ``EXCLUDED.required_label`` so a
+        re-triggered row's label stays consistent with the current target/trigger.
+        Default ``None`` keeps this back-compatible. ``enqueue_manual`` has no
+        production caller yet (only tests) — the stamp is wired + repo-tested for
+        forward-compat; the scheduler is the only live driver this slice.
+
+        **Forward-compat contract (load-bearing when a live caller lands):** the
+        upsert's ``required_label = EXCLUDED.required_label`` means a manual
+        re-trigger with the default ``required_label=None`` will **clear** an
+        already-labeled queued row's label. A live caller MUST therefore resolve
+        and pass ``required_label`` (mirroring the scheduler's ``resolve_label``),
+        or a coalescing "run now" onto a labeled scheduled job would unlabel it and
+        let it run anywhere.
         """
         job_id = "job_" + uuid.uuid4().hex
         now = _utcnow()
@@ -178,14 +201,15 @@ class JobQueue:
             """
             INSERT INTO jobs
                 (id, pipeline, target, status, trigger, scheduled_for,
-                 tenant_id, created_at)
+                 required_label, tenant_id, created_at)
             VALUES
                 (:id, :pipeline, :target, 'queued', :trigger, NULL,
-                 :tenant_id, :created_at)
+                 :required_label, :tenant_id, :created_at)
             ON CONFLICT (pipeline, tenant_id) WHERE status = 'queued'
             DO UPDATE SET trigger = EXCLUDED.trigger,
                           target = EXCLUDED.target,
-                          scheduled_for = NULL
+                          scheduled_for = NULL,
+                          required_label = EXCLUDED.required_label
             RETURNING id
             """
         )
@@ -197,6 +221,7 @@ class JobQueue:
                     "pipeline": pipeline,
                     "target": target,
                     "trigger": trigger,
+                    "required_label": required_label,
                     "tenant_id": tenant_id,
                     "created_at": now,
                 },
@@ -220,7 +245,9 @@ class JobQueue:
 
     # ------------------------------------------------------------------- Claim
 
-    def claim_next(self, worker_id: str, *, tenant_id: int = 1) -> Job | None:
+    def claim_next(
+        self, worker_id: str, *, worker_label: str | None = None, tenant_id: int = 1
+    ) -> Job | None:
         """Atomically claim the oldest-due queued job for ``worker_id``.
 
         The spec's exact ``FOR UPDATE SKIP LOCKED`` claim: a single ``UPDATE``
@@ -232,9 +259,22 @@ class JobQueue:
         :class:`Job`, or ``None`` if nothing was claimable (empty queue, or
         every queued row already locked by a peer).
 
+        **Worker placement.** ``worker_label`` is the label this worker
+        advertises (``carve worker --label X``); the added predicate
+        ``AND (required_label IS NULL OR required_label = :worker_label)`` filters
+        the queue so a labeled job (``required_label = 'X'``) is claimed **only**
+        by a matching worker, while unlabeled jobs (``required_label IS NULL``) run
+        anywhere. The SQL-NULL semantics are load-bearing and intended: an
+        **unlabeled** worker (``worker_label=NULL``) claims **only** unlabeled jobs
+        — for a labeled job, ``required_label = NULL`` is never true, so only the
+        ``IS NULL`` branch can match. ``worker_label=None`` (the default) makes the
+        predicate a no-op for every unlabeled job, so every existing caller/test
+        is byte-identical.
+
         Raw SQL via ``session.execute(text(...))`` — SKIP LOCKED has no ORM
-        query-API expression. The subquery + the ``UPDATE`` run in one
-        statement, so the lock is held only for the row flip.
+        query-API expression, and ``:worker_label`` is a bound param (never
+        interpolated). The subquery + the ``UPDATE`` run in one statement, so the
+        lock is held only for the row flip.
         """
         now = _utcnow()
         stmt = sa.text(
@@ -249,6 +289,7 @@ class JobQueue:
                 WHERE status = 'queued'
                   AND tenant_id = :tenant_id
                   AND (scheduled_for IS NULL OR scheduled_for <= :now)
+                  AND (required_label IS NULL OR required_label = :worker_label)
                 ORDER BY scheduled_for ASC NULLS LAST, created_at ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -259,7 +300,12 @@ class JobQueue:
         with self._session_factory() as session:
             claimed_id = session.execute(
                 stmt,
-                {"worker_id": worker_id, "now": now, "tenant_id": tenant_id},
+                {
+                    "worker_id": worker_id,
+                    "worker_label": worker_label,
+                    "now": now,
+                    "tenant_id": tenant_id,
+                },
             ).scalar_one_or_none()
             if claimed_id is None:
                 session.rollback()

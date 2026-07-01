@@ -31,10 +31,17 @@ from carve.runtime.clock import Clock, system_clock
 from carve.runtime.cron import this_tick_at
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     from carve.core.state.job_queue import JobQueue
     from carve.core.state.schedules import Schedules
+
+    # Maps a pipeline name -> the single worker-placement label its job must carry
+    # (``None`` = any worker). ``carve serve`` builds it from the loaded pipeline's
+    # components; the state store stays config-agnostic, so the scheduler takes it
+    # as a callback rather than reaching for ``ProjectPaths``/``components``.
+    ResolveLabel = Callable[[str], str | None]
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,7 @@ def run_due_once(
     job_queue: JobQueue,
     now: datetime,
     *,
+    resolve_label: ResolveLabel | None = None,
     tenant_id: int = 1,
 ) -> int:
     """Fire every schedule due at ``now``; return the number actually enqueued.
@@ -56,6 +64,14 @@ def run_due_once(
     passes in one window enqueue the same ``scheduled_for`` and the dedup index
     sees a single window), then advances ``next_fires_at`` via
     ``set_last_fired``.
+
+    ``resolve_label`` (optional) maps a due pipeline's name to the single
+    worker-placement label its job must carry — ``carve serve`` supplies it from
+    the loaded pipeline's components. With no resolver (the default) the job is
+    unlabeled (``required_label=None``), so every existing scheduler test is
+    byte-identical. A resolver that **raises** only skips its own schedule's fire
+    (logged, ``next_fires_at`` un-advanced → retried next boundary); it never
+    aborts the other due fires this tick.
 
     On :class:`QueuedJobAlreadyExists` (a queued job for this pipeline already
     exists — a second pass in the same window, or a still-queued prior fire) it
@@ -68,10 +84,24 @@ def run_due_once(
     for schedule in due:
         scheduled_for = this_tick_at(schedule.cron, now, schedule.timezone)
         try:
+            required_label = resolve_label(schedule.pipeline) if resolve_label is not None else None
+        except Exception:
+            # Defense in depth: a resolver that raises must not abort the remaining
+            # due fires for this tick. Skip only THIS schedule's fire (its
+            # ``next_fires_at`` is left un-advanced, so it retries next boundary).
+            # ``carve serve``'s resolver already swallows to ``None``, but the
+            # scheduler must not depend on that.
+            logger.exception(
+                "resolve_label raised for pipeline %r; skipping its fire this tick",
+                schedule.pipeline,
+            )
+            continue
+        try:
             job = job_queue.enqueue_scheduled(
                 schedule.pipeline,
                 schedule.target,
                 scheduled_for=scheduled_for,
+                required_label=required_label,
                 tenant_id=tenant_id,
             )
         except QueuedJobAlreadyExists:
@@ -106,6 +136,7 @@ async def scheduler_loop(
     interval_s: float = DEFAULT_INTERVAL_S,
     clock: Clock = system_clock,
     shutdown: asyncio.Event | None = None,
+    resolve_label: ResolveLabel | None = None,
     tenant_id: int = 1,
 ) -> None:
     """Poll ``run_due_once`` to the next wall-clock boundary until ``shutdown``.
@@ -116,13 +147,22 @@ async def scheduler_loop(
     pass doesn't drift the schedule). A pass that raises is logged and swallowed
     so one bad poll never kills the loop — it backs off via the boundary sleep.
     ``shutdown`` (an ``asyncio.Event``) breaks the loop between sleeps for a clean
-    stop.
+    stop. ``resolve_label`` (optional) threads through to ``run_due_once`` so each
+    fired job carries its pipeline's worker-placement label (default ``None`` =
+    unlabeled, back-compat).
     """
     shutdown = shutdown or asyncio.Event()
     while not shutdown.is_set():
         now = clock.now()
         try:
-            await asyncio.to_thread(run_due_once, schedules, job_queue, now, tenant_id=tenant_id)
+            await asyncio.to_thread(
+                run_due_once,
+                schedules,
+                job_queue,
+                now,
+                resolve_label=resolve_label,
+                tenant_id=tenant_id,
+            )
         except Exception:
             logger.exception("scheduler pass failed; backing off to next boundary")
         if shutdown.is_set():

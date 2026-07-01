@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,7 @@ from rich.console import Console
 from carve.cli.orchestrator.extensibility_wiring import build_extensibility_on_run_failed_hook
 from carve.core.config import ConfigError, load_config
 from carve.core.config.paths import ProjectPaths
+from carve.core.config.pipeline_schema import load_pipeline, resolve_required_label
 from carve.core.state.database import (
     create_engine_from_config,
     create_session_factory,
@@ -62,12 +64,15 @@ from carve.runtime.worker import WorkerContext, make_worker_id
 from carve.runtime.worker_pool import DEFAULT_GRACE_PERIOD_S, run_worker_pool
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session, sessionmaker
 
-    from carve.core.config.schema import ArchiveConfig
+    from carve.core.config.schema import ArchiveConfig, ComponentConfig
     from carve.runtime.events import EventSink
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 # The creds-free dev substrate's dbt engine binary: a PATH lookup, matching
 # ``carve worker``. Resolving a managed-venv dbt binary per target is a later
@@ -108,6 +113,12 @@ def command(
         "--grace-period",
         help="Seconds to let in-flight jobs finish on shutdown before workers are "
         "cancelled (a second Ctrl-C / SIGTERM skips the wait).",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Advertise a worker-placement label pool-wide. These workers then claim "
+        "matching labeled jobs plus unlabeled ones; unset, they claim only unlabeled jobs.",
     ),
 ) -> None:
     """Run the Carve scheduler + reaper + archiver + worker pool (four co-running parts).
@@ -151,16 +162,26 @@ def command(
         project_dir=project_dir,
         paths=config.paths,
     )
+    project_paths = ProjectPaths.from_root(project_dir)
     worker_ctx = WorkerContext(
         repository=repository,
         job_queue=job_queue,
-        paths=ProjectPaths.from_root(project_dir),
+        paths=project_paths,
         connections=config.connections,
         dbt_executable=_DEFAULT_DBT_EXECUTABLE,
         worker_id=make_worker_id(),
+        label=label,
         emitter=emitter,
         on_run_failed=on_run_failed,
     )
+
+    def _resolve_label(pipeline_name: str) -> str | None:
+        # The scheduler holds no ``ProjectPaths``/``components`` (the state store
+        # stays config-agnostic), so ``carve serve`` — which does — supplies this
+        # callback, delegating to the module-level, unit-tested helper below.
+        return resolve_worker_label(
+            pipeline_name, project_paths=project_paths, components=config.components
+        )
 
     archiver_status = "off" if no_archiver else f"{archive_interval}s"
     console.print(
@@ -185,6 +206,7 @@ def command(
                 worker_ctx=worker_ctx,
                 workers=workers,
                 grace_period_s=grace_period,
+                resolve_label=_resolve_label,
             )
         )
     except KeyboardInterrupt:
@@ -211,6 +233,7 @@ async def _serve(
     workers: int = 1,
     grace_period_s: float = DEFAULT_GRACE_PERIOD_S,
     force: asyncio.Event | None = None,
+    resolve_label: Callable[[str], str | None] | None = None,
 ) -> None:
     """Run scheduler + reaper (+ archiver + worker pool) until signalled, then stop.
 
@@ -255,6 +278,7 @@ async def _serve(
                     job_queue,
                     interval_s=interval_s,
                     shutdown=shutdown,
+                    resolve_label=resolve_label,
                 )
             )
             tg.create_task(
@@ -291,4 +315,46 @@ async def _serve(
                 loop.remove_signal_handler(sig)
 
 
-__all__ = ["command"]
+def resolve_worker_label(
+    pipeline_name: str,
+    *,
+    project_paths: ProjectPaths,
+    components: dict[str, ComponentConfig],
+) -> str | None:
+    """Reduce a due pipeline's component ``worker_label``s to its ``required_label``.
+
+    Loads ``pipelines/<name>.toml`` and reduces its referenced components'
+    ``worker_label``s to the single label the scheduled job must be placed on
+    (``None`` = any worker). A per-pipeline failure (missing/unloadable file, a
+    late-introduced label conflict) logs and returns ``None`` so one bad pipeline
+    never starves the rest of a scheduler pass.
+
+    **Path-confinement (security).** ``pipeline_name`` is ``schedule.pipeline`` —
+    an unvalidated string a ``carve schedule set-cron`` / DB write controls — so a
+    ``../`` or absolute value must not escape ``pipelines/`` and open+parse an
+    arbitrary ``.toml``. Mirrors the guard in
+    ``runtime/skills/pipeline_inspect.py``: the resolved file must sit directly
+    under the resolved ``pipelines_dir``, or we return ``None`` (unlabeled)
+    **without ever opening it**.
+    """
+    pipelines_dir = project_paths.pipelines_dir.resolve()
+    toml_path = (pipelines_dir / f"{pipeline_name}.toml").resolve()
+    if toml_path.parent != pipelines_dir:
+        logger.warning(
+            "pipeline name %r escapes the pipelines/ tree; treating as unlabeled",
+            pipeline_name,
+        )
+        return None
+    try:
+        pipeline = load_pipeline(toml_path, components=components, paths=project_paths)
+        return resolve_required_label(pipeline, components)
+    except Exception:
+        logger.warning(
+            "could not resolve worker label for pipeline %r; treating as unlabeled",
+            pipeline_name,
+            exc_info=True,
+        )
+        return None
+
+
+__all__ = ["command", "resolve_worker_label"]

@@ -290,7 +290,10 @@ class Job(Base):
     stamped once at claim in this slice; the heartbeat *loop* + reaper are
     deferred. ``trigger`` records what enqueued the job (``scheduled``/
     ``manual``/``api``); ``scheduled_for`` is the due time for a scheduled job
-    (NULL for a manual one).
+    (NULL for a manual one). ``required_label`` is the worker-placement filter:
+    the single label (derived from the pipeline's referenced components'
+    ``worker_label``s) a worker must advertise to claim this job — ``NULL`` means
+    "run anywhere" (the flat pool). The claim query filters on it.
     """
 
     __tablename__ = "jobs"
@@ -336,6 +339,10 @@ class Job(Base):
     target: Mapped[str]
     status: Mapped[str] = mapped_column(default="queued")
     trigger: Mapped[str] = mapped_column(default="manual")
+    # The worker-placement label a claim must match (NULL = any worker). Derived
+    # by reducing the pipeline's referenced components' ``worker_label``s to a
+    # single label at enqueue; ``claim_next`` filters on it. See migration 0013.
+    required_label: Mapped[str | None] = mapped_column(default=None)
     scheduled_for: Mapped[datetime | None] = mapped_column(_TIMESTAMPTZ, default=None)
     tenant_id: Mapped[int] = mapped_column(default=1)
     run_id: Mapped[str | None] = mapped_column(
